@@ -200,7 +200,7 @@ sup.footnote-reference a {
 .tree-item {
     display: flex;
     align-items: center;
-    padding: 3px 8px;
+    padding: 4px 8px;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
@@ -218,12 +218,41 @@ sup.footnote-reference a {
 .tree-item.active {
     background-color: #dbeafe;
     color: #1d4ed8;
+    box-shadow: inset 2px 0 0 #3b82f6;
 }
 
 .tree-item .icon {
     margin-right: 5px;
     font-style: normal;
     flex-shrink: 0;
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    text-align: center;
+    font-size: 14px;
+    line-height: 14px;
+    color: #8c96a0;
+    transition: transform 0.15s ease;
+}
+
+.tree-item.dir-open > .icon {
+    transform: rotate(90deg);
+}
+
+.tree-item.has-md > .icon {
+    color: #3b82f6;
+}
+
+.tree-item.md-file > .icon {
+    background-color: #5b8dd9;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M378.41,0H208.294h-13.176l-9.314,9.314L57.017,138.102l-9.315,9.314v13.176v265.513c0,47.361,38.528,85.896,85.896,85.896H378.41c47.36,0,85.888-38.535,85.888-85.896V85.895C464.298,38.528,425.77,0,378.41,0z M432.494,426.104c0,29.877-24.214,54.092-54.084,54.092H133.598c-29.877,0-54.091-24.215-54.091-54.092V160.591h83.717c24.884,0,45.07-20.179,45.07-45.07V31.804H378.41c29.87,0,54.084,24.214,54.084,54.091V426.104z'/%3E%3Crect x='277.446' y='93.17' width='89.373' height='89.373'/%3E%3Crect x='145.175' y='232.592' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='304.09' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='375.588' width='221.644' height='25.024'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M378.41,0H208.294h-13.176l-9.314,9.314L57.017,138.102l-9.315,9.314v13.176v265.513c0,47.361,38.528,85.896,85.896,85.896H378.41c47.36,0,85.888-38.535,85.888-85.896V85.895C464.298,38.528,425.77,0,378.41,0z M432.494,426.104c0,29.877-24.214,54.092-54.084,54.092H133.598c-29.877,0-54.091-24.215-54.091-54.092V160.591h83.717c24.884,0,45.07-20.179,45.07-45.07V31.804H378.41c29.87,0,54.084,24.214,54.084,54.091V426.104z'/%3E%3Crect x='277.446' y='93.17' width='89.373' height='89.373'/%3E%3Crect x='145.175' y='232.592' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='304.09' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='375.588' width='221.644' height='25.024'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
 }
 
 .tree-children {
@@ -253,6 +282,19 @@ body.folder-mode {
     .tree-item.active {
         background-color: #1c3a5e;
         color: #58a6ff;
+        box-shadow: inset 2px 0 0 #60a5fa;
+    }
+
+    .tree-item .icon {
+        color: #6e7681;
+    }
+
+    .tree-item.has-md > .icon {
+        color: #60a5fa;
+    }
+
+    .tree-item.md-file > .icon {
+        background-color: #7aa8f0;
     }
 }
 
