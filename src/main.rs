@@ -7,7 +7,7 @@ use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
-use wry::WebViewBuilder;
+use wry::{RequestAsyncResponder, WebViewBuilder};
 
 const CSS: &str = include_str!("style.css");
 const HLJS_JS: &str = include_str!("highlight.min.js");
@@ -197,6 +197,21 @@ fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
     format!(r#"<div class="frontmatter">{}</div>"#, rows)
 }
 
+fn has_md_descendant(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if has_md_descendant(&p) {
+                return true;
+            }
+        } else if p.extension().and_then(|e| e.to_str()) == Some("md") {
+            return true;
+        }
+    }
+    false
+}
+
 /// List immediate children of `dir` (all files + directories).
 /// Returns JSON bytes: [{name, path (relative to root_dir), kind}, ...]
 fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
@@ -256,6 +271,35 @@ const FOLDER_JS: &str = r#"
 (function() {
   var expandedDirs = new Set();
   var currentFilePath = null;
+  var windowReady = false;
+  var mdCheckQueue = [];
+  var mdDotCache = {};
+
+  function doHasMdCheck(path, row) {
+    if (path in mdDotCache) {
+      if (mdDotCache[path]) {
+        row.classList.add('has-md');
+      }
+      return;
+    }
+    fetch('/?has_md=' + encodeURIComponent(path))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        mdDotCache[path] = !!data.has_md;
+        if (data.has_md) {
+          row.classList.add('has-md');
+        }
+      })
+      .catch(function() {});
+  }
+
+  function scheduleHasMdCheck(path, row) {
+    if (windowReady) {
+      doHasMdCheck(path, row);
+    } else {
+      mdCheckQueue.push({path: path, row: row});
+    }
+  }
 
   function addHeadingIds() {
     document.querySelectorAll('#preview-pane h1,#preview-pane h2,#preview-pane h3,#preview-pane h4,#preview-pane h5,#preview-pane h6').forEach(function(h) {
@@ -279,7 +323,7 @@ const FOLDER_JS: &str = r#"
       icon.className = 'icon';
 
       if (item.kind === 'dir') {
-        icon.textContent = '▶ ';
+        icon.textContent = '›';
         var children = document.createElement('div');
         children.className = 'tree-children';
         var loaded = false;
@@ -289,15 +333,17 @@ const FOLDER_JS: &str = r#"
         parentEl.appendChild(row);
         parentEl.appendChild(children);
 
+        scheduleHasMdCheck(item.path, row);
+
         row.addEventListener('click', function(e) {
           e.stopPropagation();
           if (children.classList.contains('open')) {
             children.classList.remove('open');
-            icon.textContent = '▶ ';
+            row.classList.remove('dir-open');
             expandedDirs.delete(item.path);
           } else {
             children.classList.add('open');
-            icon.textContent = '▼ ';
+            row.classList.add('dir-open');
             expandedDirs.add(item.path);
             if (!loaded) {
               loaded = true;
@@ -309,7 +355,10 @@ const FOLDER_JS: &str = r#"
           }
         });
       } else {
-        icon.textContent = '  ';
+        if (item.name.endsWith('.md')) {
+          row.classList.add('md-file');
+        }
+        icon.textContent = '';
         row.appendChild(icon);
         row.appendChild(document.createTextNode(item.name));
         parentEl.appendChild(row);
@@ -359,10 +408,15 @@ const FOLDER_JS: &str = r#"
         if (typeof INITIAL_FILE === 'string' && INITIAL_FILE) {
           loadPreview(INITIAL_FILE);
         }
-        setTimeout(function() { window.ipc.postMessage('ready'); }, 50);
+        setTimeout(function() {
+          window.ipc.postMessage('ready');
+          windowReady = true;
+          mdCheckQueue.forEach(function(item) { doHasMdCheck(item.path, item.row); });
+          mdCheckQueue = [];
+        }, 50);
       })
       .catch(function() {
-        setTimeout(function() { window.ipc.postMessage('ready'); }, 50);
+        setTimeout(function() { window.ipc.postMessage('ready'); windowReady = true; }, 50);
       });
   });
 
@@ -627,14 +681,29 @@ fn main() {
                 true
             }
         })
-        .with_custom_protocol("mdpreview".to_string(), {
+        .with_asynchronous_custom_protocol("mdpreview".to_string(), {
             let custom_css = custom_css;
-            move |_webview_id, request| {
+            move |_webview_id, request, responder: RequestAsyncResponder| {
                 let url_path = percent_decode_str(request.uri().path())
                     .decode_utf8_lossy()
                     .into_owned();
                 let query = request.uri().query().unwrap_or("").to_string();
 
+                if let Some(rel_encoded) = query.strip_prefix("has_md=") {
+                    let rel = percent_decode_str(rel_encoded).decode_utf8_lossy().into_owned();
+                    let root = root_dir.clone();
+                    std::thread::spawn(move || {
+                        let found = safe_join(&root, &rel)
+                            .map(|p| has_md_descendant(&p))
+                            .unwrap_or(false);
+                        let body = serde_json::to_vec(&serde_json::json!({"has_md": found}))
+                            .unwrap_or_else(|_| b"{}".to_vec());
+                        responder.respond(ok_response("application/json; charset=utf-8", body));
+                    });
+                    return;
+                }
+
+                let response = (|| {
                 // Folder mode: ?dir=<rel> or ?file=<rel>
                 if let Some(rel_encoded) = query.strip_prefix("dir=") {
                     let rel = percent_decode_str(rel_encoded).decode_utf8_lossy().into_owned();
@@ -730,6 +799,8 @@ fn main() {
                         Err(_) => not_found_response(),
                     }
                 }
+                })();
+                responder.respond(response);
             }
         })
         .with_ipc_handler(move |msg| {
