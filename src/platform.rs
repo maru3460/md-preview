@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-pub fn get_frontmost_pid() -> Option<libc::pid_t> {
+pub fn get_frontmost_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;
     let workspace = NSWorkspace::sharedWorkspace();
     let app = workspace.frontmostApplication()?;
@@ -7,7 +7,7 @@ pub fn get_frontmost_pid() -> Option<libc::pid_t> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn activate_pid(pid: libc::pid_t) {
+pub fn activate_pid(pid: i32) {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
         #[allow(deprecated)]

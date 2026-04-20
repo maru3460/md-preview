@@ -1,5 +1,23 @@
 use pulldown_cmark::{html, Options, Parser};
 
+pub fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub const CSS: &str = include_str!("style.css");
 pub const HLJS_JS: &str = include_str!("highlight.min.js");
 pub const HLJS_LIGHT_CSS: &str = include_str!("hljs-light.min.css");
@@ -110,10 +128,11 @@ pub fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
 }
 
 pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&str>) -> String {
-    let initial_file_script = format!(
-        "<script>var INITIAL_FILE = {};</script>",
-        serde_json::to_string(&initial_file).unwrap_or_else(|_| "null".to_string())
-    );
+    let initial_file_json = match initial_file {
+        None => "null".to_string(),
+        Some(s) => json_string(s),
+    };
+    let initial_file_script = format!("<script>var INITIAL_FILE = {};</script>", initial_file_json);
     format!(
         r#"<!DOCTYPE html>
 <html>
