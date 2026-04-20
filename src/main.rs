@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use percent_encoding::percent_decode_str;
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -12,7 +11,7 @@ mod platform;
 mod request;
 
 use html::{build_folder_html, build_html, parse_frontmatter, render_body, render_frontmatter_html, FOLDER_JS, INIT_JS};
-use request::{handle_request, has_md_descendant, ok_response, safe_join};
+use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -111,20 +110,17 @@ fn main() {
         .with_asynchronous_custom_protocol("mdpreview".to_string(), {
             let custom_css = custom_css;
             move |_webview_id, request, responder: RequestAsyncResponder| {
-                let url_path = percent_decode_str(request.uri().path())
-                    .decode_utf8_lossy()
-                    .into_owned();
+                let url_path = percent_decode(request.uri().path());
                 let query = request.uri().query().unwrap_or("").to_string();
 
                 if let Some(rel_encoded) = query.strip_prefix("has_md=") {
-                    let rel = percent_decode_str(rel_encoded).decode_utf8_lossy().into_owned();
+                    let rel = percent_decode(rel_encoded);
                     let root = root_dir.clone();
                     std::thread::spawn(move || {
                         let found = safe_join(&root, &rel)
                             .map(|p| has_md_descendant(&p))
                             .unwrap_or(false);
-                        let body = serde_json::to_vec(&serde_json::json!({"has_md": found}))
-                            .unwrap_or_else(|_| b"{}".to_vec());
+                        let body = format!(r#"{{"has_md":{}}}"#, found).into_bytes();
                         responder.respond(ok_response("application/json; charset=utf-8", body));
                     });
                     return;

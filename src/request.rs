@@ -1,9 +1,36 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use percent_encoding::percent_decode_str;
+use crate::html::{build_html, html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html};
 
-use crate::html::{build_html, html_escape, parse_frontmatter, render_body, render_frontmatter_html};
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = from_hex(bytes[i + 1]);
+            let lo = from_hex(bytes[i + 2]);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push(h << 4 | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn from_hex(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
 
 type Response = wry::http::Response<Cow<'static, [u8]>>;
 
@@ -103,15 +130,15 @@ pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
     dirs.sort_by(|a, b| a.0.cmp(&b.0));
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut items: Vec<serde_json::Value> = Vec::new();
+    let mut items: Vec<String> = Vec::new();
     for (name, path) in dirs {
-        items.push(serde_json::json!({ "name": name, "path": path, "kind": "dir" }));
+        items.push(format!(r#"{{"name":{},"path":{},"kind":"dir"}}"#, json_string(&name), json_string(&path)));
     }
     for (name, path) in files {
-        items.push(serde_json::json!({ "name": name, "path": path, "kind": "file" }));
+        items.push(format!(r#"{{"name":{},"path":{},"kind":"file"}}"#, json_string(&name), json_string(&path)));
     }
 
-    serde_json::to_vec(&items).unwrap_or_else(|_| b"[]".to_vec())
+    format!("[{}]", items.join(",")).into_bytes()
 }
 
 pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
@@ -128,7 +155,7 @@ pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 fn decode(encoded: &str) -> String {
-    percent_decode_str(encoded).decode_utf8_lossy().into_owned()
+    percent_decode(encoded)
 }
 
 fn is_md(path: &Path) -> bool {
