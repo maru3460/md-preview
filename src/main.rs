@@ -13,10 +13,17 @@ mod request;
 use html::{build_folder_html, build_html, parse_frontmatter, render_body, render_frontmatter_html, FOLDER_JS, INIT_JS};
 use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join};
 
+const SAMPLE_MD: &str = include_str!("sample.md");
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 && args[1] == "--sample" {
+        print!("{}", SAMPLE_MD);
+        return;
+    }
     if args.len() != 2 {
         eprintln!("Usage: md <file.md|directory>");
+        eprintln!("       md --sample              print sample markdown to stdout");
         std::process::exit(1);
     }
 
