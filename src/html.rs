@@ -1,4 +1,4 @@
-use pulldown_cmark::{html, Options, Parser};
+use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 pub fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -22,21 +22,106 @@ pub const CSS: &str = include_str!("style.css");
 pub const HLJS_JS: &str = include_str!("highlight.min.js");
 pub const HLJS_LIGHT_CSS: &str = include_str!("hljs-light.min.css");
 pub const HLJS_DARK_CSS: &str = include_str!("hljs-dark.min.css");
+pub const MERMAID_JS: &str = include_str!("mermaid.min.js");
 
 pub const INIT_JS: &str = include_str!("init.js");
 
 pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
     .union(Options::ENABLE_STRIKETHROUGH)
-    .union(Options::ENABLE_FOOTNOTES);
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_GFM);
 
 pub const FOLDER_JS: &str = include_str!("folder.js");
 
+const ICON_NOTE: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
+const ICON_TIP: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/></svg>"##;
+const ICON_IMPORTANT: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>"##;
+const ICON_WARNING: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>"##;
+const ICON_CAUTION: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
+
+fn alert_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
+    match kind {
+        BlockQuoteKind::Note => ("Note", ICON_NOTE),
+        BlockQuoteKind::Tip => ("Tip", ICON_TIP),
+        BlockQuoteKind::Important => ("Important", ICON_IMPORTANT),
+        BlockQuoteKind::Warning => ("Warning", ICON_WARNING),
+        BlockQuoteKind::Caution => ("Caution", ICON_CAUTION),
+    }
+}
+
 pub fn render_body(markdown: &str) -> String {
     let parser = Parser::new_ext(markdown, MD_OPTIONS);
+    let events = transform_events(parser);
     let mut body = String::new();
-    html::push_html(&mut body, parser);
+    html::push_html(&mut body, events.into_iter());
     body
+}
+
+fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'a>> {
+    let mut out: Vec<Event<'a>> = Vec::new();
+    let mut iter = parser.peekable();
+    while let Some(ev) = iter.next() {
+        match ev {
+            Event::Start(Tag::BlockQuote(Some(kind))) => {
+                out.push(Event::Start(Tag::BlockQuote(Some(kind))));
+                let (label, icon) = alert_meta(kind);
+                let title = format!(
+                    "<div class=\"markdown-alert-title\">{}<span>{}</span></div>",
+                    icon, label
+                );
+                out.push(Event::Html(title.into()));
+            }
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                let info_str = info.to_string();
+                let mut parts = info_str.splitn(2, ':');
+                let lang = parts.next().unwrap_or("").trim().to_string();
+                let filename = parts.next().map(|s| s.trim().to_string());
+
+                if lang == "mermaid" {
+                    let mut content = String::new();
+                    while let Some(next) = iter.next() {
+                        match next {
+                            Event::Text(t) => content.push_str(&t),
+                            Event::End(TagEnd::CodeBlock) => break,
+                            _ => {}
+                        }
+                    }
+                    let html = format!("<pre class=\"mermaid\">{}</pre>", html_escape(&content));
+                    out.push(Event::Html(html.into()));
+                    continue;
+                }
+
+                if let Some(fname) = filename.filter(|s| !s.is_empty()) {
+                    let mut content = String::new();
+                    while let Some(next) = iter.next() {
+                        match next {
+                            Event::Text(t) => content.push_str(&t),
+                            Event::End(TagEnd::CodeBlock) => break,
+                            _ => {}
+                        }
+                    }
+                    let lang_class = if lang.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" class=\"language-{}\"", html_escape(&lang))
+                    };
+                    let html = format!(
+                        "<div class=\"code-wrapper has-filename\"><div class=\"code-filename\">{}</div><pre><code{}>{}</code></pre></div>",
+                        html_escape(&fname),
+                        lang_class,
+                        html_escape(&content)
+                    );
+                    out.push(Event::Html(html.into()));
+                    continue;
+                }
+
+                out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))));
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
@@ -51,6 +136,7 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
 <style>@media(prefers-color-scheme:dark){{{hljs_dark}}}</style>
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
+<script>{mermaid_js}</script>
 </head>
 <body>
 <article class="markdown-body">
@@ -64,6 +150,7 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
         hljs_dark = HLJS_DARK_CSS,
         custom_css = custom_css,
         hljs_js = HLJS_JS,
+        mermaid_js = MERMAID_JS,
         body = body,
     )
 }
@@ -144,6 +231,7 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
 <style>@media(prefers-color-scheme:dark){{{hljs_dark}}}</style>
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
+<script>{mermaid_js}</script>
 {initial_file_script}
 </head>
 <body class="folder-mode">
@@ -160,6 +248,7 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
         hljs_dark = HLJS_DARK_CSS,
         custom_css = custom_css,
         hljs_js = HLJS_JS,
+        mermaid_js = MERMAID_JS,
         initial_file_script = initial_file_script,
     )
 }
