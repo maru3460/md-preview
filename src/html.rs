@@ -25,6 +25,7 @@ pub const HLJS_DARK_CSS: &str = include_str!("hljs-dark.min.css");
 pub const MERMAID_JS: &str = include_str!("mermaid.min.js");
 
 pub const INIT_JS: &str = include_str!("init.js");
+pub const SEARCH_JS: &str = include_str!("search.js");
 
 pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
@@ -137,6 +138,7 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
 <script>{mermaid_js}</script>
+<script>{search_js}</script>
 </head>
 <body>
 <article class="markdown-body">
@@ -151,6 +153,7 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
         custom_css = custom_css,
         hljs_js = HLJS_JS,
         mermaid_js = MERMAID_JS,
+        search_js = SEARCH_JS,
         body = body,
     )
 }
@@ -232,6 +235,7 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
 <script>{mermaid_js}</script>
+<script>{search_js}</script>
 {initial_file_script}
 </head>
 <body class="folder-mode">
@@ -249,6 +253,7 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
         custom_css = custom_css,
         hljs_js = HLJS_JS,
         mermaid_js = MERMAID_JS,
+        search_js = SEARCH_JS,
         initial_file_script = initial_file_script,
     )
 }
