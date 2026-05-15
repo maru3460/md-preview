@@ -237,18 +237,33 @@ fn handle_asset(url_path: &str, root_dir: &Path, custom_css: &str) -> Response {
     }
 }
 
+pub fn serve_single_file_body(file_path: &Path) -> Response {
+    let Ok(content) = std::fs::read_to_string(file_path) else { return not_found_response() };
+    let (fm_pairs, body) = parse_frontmatter(&content);
+    let fm_html = render_frontmatter_html(&fm_pairs);
+    let fragment = format!("{}{}", fm_html, render_body(body));
+    ok_response("text/html; charset=utf-8", fragment.into_bytes())
+}
+
 pub fn handle_request(
     url_path: &str,
     query: &str,
     root_dir: &Path,
     html_bytes: &[u8],
     custom_css: &str,
+    single_file: Option<&Path>,
 ) -> Response {
     if let Some(rel_encoded) = query.strip_prefix("dir=") {
         return handle_dir(rel_encoded, root_dir);
     }
     if let Some(rel_encoded) = query.strip_prefix("file=") {
         return handle_file(rel_encoded, root_dir);
+    }
+    if query == "body=1" {
+        if let Some(path) = single_file {
+            return serve_single_file_body(path);
+        }
+        return not_found_response();
     }
     if url_path == "/" {
         return ok_response("text/html; charset=utf-8", html_bytes.to_vec());

@@ -11,6 +11,8 @@ path = "src/main.rs"
 wry = "0.55"
 tao = "0.35"
 pulldown-cmark = "0.13"
+notify = "6"
+notify-debouncer-mini = "0.4"
 
 [profile.dev]
 opt-level = 2
