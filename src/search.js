@@ -122,7 +122,12 @@
         while (p && p !== container) {
           var tag = p.nodeName;
           if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
-          if (p.classList && p.classList.contains('md-search-bar')) return NodeFilter.FILTER_REJECT;
+          if (tag === 'svg' || tag === 'SVG') return NodeFilter.FILTER_REJECT;
+          if (tag === 'BUTTON') return NodeFilter.FILTER_REJECT;
+          if (p.classList) {
+            if (p.classList.contains('md-search-bar')) return NodeFilter.FILTER_REJECT;
+            if (p.classList.contains('copy-btn')) return NodeFilter.FILTER_REJECT;
+          }
           if (tag === 'MARK' && p.classList && p.classList.contains('md-search-hit')) return NodeFilter.FILTER_REJECT;
           p = p.parentNode;
         }
