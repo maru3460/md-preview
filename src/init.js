@@ -74,6 +74,9 @@ document.addEventListener('DOMContentLoaded', function() {
     addCopyButtons();
     initMermaid();
     runMermaid();
+    if (window.MdSearch) {
+        window.MdSearch.init(document.querySelector('.markdown-body') || document.body);
+    }
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
 document.addEventListener('keydown', function(e) {
