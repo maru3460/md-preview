@@ -1,5 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebouncedEventKind};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -10,8 +12,14 @@ mod html;
 mod platform;
 mod request;
 
-use html::{build_folder_html, build_html, parse_frontmatter, render_body, render_frontmatter_html, FOLDER_JS, INIT_JS};
+use html::{build_folder_html, build_html, json_string, parse_frontmatter, render_body, render_frontmatter_html, FOLDER_JS, INIT_JS};
 use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join};
+
+enum AppEvent {
+    Close,
+    Ready,
+    Reload(Option<String>),
+}
 
 const SAMPLE_MD: &str = include_str!("sample.md");
 
@@ -94,8 +102,14 @@ fn main() {
     #[cfg(target_os = "macos")]
     let launcher_pid = platform::get_frontmost_pid();
 
-    let event_loop = EventLoopBuilder::<&'static str>::with_user_event().build();
+    let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+
+    let single_file_path: Option<PathBuf> = if is_folder || file_in_cwd { None } else { Some(path.clone()) };
+    let watch_root = root_dir.clone();
+    let watch_proxy = proxy.clone();
+    let watch_single = single_file_path.clone();
+    let _watcher = spawn_watcher(watch_root, watch_single, watch_proxy);
 
     let window = WindowBuilder::new()
         .with_title(&title)
@@ -116,6 +130,7 @@ fn main() {
         })
         .with_asynchronous_custom_protocol("mdpreview".to_string(), {
             let custom_css = custom_css;
+            let single_file = single_file_path.clone();
             move |_webview_id, request, responder: RequestAsyncResponder| {
                 let url_path = percent_decode(request.uri().path());
                 let query = request.uri().query().unwrap_or("").to_string();
@@ -133,13 +148,13 @@ fn main() {
                     return;
                 }
 
-                responder.respond(handle_request(&url_path, &query, &root_dir, &html_bytes, &custom_css));
+                responder.respond(handle_request(&url_path, &query, &root_dir, &html_bytes, &custom_css, single_file.as_deref()));
             }
         })
         .with_ipc_handler(move |msg| {
             match msg.body().as_str() {
-                "close" => { let _ = proxy.send_event("close"); }
-                "ready" => { let _ = proxy.send_event("ready"); }
+                "close" => { let _ = proxy.send_event(AppEvent::Close); }
+                "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
                 _ => {}
             }
         })
@@ -152,24 +167,68 @@ fn main() {
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-        let _ = &webview;
 
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             }
-            | Event::UserEvent("close") => {
+            | Event::UserEvent(AppEvent::Close) => {
                 #[cfg(target_os = "macos")]
                 if let Some(pid) = launcher_pid {
                     platform::activate_pid(pid);
                 }
                 *control_flow = ControlFlow::Exit;
             }
-            Event::UserEvent("ready") => {
+            Event::UserEvent(AppEvent::Ready) => {
                 window.set_visible(true);
+            }
+            Event::UserEvent(AppEvent::Reload(rel)) => {
+                let arg = match rel {
+                    Some(r) => json_string(&r),
+                    None => "null".to_string(),
+                };
+                let script = format!("window.MdReload && window.MdReload({});", arg);
+                let _ = webview.evaluate_script(&script);
             }
             _ => {}
         }
     });
+}
+
+fn spawn_watcher(
+    root: PathBuf,
+    single_file: Option<PathBuf>,
+    proxy: tao::event_loop::EventLoopProxy<AppEvent>,
+) -> Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>> {
+    let root_for_cb = root.clone();
+    let single_for_cb = single_file.clone();
+    let mut debouncer = new_debouncer(Duration::from_millis(80), move |res: notify_debouncer_mini::DebounceEventResult| {
+        let Ok(events) = res else { return };
+        for ev in events {
+            if !matches!(ev.kind, DebouncedEventKind::Any) { continue; }
+            let path = match ev.path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => ev.path.clone(),
+            };
+            if let Some(ref sf) = single_for_cb {
+                if path == *sf {
+                    let _ = proxy.send_event(AppEvent::Reload(None));
+                }
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
+            let rel = path.strip_prefix(&root_for_cb)
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned());
+            let _ = proxy.send_event(AppEvent::Reload(rel));
+        }
+    }).ok()?;
+
+    let (watch_path, mode): (PathBuf, RecursiveMode) = match single_file.as_deref() {
+        Some(f) => (f.parent().unwrap_or(Path::new(".")).to_path_buf(), RecursiveMode::NonRecursive),
+        None => (root.clone(), RecursiveMode::Recursive),
+    };
+    debouncer.watcher().watch(&watch_path, mode).ok()?;
+    Some(debouncer)
 }

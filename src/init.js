@@ -79,6 +79,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
+
+window.MdReload = function() {
+    var article = document.querySelector('.markdown-body');
+    if (!article) return;
+    var scroller = document.scrollingElement || document.documentElement;
+    var savedScroll = scroller.scrollTop;
+    fetch('/?body=1', { cache: 'no-store' })
+        .then(function(r) { return r.ok ? r.text() : null; })
+        .then(function(html) {
+            if (html == null) return;
+            article.innerHTML = html;
+            addHeadingIds();
+            if (window.hljs) hljs.highlightAll();
+            addCopyButtons(article);
+            runMermaid(article);
+            if (window.MdSearch) {
+                window.MdSearch.reset && window.MdSearch.reset();
+                window.MdSearch.init(article);
+            }
+            scroller.scrollTop = savedScroll;
+        })
+        .catch(function() {});
+};
 document.addEventListener('keydown', function(e) {
     if (e.metaKey && e.key === 'w') {
         e.preventDefault();
