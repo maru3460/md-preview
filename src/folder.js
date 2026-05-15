@@ -159,6 +159,7 @@
   }
 
   function loadPreview(relPath) {
+    if (window.MdSearch) window.MdSearch.reset();
     fetch('/?file=' + encodeURIComponent(relPath))
       .then(function(r) { return r.text(); })
       .then(function(html) {
@@ -212,6 +213,10 @@
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     });
+
+    if (window.MdSearch) {
+      window.MdSearch.init(document.getElementById('preview-pane'));
+    }
 
     fetch('/?dir=')
       .then(function(r) { return r.json(); })
