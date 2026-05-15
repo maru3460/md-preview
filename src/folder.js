@@ -158,15 +158,16 @@
     try { mermaid.run({ nodes: nodes }); } catch (e) {}
   }
 
-  function loadPreview(relPath) {
+  function loadPreview(relPath, preserveScroll) {
     if (window.MdSearch) window.MdSearch.reset();
-    fetch('/?file=' + encodeURIComponent(relPath))
+    var pane = document.getElementById('preview-pane');
+    var savedScroll = preserveScroll ? pane.scrollTop : 0;
+    fetch('/?file=' + encodeURIComponent(relPath), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.text(); })
       .then(function(html) {
         currentFilePath = relPath;
-        var pane = document.getElementById('preview-pane');
         pane.innerHTML = html;
-        pane.scrollTop = 0;
+        pane.scrollTop = savedScroll;
         addHeadingIds();
         if (window.hljs) hljs.highlightAll();
         addCopyButtons(pane);
@@ -174,6 +175,12 @@
       })
       .catch(function() {});
   }
+
+  window.MdReload = function(relPath) {
+    if (!currentFilePath) return;
+    if (relPath && relPath !== currentFilePath) return;
+    loadPreview(currentFilePath, true);
+  };
 
   function initMermaid() {
     if (typeof mermaid === 'undefined') return;
