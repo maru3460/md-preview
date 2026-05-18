@@ -26,6 +26,7 @@ pub const MERMAID_JS: &str = include_str!("mermaid.min.js");
 
 pub const INIT_JS: &str = include_str!("init.js");
 pub const SEARCH_JS: &str = include_str!("search.js");
+pub const TOC_JS: &str = include_str!("toc.js");
 
 pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
@@ -139,6 +140,7 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
 <script>{hljs_js}</script>
 <script>{mermaid_js}</script>
 <script>{search_js}</script>
+<script>{toc_js}</script>
 </head>
 <body>
 <article class="markdown-body">
@@ -154,6 +156,7 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
         hljs_js = HLJS_JS,
         mermaid_js = MERMAID_JS,
         search_js = SEARCH_JS,
+        toc_js = TOC_JS,
         body = body,
     )
 }
@@ -236,6 +239,7 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
 <script>{hljs_js}</script>
 <script>{mermaid_js}</script>
 <script>{search_js}</script>
+<script>{toc_js}</script>
 {initial_file_script}
 </head>
 <body class="folder-mode">
@@ -254,6 +258,7 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
         hljs_js = HLJS_JS,
         mermaid_js = MERMAID_JS,
         search_js = SEARCH_JS,
+        toc_js = TOC_JS,
         initial_file_script = initial_file_script,
     )
 }

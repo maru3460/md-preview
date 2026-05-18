@@ -1,3 +1,4 @@
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -29,18 +30,17 @@ fn main() {
         print!("{}", SAMPLE_MD);
         return;
     }
-    if args.len() != 2 {
+
+    let stdin_mode = (args.len() == 1 && !std::io::stdin().is_terminal())
+        || (args.len() == 2 && args[1] == "-");
+
+    if !stdin_mode && args.len() != 2 {
         eprintln!("Usage: md <file.md|directory>");
+        eprintln!("       md -                     read markdown from stdin");
+        eprintln!("       cat file.md | md         read markdown from stdin (implicit)");
         eprintln!("       md --sample              print sample markdown to stdout");
         std::process::exit(1);
     }
-
-    let path = Path::new(&args[1])
-        .canonicalize()
-        .unwrap_or_else(|e| {
-            eprintln!("Error: cannot resolve '{}': {}", args[1], e);
-            std::process::exit(1);
-        });
 
     let custom_css = std::env::var("HOME")
         .ok()
@@ -49,54 +49,74 @@ fn main() {
         })
         .unwrap_or_default();
 
-    let is_folder = path.is_dir();
-
     let current_dir = std::env::current_dir().ok()
         .and_then(|d| d.canonicalize().ok());
 
-    let file_in_cwd = !is_folder && current_dir.as_ref()
-        .map(|cwd| path.starts_with(cwd))
-        .unwrap_or(false);
-
-    let (title, init_script, html_bytes, window_width, root_dir) = if is_folder {
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(".")
-            .to_string();
-        let html = build_folder_html(&title, &custom_css, None);
-        (title, FOLDER_JS, html.into_bytes(), 1200.0_f64, path.clone())
-    } else if file_in_cwd {
-        let cwd = current_dir.unwrap();
-        let rel = path.strip_prefix(&cwd)
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let dir_title = cwd
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(".")
-            .to_string();
-        let html = build_folder_html(&dir_title, &custom_css, Some(&rel));
-        (dir_title, FOLDER_JS, html.into_bytes(), 1200.0_f64, cwd)
-    } else {
-        let markdown = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Error: cannot read '{}': {}", path.display(), e);
-                std::process::exit(1);
-            }
-        };
-        let title = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("Markdown Preview")
-            .to_string();
+    let (title, init_script, html_bytes, window_width, root_dir, single_file_path, watch_enabled) = if stdin_mode {
+        let mut markdown = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut markdown) {
+            eprintln!("Error: cannot read stdin: {}", e);
+            std::process::exit(1);
+        }
+        let title = "stdin".to_string();
         let (fm_pairs, body) = parse_frontmatter(&markdown);
         let fm_html = render_frontmatter_html(&fm_pairs);
         let html = build_html(&format!("{}{}", fm_html, render_body(body)), &title, &custom_css);
-        let base_dir = path.parent().unwrap_or(&path).to_path_buf();
-        (title, INIT_JS, html.into_bytes(), 900.0_f64, base_dir)
+        let root = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+        (title, INIT_JS, html.into_bytes(), 900.0_f64, root, None, false)
+    } else {
+        let path = Path::new(&args[1])
+            .canonicalize()
+            .unwrap_or_else(|e| {
+                eprintln!("Error: cannot resolve '{}': {}", args[1], e);
+                std::process::exit(1);
+            });
+
+        let is_folder = path.is_dir();
+        let file_in_cwd = !is_folder && current_dir.as_ref()
+            .map(|cwd| path.starts_with(cwd))
+            .unwrap_or(false);
+
+        if is_folder {
+            let title = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".")
+                .to_string();
+            let html = build_folder_html(&title, &custom_css, None);
+            (title, FOLDER_JS, html.into_bytes(), 1200.0_f64, path.clone(), None, true)
+        } else if file_in_cwd {
+            let cwd = current_dir.clone().unwrap();
+            let rel = path.strip_prefix(&cwd)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let dir_title = cwd
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".")
+                .to_string();
+            let html = build_folder_html(&dir_title, &custom_css, Some(&rel));
+            (dir_title, FOLDER_JS, html.into_bytes(), 1200.0_f64, cwd, None, true)
+        } else {
+            let markdown = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Error: cannot read '{}': {}", path.display(), e);
+                    std::process::exit(1);
+                }
+            };
+            let title = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Markdown Preview")
+                .to_string();
+            let (fm_pairs, body) = parse_frontmatter(&markdown);
+            let fm_html = render_frontmatter_html(&fm_pairs);
+            let html = build_html(&format!("{}{}", fm_html, render_body(body)), &title, &custom_css);
+            let base_dir = path.parent().unwrap_or(&path).to_path_buf();
+            (title, INIT_JS, html.into_bytes(), 900.0_f64, base_dir, Some(path.clone()), true)
+        }
     };
 
     #[cfg(target_os = "macos")]
@@ -105,11 +125,11 @@ fn main() {
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    let single_file_path: Option<PathBuf> = if is_folder || file_in_cwd { None } else { Some(path.clone()) };
-    let watch_root = root_dir.clone();
-    let watch_proxy = proxy.clone();
-    let watch_single = single_file_path.clone();
-    let _watcher = spawn_watcher(watch_root, watch_single, watch_proxy);
+    let _watcher = if watch_enabled {
+        spawn_watcher(root_dir.clone(), single_file_path.clone(), proxy.clone())
+    } else {
+        None
+    };
 
     let window = WindowBuilder::new()
         .with_title(&title)

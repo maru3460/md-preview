@@ -77,6 +77,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window.MdSearch) {
         window.MdSearch.init(document.querySelector('.markdown-body') || document.body);
     }
+    if (window.MdToc) {
+        window.MdToc.init(document.scrollingElement || document.documentElement);
+    }
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
 
@@ -98,6 +101,7 @@ window.MdReload = function() {
                 window.MdSearch.reset && window.MdSearch.reset();
                 window.MdSearch.init(article);
             }
+            if (window.MdToc) window.MdToc.refresh();
             scroller.scrollTop = savedScroll;
         })
         .catch(function() {});
