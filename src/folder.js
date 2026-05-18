@@ -172,6 +172,7 @@
         if (window.hljs) hljs.highlightAll();
         addCopyButtons(pane);
         runMermaidIn(pane);
+        if (window.MdToc) window.MdToc.refresh();
       })
       .catch(function() {});
   }
@@ -223,6 +224,9 @@
 
     if (window.MdSearch) {
       window.MdSearch.init(document.getElementById('preview-pane'));
+    }
+    if (window.MdToc) {
+      window.MdToc.init(document.getElementById('preview-pane'));
     }
 
     fetch('/?dir=')
