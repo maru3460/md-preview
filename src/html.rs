@@ -23,6 +23,7 @@ pub const HLJS_JS: &str = include_str!("highlight.min.js");
 pub const HLJS_LIGHT_CSS: &str = include_str!("hljs-light.min.css");
 pub const HLJS_DARK_CSS: &str = include_str!("hljs-dark.min.css");
 pub const MERMAID_JS: &str = include_str!("mermaid.min.js");
+pub const DRAWIO_JS: &str = include_str!("drawio-viewer.min.js");
 
 pub const INIT_JS: &str = include_str!("init.js");
 pub const SEARCH_JS: &str = include_str!("search.js");
@@ -94,6 +95,27 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
                     continue;
                 }
 
+                if lang == "drawio" {
+                    let mut content = String::new();
+                    while let Some(next) = iter.next() {
+                        match next {
+                            Event::Text(t) => content.push_str(&t),
+                            Event::End(TagEnd::CodeBlock) => break,
+                            _ => {}
+                        }
+                    }
+                    let config = format!(
+                        r##"{{"highlight":"#0066cc","nav":true,"resize":true,"lightbox":true,"toolbar":"lightbox","xml":{}}}"##,
+                        json_string(content.trim())
+                    );
+                    let html = format!(
+                        "<div class=\"drawio-wrap\"><div class=\"mxgraph\" data-mxgraph=\"{}\"></div></div>",
+                        attr_escape(&config)
+                    );
+                    out.push(Event::Html(html.into()));
+                    continue;
+                }
+
                 if let Some(fname) = filename.filter(|s| !s.is_empty()) {
                     let mut content = String::new();
                     while let Some(next) = iter.next() {
@@ -138,7 +160,6 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
 <style>@media(prefers-color-scheme:dark){{{hljs_dark}}}</style>
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
-<script>{mermaid_js}</script>
 <script>{search_js}</script>
 <script>{toc_js}</script>
 </head>
@@ -154,7 +175,6 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
         hljs_dark = HLJS_DARK_CSS,
         custom_css = custom_css,
         hljs_js = HLJS_JS,
-        mermaid_js = MERMAID_JS,
         search_js = SEARCH_JS,
         toc_js = TOC_JS,
         body = body,
@@ -163,6 +183,13 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
 
 pub fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn attr_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub fn parse_frontmatter(s: &str) -> (Vec<(String, String)>, &str) {
@@ -237,7 +264,6 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
 <style>@media(prefers-color-scheme:dark){{{hljs_dark}}}</style>
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
-<script>{mermaid_js}</script>
 <script>{search_js}</script>
 <script>{toc_js}</script>
 {initial_file_script}
@@ -256,9 +282,40 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
         hljs_dark = HLJS_DARK_CSS,
         custom_css = custom_css,
         hljs_js = HLJS_JS,
-        mermaid_js = MERMAID_JS,
         search_js = SEARCH_JS,
         toc_js = TOC_JS,
         initial_file_script = initial_file_script,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawio_block_becomes_mxgraph_div() {
+        let md = "```drawio\n<mxGraphModel><root>A &amp; \"B\"</root></mxGraphModel>\n```\n";
+        let body = render_body(md);
+        assert!(body.contains("class=\"mxgraph\""), "missing mxgraph class: {body}");
+        assert!(body.contains("data-mxgraph=\""), "missing data attr: {body}");
+        // angle brackets and quotes from the JSON config must be attribute-escaped
+        assert!(body.contains("&lt;mxGraphModel&gt;"), "xml not escaped: {body}");
+        assert!(body.contains("&quot;xml&quot;"), "json quotes not escaped: {body}");
+        // no raw unescaped double-quote breaking out of the attribute
+        assert!(!body.contains("data-mxgraph=\"{\"highlight"), "attr not escaped: {body}");
+    }
+
+    #[test]
+    fn mermaid_block_still_works() {
+        let body = render_body("```mermaid\ngraph LR\nA-->B\n```\n");
+        assert!(body.contains("class=\"mermaid\""), "{body}");
+    }
+
+    #[test]
+    fn build_html_no_longer_inlines_diagram_libs() {
+        // mermaid alone is ~3MB; with lazy loading the page must stay small.
+        let page = build_html("<p>hi</p>", "t", "");
+        assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
+        assert!(page.contains("<p>hi</p>"));
+    }
 }

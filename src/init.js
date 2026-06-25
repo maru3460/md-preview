@@ -48,32 +48,57 @@ function addCopyButtons(root) {
     });
 }
 
+var MdLibs = (function() {
+    var cache = {};
+    function load(url) {
+        if (cache[url]) return cache[url];
+        cache[url] = new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = url;
+            s.onload = function() { resolve(); };
+            s.onerror = function() { reject(); };
+            document.head.appendChild(s);
+        });
+        return cache[url];
+    }
+    return { load: load };
+})();
+
 function runMermaid(root) {
-    if (typeof mermaid === 'undefined') return;
     var scope = root || document;
     var nodes = scope.querySelectorAll('pre.mermaid');
     if (!nodes.length) return;
-    try {
-        mermaid.run({ nodes: nodes });
-    } catch (e) {}
+    MdLibs.load('mdpreview://localhost/__lib/mermaid.min.js').then(function() {
+        if (typeof mermaid === 'undefined') return;
+        if (!mermaid.__mdInit) {
+            var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            mermaid.initialize({
+                startOnLoad: false,
+                theme: dark ? 'dark' : 'default',
+                securityLevel: 'loose'
+            });
+            mermaid.__mdInit = true;
+        }
+        try { mermaid.run({ nodes: nodes }); } catch (e) {}
+    }).catch(function() {});
 }
 
-function initMermaid() {
-    if (typeof mermaid === 'undefined') return;
-    var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    mermaid.initialize({
-        startOnLoad: false,
-        theme: dark ? 'dark' : 'default',
-        securityLevel: 'loose'
-    });
+function runDrawio(root) {
+    var scope = root || document;
+    var nodes = scope.querySelectorAll('.mxgraph');
+    if (!nodes.length) return;
+    MdLibs.load('mdpreview://localhost/__lib/drawio-viewer.min.js').then(function() {
+        if (typeof GraphViewer === 'undefined') return;
+        try { GraphViewer.processElements(); } catch (e) {}
+    }).catch(function() {});
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     addHeadingIds();
     hljs.highlightAll();
     addCopyButtons();
-    initMermaid();
     runMermaid();
+    runDrawio();
     if (window.MdSearch) {
         window.MdSearch.init(document.querySelector('.markdown-body') || document.body);
     }
@@ -97,6 +122,7 @@ window.MdReload = function() {
             if (window.hljs) hljs.highlightAll();
             addCopyButtons(article);
             runMermaid(article);
+            runDrawio(article);
             if (window.MdSearch) {
                 window.MdSearch.reset && window.MdSearch.reset();
                 window.MdSearch.init(article);

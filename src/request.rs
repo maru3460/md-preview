@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::html::{build_html, html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html};
+use crate::html::{build_html, html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
 
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -197,6 +197,15 @@ fn serve_non_md_fragment(file_path: &Path) -> Response {
     }
 }
 
+fn serve_builtin_lib(name: &str) -> Response {
+    let js = match name {
+        "mermaid.min.js" => MERMAID_JS,
+        "drawio-viewer.min.js" => DRAWIO_JS,
+        _ => return not_found_response(),
+    };
+    ok_response("application/javascript; charset=utf-8", js.as_bytes().to_vec())
+}
+
 fn handle_dir(rel_encoded: &str, root_dir: &Path) -> Response {
     let rel = decode(rel_encoded);
     let target_dir = if rel.is_empty() {
@@ -253,6 +262,9 @@ pub fn handle_request(
     custom_css: &str,
     single_file: Option<&Path>,
 ) -> Response {
+    if let Some(name) = url_path.strip_prefix("/__lib/") {
+        return serve_builtin_lib(name);
+    }
     if let Some(rel_encoded) = query.strip_prefix("dir=") {
         return handle_dir(rel_encoded, root_dir);
     }
@@ -269,4 +281,25 @@ pub fn handle_request(
         return ok_response("text/html; charset=utf-8", html_bytes.to_vec());
     }
     handle_asset(url_path, root_dir, custom_css)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_lib_served_for_known_names() {
+        for name in ["mermaid.min.js", "drawio-viewer.min.js"] {
+            let resp = serve_builtin_lib(name);
+            assert_eq!(resp.status(), 200, "{name} should be 200");
+            assert!(resp.body().len() > 100_000, "{name} body too small");
+            assert!(resp.headers()["Content-Type"].to_str().unwrap().contains("javascript"));
+        }
+    }
+
+    #[test]
+    fn builtin_lib_404_for_unknown() {
+        assert_eq!(serve_builtin_lib("../secret.js").status(), 404);
+        assert_eq!(serve_builtin_lib("nope.js").status(), 404);
+    }
 }
