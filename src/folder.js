@@ -1,4 +1,20 @@
 (function() {
+  var MdLibs = (function() {
+    var cache = {};
+    function load(url) {
+      if (cache[url]) return cache[url];
+      cache[url] = new Promise(function(resolve, reject) {
+        var s = document.createElement('script');
+        s.src = url;
+        s.onload = function() { resolve(); };
+        s.onerror = function() { reject(); };
+        document.head.appendChild(s);
+      });
+      return cache[url];
+    }
+    return { load: load };
+  })();
+
   var expandedDirs = new Set();
   var currentFilePath = null;
   var windowReady = false;
@@ -152,10 +168,26 @@
   }
 
   function runMermaidIn(scope) {
-    if (typeof mermaid === 'undefined') return;
     var nodes = scope.querySelectorAll('pre.mermaid');
     if (!nodes.length) return;
-    try { mermaid.run({ nodes: nodes }); } catch (e) {}
+    MdLibs.load('mdpreview://localhost/__lib/mermaid.min.js').then(function() {
+      if (typeof mermaid === 'undefined') return;
+      if (!mermaid.__mdInit) {
+        var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'default', securityLevel: 'loose' });
+        mermaid.__mdInit = true;
+      }
+      try { mermaid.run({ nodes: nodes }); } catch (e) {}
+    }).catch(function() {});
+  }
+
+  function runDrawioIn(scope) {
+    var nodes = scope.querySelectorAll('.mxgraph');
+    if (!nodes.length) return;
+    MdLibs.load('mdpreview://localhost/__lib/drawio-viewer.min.js').then(function() {
+      if (typeof GraphViewer === 'undefined') return;
+      try { GraphViewer.processElements(); } catch (e) {}
+    }).catch(function() {});
   }
 
   function loadPreview(relPath, preserveScroll) {
@@ -172,6 +204,7 @@
         if (window.hljs) hljs.highlightAll();
         addCopyButtons(pane);
         runMermaidIn(pane);
+        runDrawioIn(pane);
         if (window.MdToc) window.MdToc.refresh();
       })
       .catch(function() {});
@@ -183,18 +216,7 @@
     loadPreview(currentFilePath, true);
   };
 
-  function initMermaid() {
-    if (typeof mermaid === 'undefined') return;
-    var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: dark ? 'dark' : 'default',
-      securityLevel: 'loose'
-    });
-  }
-
   document.addEventListener('DOMContentLoaded', function() {
-    initMermaid();
     var resizer = document.getElementById('resizer');
     var sidebar = document.getElementById('sidebar');
     var isDragging = false;

@@ -70,6 +70,36 @@ graph TD
 
 ---
 
+## draw.io
+
+`drawio` 言語ブロックに draw.io の XML（`<mxGraphModel>` または `<mxfile>`）を貼ると図として描画される。ライブラリは図がある時だけ遅延ロードされる：
+
+```drawio
+<mxGraphModel dx="640" dy="480" grid="0" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+    <mxCell id="2" value="Markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+      <mxGeometry x="40" y="80" width="120" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="3" value="md-preview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+      <mxGeometry x="240" y="80" width="120" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="4" value="プレビュー" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+      <mxGeometry x="440" y="80" width="120" height="50" as="geometry" />
+    </mxCell>
+    <mxCell id="5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="2" target="3">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="3" target="4">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>
+```
+
+---
+
 ## コードブロック
 
 ファイル名なしの通常コードブロック（コピーボタンが右上に出る）：

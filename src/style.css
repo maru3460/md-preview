@@ -771,3 +771,22 @@ pre.mermaid {
         border-color: #3fb950;
     }
 }
+
+/* draw.io diagrams: always render on a light card so they stay readable
+   in dark mode (the viewer's canvas is transparent and edges/labels are dark). */
+.drawio-wrap {
+    background-color: #ffffff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 16px 0;
+    overflow-x: auto;
+}
+.drawio-wrap .mxgraph {
+    background-color: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+    .drawio-wrap {
+        border-color: #30363d;
+    }
+}

@@ -6,7 +6,7 @@ MarkdownファイルをmacOSのネイティブウィンドウで表示するだ�
 md README.md
 ```
 
-macOS WebKit（[wry](https://github.com/tauri-apps/wry)）でレンダリングするので軽量・高速。GitHub風スタイル・ダークモード・Mermaid図・シンタックスハイライトに対応。
+macOS WebKit（[wry](https://github.com/tauri-apps/wry)）でレンダリングするので軽量・高速。GitHub風スタイル・ダークモード・Mermaid図・draw.io図・シンタックスハイライトに対応。図のライブラリは図がある時だけ遅延ロードされるので、通常のMarkdownは軽いまま開けます。
 
 ## インストール
 
@@ -64,7 +64,9 @@ Markdownファイルを含まないディレクトリは自動的にツリーか
 
 ## 対応するMarkdown機能
 
-GFM・コードブロックのシンタックスハイライト・[Mermaid](https://mermaid.js.org/) 図・GitHub風アラート（`> [!NOTE]` 等）・ファイル名付きコードブロック（` ```rust:src/main.rs `）・YAML front matter・ダークモード（システム設定に追従）など。
+GFM・コードブロックのシンタックスハイライト・[Mermaid](https://mermaid.js.org/) 図・[draw.io](https://www.drawio.com/) 図・GitHub風アラート（`> [!NOTE]` 等）・ファイル名付きコードブロック（` ```rust:src/main.rs `）・YAML front matter・ダークモード（システム設定に追従）など。
+
+draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGraphModel>` または `<mxfile>`）を貼ると描画されます。図をクリックすると全画面表示になり、ズーム・パンできます。Mermaid / draw.io のライブラリは図が含まれるときだけ遅延ロードされます。
 
 実際の出力サンプルは `md --sample > sample.md && md sample.md` で確認できます。
 
