@@ -142,7 +142,9 @@ pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
 }
 
 pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
-    if rel.contains("..") {
+    // Reject only genuine parent-dir traversal (`..` path component), not
+    // filenames that merely contain a `..` substring (e.g. `my..file.md`).
+    if Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return None;
     }
     let candidate = canonical_root.join(rel);
@@ -234,7 +236,7 @@ fn handle_file(rel_encoded: &str, root_dir: &Path) -> Response {
 
 fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &str) -> Response {
     let relative = url_path.strip_prefix('/').unwrap_or(url_path);
-    let file_path = root_dir.join(relative);
+    let Some(file_path) = safe_join(root_dir, relative) else { return not_found_response() };
     if is_md(&file_path) {
         let Ok(content) = std::fs::read_to_string(&file_path) else { return not_found_response() };
         let file_title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");

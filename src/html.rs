@@ -147,6 +147,7 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
 }
 
 pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
+    let title = html_escape(title);
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -244,6 +245,7 @@ pub fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
 }
 
 pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial_file: Option<&str>) -> String {
+    let title = html_escape(title);
     let initial_file_json = match initial_file {
         None => "null".to_string(),
         Some(s) => json_string(s),

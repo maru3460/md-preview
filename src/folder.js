@@ -49,13 +49,19 @@
 
   function addHeadingIds() {
     document.querySelectorAll('#preview-pane h1,#preview-pane h2,#preview-pane h3,#preview-pane h4,#preview-pane h5,#preview-pane h6').forEach(function(h) {
-      if (!h.id) {
-        h.id = h.textContent
-          .toLowerCase()
-          .replace(/[^\p{L}\p{N}\s-]/gu, '')
-          .trim()
-          .replace(/\s+/g, '-');
+      if (h.id) return;
+      var base = h.textContent
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, '')
+        .trim()
+        .replace(/\s+/g, '-');
+      if (!base) base = 'h';
+      var id = base;
+      var n = 2;
+      while (document.getElementById(id)) {
+        id = base + '-' + (n++);
       }
+      h.id = id;
     });
   }
 
@@ -192,12 +198,13 @@
   }
 
   function loadPreview(relPath, preserveScroll) {
-    if (window.MdSearch) window.MdSearch.reset();
     var pane = document.getElementById('preview-pane');
     var savedScroll = preserveScroll ? pane.scrollTop : 0;
     fetch('/?file=' + encodeURIComponent(relPath), preserveScroll ? { cache: 'no-store' } : undefined)
-      .then(function(r) { return r.text(); })
+      .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
+        if (html == null) return;
+        if (window.MdSearch) window.MdSearch.reset();
         currentFilePath = relPath;
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
