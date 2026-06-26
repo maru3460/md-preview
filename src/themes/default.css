@@ -1,23 +1,23 @@
-:root {
-    color-scheme: light dark;
-}
+/* ──────────────────────────────────────────────────────────────
+   themes/default.css — 見た目レイヤー（paint）= GitHub風（OS追従）
+   色・フォント・テキスト装飾と、OS のダークモード追従(@media)を持つ。
+   base.css の後に読み込まれ、骨組みに「塗り」を乗せる。
+
+   ★ 新しいテーマを作るときは、このファイルをコピーして色とフォントを
+     書き換えるのが早い。base.css 側の構造は触らなくてよい。
+   ★ 固定ダーク/ライトのテーマを作る場合は、末尾の
+     @media (prefers-color-scheme: dark) を使わず、無条件に配色を指定し
+     :root に color-scheme: dark|light を宣言すること。
+   ────────────────────────────────────────────────────────────── */
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
-    font-size: 17px;
     line-height: 1.75;
     color: #1f2328;
     background-color: #ffffff;
-    margin: 0;
-    padding: 48px;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     font-feature-settings: "ss01", "cv11", "kern";
-}
-
-.markdown-body {
-    max-width: 720px;
-    margin: 0 auto;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -27,31 +27,11 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 h1 {
-    font-size: 2.25em;
-    margin-top: 48px;
-    margin-bottom: 16px;
-    padding-bottom: 0.3em;
-    border-bottom: 1px solid #d1d9e0;
+    border-bottom-color: #d1d9e0;
 }
 
 h2 {
-    font-size: 1.5em;
-    margin-top: 32px;
-    margin-bottom: 16px;
-    padding-bottom: 0.3em;
-    border-bottom: 1px solid #d1d9e0;
-}
-
-h3 {
-    font-size: 1.25em;
-    margin-top: 24px;
-    margin-bottom: 12px;
-}
-
-h4 {
-    font-size: 1em;
-    margin-top: 20px;
-    margin-bottom: 10px;
+    border-bottom-color: #d1d9e0;
 }
 
 a {
@@ -65,43 +45,21 @@ a:hover {
 
 code {
     font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 85%;
-    padding: 0.2em 0.4em;
     background-color: #eff1f3;
-    border-radius: 6px;
 }
 
 pre {
-    padding: 16px;
-    overflow: auto;
-    font-size: 85%;
     line-height: 1.5;
     background-color: #f6f8fa;
-    border-radius: 6px;
 }
 
 pre code {
-    padding: 0;
     background-color: transparent;
-    border-radius: 0;
 }
 
 blockquote {
-    margin: 0 0 16px 0;
-    padding: 0 1em;
     color: #59636e;
-    border-left: 0.25em solid #d8dee4;
-}
-
-table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 16px 0;
-}
-
-th, td {
-    padding: 6px 13px;
-    border: 1px solid #d0d7de;
+    border-left-color: #d8dee4;
 }
 
 th {
@@ -109,38 +67,16 @@ th {
     background-color: #f6f8fa;
 }
 
+th, td {
+    border-color: #d0d7de;
+}
+
 tr:nth-child(2n) {
     background-color: #f6f8fa;
 }
 
-ul, ol {
-    padding-left: 2em;
-}
-
-li + li {
-    margin-top: 0.25em;
-}
-
-li input[type="checkbox"] {
-    margin-right: 0.5em;
-}
-
 hr {
-    height: 0.25em;
-    padding: 0;
-    margin: 24px 0;
     background-color: #d0d7de;
-    border: 0;
-}
-
-img {
-    max-width: 100%;
-    height: auto;
-}
-
-p {
-    margin-top: 0;
-    margin-bottom: 1.1em;
 }
 
 sup.footnote-reference a {
@@ -148,36 +84,16 @@ sup.footnote-reference a {
     font-weight: 600;
 }
 
-.footnote-definition {
-    font-size: 0.9em;
-    margin-top: 8px;
-}
-
-.footnote-definition p {
-    display: inline;
-}
-
 /* ── Front matter card ──────────────────────────────────────── */
 .frontmatter {
     background-color: #f6f8fa;
-    border: 1px solid #d0d7de;
-    border-radius: 6px;
-    padding: 10px 16px;
-    margin-bottom: 24px;
-    font-size: 13px;
+    border-color: #d0d7de;
     line-height: 1.8;
-}
-
-.fm-row {
-    display: flex;
-    gap: 12px;
 }
 
 .fm-key {
     color: #656d76;
     font-weight: 600;
-    min-width: 90px;
-    flex-shrink: 0;
 }
 
 .fm-val {
@@ -195,22 +111,12 @@ blockquote.markdown-alert-tip,
 blockquote.markdown-alert-important,
 blockquote.markdown-alert-warning,
 blockquote.markdown-alert-caution {
-    padding: 8px 16px;
     color: inherit;
-    margin-bottom: 16px;
 }
 
 .markdown-alert-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
     font-weight: 600;
-    margin-bottom: 4px;
     line-height: 1;
-}
-
-.markdown-alert-title svg {
-    flex-shrink: 0;
 }
 
 blockquote.markdown-alert-note {
@@ -239,55 +145,18 @@ blockquote.markdown-alert-caution {
 blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
 
 /* ── Code wrapper / filename header / copy button ───────────── */
-.code-wrapper {
-    position: relative;
-    margin: 16px 0;
-}
-
-.code-wrapper pre {
-    margin: 0;
-}
-
-.code-wrapper.has-filename pre {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-}
-
 .code-filename {
     font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
     color: #656d76;
     background-color: #eaeef2;
-    padding: 6px 12px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    border-bottom: 1px solid #d0d7de;
+    border-bottom-color: #d0d7de;
 }
 
 .copy-btn {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     color: #59636e;
     background-color: #ffffff;
-    border: 1px solid #d0d7de;
-    border-radius: 6px;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.15s, color 0.15s, background-color 0.15s;
-    z-index: 1;
-}
-
-.code-wrapper.has-filename .copy-btn {
-    top: 4px;
-}
-
-.code-wrapper:hover .copy-btn,
-.copy-btn:focus {
-    opacity: 1;
+    border-color: #d0d7de;
 }
 
 .copy-btn:hover {
@@ -298,35 +167,15 @@ blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
 .copy-btn.copied {
     color: #1a7f37;
     border-color: #1a7f37;
-    opacity: 1;
 }
 
 /* ── Folder mode layout ─────────────────────────────────────── */
-.folder-layout {
-    display: flex;
-    height: 100vh;
-    overflow: hidden;
-}
-
 #sidebar {
-    width: 250px;
-    min-width: 120px;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 8px 0;
-    font-size: 13px;
     background-color: #f6f8fa;
-    box-sizing: border-box;
-    flex-shrink: 0;
 }
 
 #resizer {
-    width: 4px;
-    flex-shrink: 0;
-    cursor: col-resize;
     background-color: #d0d7de;
-    transition: background-color 0.15s;
 }
 
 #resizer:hover,
@@ -334,25 +183,7 @@ blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
     background-color: #3b82f6;
 }
 
-#preview-pane {
-    flex: 1;
-    height: 100%;
-    overflow-y: auto;
-    padding: 48px;
-    box-sizing: border-box;
-}
-
 .tree-item {
-    display: flex;
-    align-items: center;
-    padding: 4px 8px;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    border-radius: 4px;
-    margin: 0 4px;
-    user-select: none;
     color: inherit;
 }
 
@@ -367,21 +198,9 @@ blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
 }
 
 .tree-item .icon {
-    margin-right: 5px;
     font-style: normal;
-    flex-shrink: 0;
-    display: inline-block;
-    width: 18px;
-    height: 18px;
-    text-align: center;
-    font-size: 18px;
     line-height: 18px;
     color: #c8cdd2;
-    transition: transform 0.15s ease;
-}
-
-.tree-item.dir-open > .icon {
-    transform: rotate(90deg);
 }
 
 .tree-item.has-md > .icon {
@@ -390,86 +209,32 @@ blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
 }
 
 .tree-item.md-file > .icon {
-    width: 14px;
-    height: 14px;
     background-color: #5b8dd9;
-    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M378.41,0H208.294h-13.176l-9.314,9.314L57.017,138.102l-9.315,9.314v13.176v265.513c0,47.361,38.528,85.896,85.896,85.896H378.41c47.36,0,85.888-38.535,85.888-85.896V85.895C464.298,38.528,425.77,0,378.41,0z M432.494,426.104c0,29.877-24.214,54.092-54.084,54.092H133.598c-29.877,0-54.091-24.215-54.091-54.092V160.591h83.717c24.884,0,45.07-20.179,45.07-45.07V31.804H378.41c29.87,0,54.084,24.214,54.084,54.091V426.104z'/%3E%3Crect x='277.446' y='93.17' width='89.373' height='89.373'/%3E%3Crect x='145.175' y='232.592' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='304.09' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='375.588' width='221.644' height='25.024'/%3E%3C/svg%3E");
-    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M378.41,0H208.294h-13.176l-9.314,9.314L57.017,138.102l-9.315,9.314v13.176v265.513c0,47.361,38.528,85.896,85.896,85.896H378.41c47.36,0,85.888-38.535,85.888-85.896V85.895C464.298,38.528,425.77,0,378.41,0z M432.494,426.104c0,29.877-24.214,54.092-54.084,54.092H133.598c-29.877,0-54.091-24.215-54.091-54.092V160.591h83.717c24.884,0,45.07-20.179,45.07-45.07V31.804H378.41c29.87,0,54.084,24.214,54.084,54.091V426.104z'/%3E%3Crect x='277.446' y='93.17' width='89.373' height='89.373'/%3E%3Crect x='145.175' y='232.592' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='304.09' width='221.644' height='25.024'/%3E%3Crect x='145.175' y='375.588' width='221.644' height='25.024'/%3E%3C/svg%3E");
-    -webkit-mask-size: contain;
-    mask-size: contain;
-    -webkit-mask-repeat: no-repeat;
-    mask-repeat: no-repeat;
-    -webkit-mask-position: center;
-    mask-position: center;
-}
-
-.tree-children {
-    display: none;
-}
-
-.tree-children.open {
-    display: block;
-}
-
-/* ── Folder mode: body resets ───────────────────────────────── */
-body.folder-mode {
-    padding: 0;
-    overflow: hidden;
 }
 
 /* ── Find bar (Cmd+F) ───────────────────────────────────────── */
 .md-search-bar {
-    position: fixed;
-    top: 12px;
-    right: 16px;
-    z-index: 1000;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 6px;
     background-color: #ffffff;
-    border: 1px solid #d0d7de;
-    border-radius: 8px;
+    border-color: #d0d7de;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
-    font-size: 13px;
     color: #1f2328;
 }
 
-.md-search-bar.hidden {
-    display: none;
-}
-
 .md-search-input {
-    width: 180px;
-    padding: 4px 8px;
-    border: none;
-    outline: none;
     background: transparent;
     color: inherit;
-    font-size: 13px;
     font-family: inherit;
 }
 
 .md-search-counter {
-    min-width: 38px;
-    text-align: center;
     color: #656d76;
     font-variant-numeric: tabular-nums;
-    font-size: 12px;
-    user-select: none;
 }
 
 .md-search-btn {
-    padding: 2px 6px;
-    min-width: 24px;
-    height: 24px;
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
     color: #59636e;
-    cursor: pointer;
-    font-size: 13px;
     line-height: 1;
 }
 
@@ -487,8 +252,6 @@ body.folder-mode {
 mark.md-search-hit {
     background-color: #fff3a3;
     color: inherit;
-    border-radius: 2px;
-    padding: 0;
 }
 
 mark.md-search-hit-current {
@@ -537,42 +300,19 @@ mark.md-search-hit-current {
 
 /* ── TOC panel (Cmd+T) ───────────────────────────────────────── */
 .md-toc-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 280px;
-    height: 100vh;
     background-color: #ffffff;
-    border-left: 1px solid #d0d7de;
+    border-left-color: #d0d7de;
     box-shadow: -4px 0 12px rgba(0, 0, 0, 0.06);
-    z-index: 999;
-    display: flex;
-    flex-direction: column;
-    transform: translateX(0);
-    transition: transform 0.18s ease;
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
-    font-size: 13px;
     color: #1f2328;
-    box-sizing: border-box;
-}
-
-.md-toc-panel.hidden {
-    transform: translateX(100%);
-    pointer-events: none;
 }
 
 .md-toc-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    border-bottom: 1px solid #d0d7de;
-    flex-shrink: 0;
+    border-bottom-color: #d0d7de;
 }
 
 .md-toc-title {
     font-weight: 600;
-    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: #656d76;
@@ -580,45 +320,23 @@ mark.md-search-hit-current {
 
 .md-toc-close {
     background: transparent;
-    border: 0;
     color: #656d76;
-    font-size: 18px;
-    cursor: pointer;
     line-height: 1;
-    padding: 2px 8px;
-    border-radius: 4px;
 }
 .md-toc-close:hover {
     color: #1f2328;
     background-color: #f6f8fa;
 }
 
-.md-toc-list {
-    list-style: none;
-    margin: 0;
-    padding: 8px 0;
-    overflow-y: auto;
-    flex: 1;
-}
-
 .md-toc-empty {
-    padding: 16px;
     color: #656d76;
     font-style: italic;
 }
 
-.md-toc-item { margin: 0; padding: 0; }
-
 .md-toc-list a {
-    display: block;
-    padding: 4px 16px;
     line-height: 1.4;
     color: inherit;
     text-decoration: none;
-    border-left: 2px solid transparent;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 .md-toc-list a:hover {
     background-color: #f6f8fa;
@@ -631,11 +349,9 @@ mark.md-search-hit-current {
 }
 
 .md-toc-list .lvl-1 > a { font-weight: 600; }
-.md-toc-list .lvl-2 > a { padding-left: 28px; }
-.md-toc-list .lvl-3 > a { padding-left: 40px; font-size: 12px; }
-.md-toc-list .lvl-4 > a { padding-left: 52px; font-size: 12px; color: #656d76; }
+.md-toc-list .lvl-4 > a { color: #656d76; }
 .md-toc-list .lvl-5 > a,
-.md-toc-list .lvl-6 > a { padding-left: 64px; font-size: 12px; color: #656d76; }
+.md-toc-list .lvl-6 > a { color: #656d76; }
 
 @media (prefers-color-scheme: dark) {
     .md-toc-panel {
@@ -666,9 +382,6 @@ mark.md-search-hit-current {
 /* ── Mermaid ────────────────────────────────────────────────── */
 pre.mermaid {
     background-color: transparent;
-    padding: 16px 0;
-    text-align: center;
-    overflow: auto;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -772,15 +485,12 @@ pre.mermaid {
     }
 }
 
-/* draw.io diagrams: always render on a light card so they stay readable
-   in dark mode (the viewer's canvas is transparent and edges/labels are dark). */
+/* ── draw.io diagrams ───────────────────────────────────────────
+   always render on a light card so they stay readable in dark mode
+   (the viewer's canvas is transparent and edges/labels are dark). */
 .drawio-wrap {
     background-color: #ffffff;
-    border: 1px solid #d0d7de;
-    border-radius: 8px;
-    padding: 12px;
-    margin: 16px 0;
-    overflow-x: auto;
+    border-color: #d0d7de;
 }
 .drawio-wrap .mxgraph {
     background-color: #ffffff;

@@ -1,0 +1,140 @@
+/* ──────────────────────────────────────────────────────────────
+   nord — 北欧の夜。Polar Night(青灰) の地に Frost(水色) のアクセント、
+   Aurora の淡色をアラートに。寒色で統一された静かな固定ダーク。
+   palette: nordtheme.com
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: dark; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    color: #d8dee9;
+    background-color: #2e3440;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: #eceff4;
+}
+
+h1 { border-bottom-color: #434c5e; }
+h2 { border-bottom-color: #434c5e; }
+
+a { color: #88c0d0; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #3b4252;
+    color: #8fbcbb;
+}
+pre { line-height: 1.5; background-color: #3b4252; }
+pre code { background-color: transparent; color: inherit; }
+
+blockquote { color: #9aa6bb; border-left-color: #4c566a; }
+
+th { font-weight: 600; background-color: #3b4252; }
+th, td { border-color: #434c5e; }
+tr:nth-child(2n) { background-color: #353c4a; }
+hr { background-color: #434c5e; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 600; }
+
+.frontmatter { background-color: #3b4252; border-color: #434c5e; line-height: 1.8; }
+.fm-key { color: #81a1c1; font-weight: 600; }
+.fm-val { color: #d8dee9; }
+.binary-msg { color: #9aa6bb; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 600; line-height: 1; }
+
+blockquote.markdown-alert-note { border-left-color: #88c0d0; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #88c0d0; }
+blockquote.markdown-alert-tip { border-left-color: #a3be8c; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #a3be8c; }
+blockquote.markdown-alert-important { border-left-color: #b48ead; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #b48ead; }
+blockquote.markdown-alert-warning { border-left-color: #ebcb8b; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #ebcb8b; }
+blockquote.markdown-alert-caution { border-left-color: #bf616a; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #bf616a; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #9aa6bb;
+    background-color: #434c5e;
+    border-bottom-color: #4c566a;
+}
+.copy-btn {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #d8dee9;
+    background-color: #3b4252;
+    border-color: #4c566a;
+}
+.copy-btn:hover { color: #eceff4; background-color: #434c5e; }
+.copy-btn.copied { color: #a3be8c; border-color: #a3be8c; }
+
+#sidebar { background-color: #2b3038; }
+#resizer { background-color: #434c5e; }
+#resizer:hover, #resizer.dragging { background-color: #88c0d0; }
+
+.tree-item { color: inherit; }
+.tree-item:hover { background-color: #3b4252; }
+.tree-item.active {
+    background-color: #3b4252;
+    color: #88c0d0;
+    box-shadow: inset 2px 0 0 #88c0d0;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #4c566a; }
+.tree-item.has-md > .icon { color: #88c0d0; font-weight: 700; }
+.tree-item.md-file > .icon { background-color: #81a1c1; }
+
+.md-search-bar {
+    background-color: #3b4252;
+    border-color: #4c566a;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #d8dee9;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #9aa6bb; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #d8dee9; line-height: 1; }
+.md-search-btn:hover { background-color: #434c5e; color: #eceff4; }
+.md-search-btn.active { background-color: #434c5e; color: #88c0d0; border-color: #5e81ac; }
+mark.md-search-hit { background-color: #ebcb8b; color: #2e3440; }
+mark.md-search-hit-current { background-color: #d08770; color: #2e3440; outline: 1px solid #bf616a; }
+
+.md-toc-panel {
+    background-color: #2e3440;
+    border-left-color: #434c5e;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #d8dee9;
+}
+.md-toc-header { border-bottom-color: #434c5e; }
+.md-toc-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #81a1c1; }
+.md-toc-close { background: transparent; color: #9aa6bb; line-height: 1; }
+.md-toc-close:hover { color: #eceff4; background-color: #3b4252; }
+.md-toc-empty { color: #4c566a; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #3b4252; text-decoration: none; }
+.md-toc-list a.active { color: #88c0d0; border-left-color: #88c0d0; background-color: #3b4252; }
+.md-toc-list .lvl-1 > a { font-weight: 600; }
+.md-toc-list .lvl-4 > a { color: #9aa6bb; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #9aa6bb; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border-color: #434c5e; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }

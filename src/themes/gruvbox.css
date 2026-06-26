@@ -1,0 +1,140 @@
+/* ──────────────────────────────────────────────────────────────
+   gruvbox — レトロ暖色ダーク。アースカラーに琥珀オレンジのアクセント。
+   nord の寒色と対になる温かいダーク。固定ダーク。
+   palette: github.com/morhetz/gruvbox
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: dark; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    color: #ebdbb2;
+    background-color: #282828;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: #fbf1c7;
+}
+
+h1 { border-bottom-color: #3c3836; }
+h2 { border-bottom-color: #3c3836; }
+
+a { color: #83a598; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #3c3836;
+    color: #ebdbb2;
+}
+pre { line-height: 1.5; background-color: #32302f; }
+pre code { background-color: transparent; color: inherit; }
+
+blockquote { color: #d5c4a1; border-left-color: #504945; }
+
+th { font-weight: 600; background-color: #3c3836; }
+th, td { border-color: #504945; }
+tr:nth-child(2n) { background-color: #32302f; }
+hr { background-color: #504945; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 600; }
+
+.frontmatter { background-color: #32302f; border-color: #504945; line-height: 1.8; }
+.fm-key { color: #a89984; font-weight: 600; }
+.fm-val { color: #ebdbb2; }
+.binary-msg { color: #a89984; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 600; line-height: 1; }
+
+blockquote.markdown-alert-note { border-left-color: #83a598; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #83a598; }
+blockquote.markdown-alert-tip { border-left-color: #b8bb26; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #b8bb26; }
+blockquote.markdown-alert-important { border-left-color: #d3869b; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #d3869b; }
+blockquote.markdown-alert-warning { border-left-color: #fabd2f; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #fabd2f; }
+blockquote.markdown-alert-caution { border-left-color: #fb4934; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #fb4934; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #a89984;
+    background-color: #3c3836;
+    border-bottom-color: #504945;
+}
+.copy-btn {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #ebdbb2;
+    background-color: #3c3836;
+    border-color: #504945;
+}
+.copy-btn:hover { color: #fbf1c7; background-color: #504945; }
+.copy-btn.copied { color: #b8bb26; border-color: #b8bb26; }
+
+#sidebar { background-color: #1d2021; }
+#resizer { background-color: #504945; }
+#resizer:hover, #resizer.dragging { background-color: #fe8019; }
+
+.tree-item { color: inherit; }
+.tree-item:hover { background-color: #3c3836; }
+.tree-item.active {
+    background-color: #3c3836;
+    color: #fe8019;
+    box-shadow: inset 2px 0 0 #fe8019;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #665c54; }
+.tree-item.has-md > .icon { color: #83a598; font-weight: 700; }
+.tree-item.md-file > .icon { background-color: #83a598; }
+
+.md-search-bar {
+    background-color: #32302f;
+    border-color: #504945;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #ebdbb2;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #a89984; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #ebdbb2; line-height: 1; }
+.md-search-btn:hover { background-color: #3c3836; color: #fbf1c7; }
+.md-search-btn.active { background-color: #3c3836; color: #fe8019; border-color: #665c54; }
+mark.md-search-hit { background-color: #fabd2f; color: #282828; }
+mark.md-search-hit-current { background-color: #fe8019; color: #282828; outline: 1px solid #fb4934; }
+
+.md-toc-panel {
+    background-color: #282828;
+    border-left-color: #3c3836;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #ebdbb2;
+}
+.md-toc-header { border-bottom-color: #3c3836; }
+.md-toc-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #a89984; }
+.md-toc-close { background: transparent; color: #a89984; line-height: 1; }
+.md-toc-close:hover { color: #fbf1c7; background-color: #3c3836; }
+.md-toc-empty { color: #665c54; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #3c3836; text-decoration: none; }
+.md-toc-list a.active { color: #fe8019; border-left-color: #fe8019; background-color: #3c3836; }
+.md-toc-list .lvl-1 > a { font-weight: 600; }
+.md-toc-list .lvl-4 > a { color: #a89984; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #a89984; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border-color: #3c3836; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }

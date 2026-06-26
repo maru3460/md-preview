@@ -1,0 +1,139 @@
+/* ──────────────────────────────────────────────────────────────
+   dracula — 定番の紫ダーク。鮮やかな紫＋シアンのアクセント。固定ダーク。
+   palette: draculatheme.com
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: dark; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    color: #f8f8f2;
+    background-color: #282a36;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: #f8f8f2;
+}
+
+h1 { border-bottom-color: #44475a; }
+h2 { border-bottom-color: #44475a; }
+
+a { color: #8be9fd; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #44475a;
+    color: #f8f8f2;
+}
+pre { line-height: 1.5; background-color: #21222c; }
+pre code { background-color: transparent; color: inherit; }
+
+blockquote { color: #bd93f9; border-left-color: #6272a4; }
+
+th { font-weight: 600; background-color: #44475a; }
+th, td { border-color: #44475a; }
+tr:nth-child(2n) { background-color: #2d2f3d; }
+hr { background-color: #44475a; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 600; }
+
+.frontmatter { background-color: #21222c; border-color: #44475a; line-height: 1.8; }
+.fm-key { color: #6272a4; font-weight: 600; }
+.fm-val { color: #f8f8f2; }
+.binary-msg { color: #6272a4; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 600; line-height: 1; }
+
+blockquote.markdown-alert-note { border-left-color: #8be9fd; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #8be9fd; }
+blockquote.markdown-alert-tip { border-left-color: #50fa7b; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #50fa7b; }
+blockquote.markdown-alert-important { border-left-color: #bd93f9; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #bd93f9; }
+blockquote.markdown-alert-warning { border-left-color: #f1fa8c; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #f1fa8c; }
+blockquote.markdown-alert-caution { border-left-color: #ff5555; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #ff5555; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #6272a4;
+    background-color: #21222c;
+    border-bottom-color: #44475a;
+}
+.copy-btn {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #f8f8f2;
+    background-color: #44475a;
+    border-color: #6272a4;
+}
+.copy-btn:hover { color: #ffffff; background-color: #6272a4; }
+.copy-btn.copied { color: #50fa7b; border-color: #50fa7b; }
+
+#sidebar { background-color: #21222c; }
+#resizer { background-color: #44475a; }
+#resizer:hover, #resizer.dragging { background-color: #bd93f9; }
+
+.tree-item { color: inherit; }
+.tree-item:hover { background-color: #44475a; }
+.tree-item.active {
+    background-color: #44475a;
+    color: #bd93f9;
+    box-shadow: inset 2px 0 0 #bd93f9;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #6272a4; }
+.tree-item.has-md > .icon { color: #8be9fd; font-weight: 700; }
+.tree-item.md-file > .icon { background-color: #bd93f9; }
+
+.md-search-bar {
+    background-color: #21222c;
+    border-color: #44475a;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #f8f8f2;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #6272a4; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #f8f8f2; line-height: 1; }
+.md-search-btn:hover { background-color: #44475a; color: #ffffff; }
+.md-search-btn.active { background-color: #44475a; color: #bd93f9; border-color: #6272a4; }
+mark.md-search-hit { background-color: #f1fa8c; color: #282a36; }
+mark.md-search-hit-current { background-color: #ffb86c; color: #282a36; outline: 1px solid #ff5555; }
+
+.md-toc-panel {
+    background-color: #282a36;
+    border-left-color: #44475a;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #f8f8f2;
+}
+.md-toc-header { border-bottom-color: #44475a; }
+.md-toc-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #6272a4; }
+.md-toc-close { background: transparent; color: #6272a4; line-height: 1; }
+.md-toc-close:hover { color: #ffffff; background-color: #44475a; }
+.md-toc-empty { color: #6272a4; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #44475a; text-decoration: none; }
+.md-toc-list a.active { color: #bd93f9; border-left-color: #bd93f9; background-color: #44475a; }
+.md-toc-list .lvl-1 > a { font-weight: 600; }
+.md-toc-list .lvl-4 > a { color: #6272a4; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #6272a4; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border-color: #44475a; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }

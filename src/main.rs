@@ -12,6 +12,7 @@ use wry::{RequestAsyncResponder, WebViewBuilder};
 mod html;
 mod platform;
 mod request;
+mod theme;
 
 use html::{build_folder_html, build_html, json_string, parse_frontmatter, render_body, render_frontmatter_html, FOLDER_JS, INIT_JS};
 use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join};
@@ -28,6 +29,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 2 && args[1] == "--sample" {
         print!("{}", SAMPLE_MD);
+        return;
+    }
+
+    // `md theme [<name>]` — list or set the active theme. Handled before any
+    // path resolution so a file literally named `theme` doesn't shadow it
+    // (use `md ./theme` to open such a file).
+    if args.len() >= 2 && args[1] == "theme" {
+        run_theme_command(&args[2..]);
         return;
     }
 
@@ -49,6 +58,9 @@ fn main() {
         })
         .unwrap_or_default();
 
+    let (theme_paint, appearance) = theme::resolve(&theme::read_active_name());
+    let theme_css = theme::style_layer(appearance, &theme_paint);
+
     let current_dir = std::env::current_dir().ok()
         .and_then(|d| d.canonicalize().ok());
 
@@ -61,7 +73,7 @@ fn main() {
         let title = "stdin".to_string();
         let (fm_pairs, body) = parse_frontmatter(&markdown);
         let fm_html = render_frontmatter_html(&fm_pairs);
-        let html = build_html(&format!("{}{}", fm_html, render_body(body)), &title, &custom_css);
+        let html = build_html(&format!("{}{}", fm_html, render_body(body)), &title, &theme_css, &custom_css);
         let root = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
         (title, INIT_JS, html.into_bytes(), 900.0_f64, root, None, false)
     } else {
@@ -83,7 +95,7 @@ fn main() {
                 .and_then(|n| n.to_str())
                 .unwrap_or(".")
                 .to_string();
-            let html = build_folder_html(&title, &custom_css, None);
+            let html = build_folder_html(&title, &theme_css, &custom_css, None);
             (title, FOLDER_JS, html.into_bytes(), 1200.0_f64, path.clone(), None, true)
         } else if file_in_cwd {
             let cwd = current_dir.clone().unwrap();
@@ -96,7 +108,7 @@ fn main() {
                 .and_then(|n| n.to_str())
                 .unwrap_or(".")
                 .to_string();
-            let html = build_folder_html(&dir_title, &custom_css, Some(&rel));
+            let html = build_folder_html(&dir_title, &theme_css, &custom_css, Some(&rel));
             (dir_title, FOLDER_JS, html.into_bytes(), 1200.0_f64, cwd, None, true)
         } else {
             let markdown = match std::fs::read_to_string(&path) {
@@ -113,7 +125,7 @@ fn main() {
                 .to_string();
             let (fm_pairs, body) = parse_frontmatter(&markdown);
             let fm_html = render_frontmatter_html(&fm_pairs);
-            let html = build_html(&format!("{}{}", fm_html, render_body(body)), &title, &custom_css);
+            let html = build_html(&format!("{}{}", fm_html, render_body(body)), &title, &theme_css, &custom_css);
             let base_dir = path.parent().unwrap_or(&path).to_path_buf();
             (title, INIT_JS, html.into_bytes(), 900.0_f64, base_dir, Some(path.clone()), true)
         }
@@ -138,8 +150,12 @@ fn main() {
         .build(&event_loop)
         .expect("Failed to create window");
 
+    // Expose the resolved theme's appearance to the page so JS-rendered
+    // diagrams (mermaid) follow the theme instead of the OS dark-mode setting.
+    let init_script = format!("window.MD_APPEARANCE = '{}';\n{}", appearance.as_str(), init_script);
+
     let webview = WebViewBuilder::new()
-        .with_initialization_script(init_script)
+        .with_initialization_script(&init_script)
         .with_navigation_handler(|url: String| {
             if url.starts_with("http://") || url.starts_with("https://") {
                 std::process::Command::new("open").arg(&url).spawn().ok();
@@ -150,6 +166,7 @@ fn main() {
         })
         .with_asynchronous_custom_protocol("mdpreview".to_string(), {
             let custom_css = custom_css;
+            let theme_css = theme_css;
             let single_file = single_file_path.clone();
             move |_webview_id, request, responder: RequestAsyncResponder| {
                 let url_path = percent_decode(request.uri().path());
@@ -168,7 +185,7 @@ fn main() {
                     return;
                 }
 
-                responder.respond(handle_request(&url_path, &query, &root_dir, &html_bytes, &custom_css, single_file.as_deref()));
+                responder.respond(handle_request(&url_path, &query, &root_dir, &html_bytes, &theme_css, &custom_css, single_file.as_deref()));
             }
         })
         .with_ipc_handler(move |msg| {
@@ -214,6 +231,122 @@ fn main() {
             _ => {}
         }
     });
+}
+
+fn hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let h = hex.strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+/// A seamless strip of truecolor blocks previewing a theme's palette.
+fn swatch_strip(hexes: &[&str]) -> String {
+    let mut s = String::new();
+    for hex in hexes {
+        if let Some((r, g, b)) = hex_rgb(hex) {
+            s.push_str(&format!("\x1b[48;2;{};{};{}m  \x1b[0m", r, g, b));
+        }
+    }
+    s
+}
+
+/// Grouped theme listing. On a TTY: color swatches per theme + the active one
+/// marked with an accent dot. Piped: plain names so it stays greppable.
+fn theme_list_text(active: &str, rich: bool) -> String {
+    use theme::Appearance::{Auto, Dark, Light};
+    let user = theme::user_theme_names();
+    let mut s = String::new();
+
+    if rich {
+        s.push_str(&format!("\n  \x1b[1mthemes\x1b[0m  \x1b[2m· active: {}\x1b[0m\n", active));
+    } else {
+        s.push_str(&format!("themes (active: {})\n", active));
+    }
+
+    let group = |s: &mut String, label: &str, names: Vec<&theme::Theme>| {
+        if names.is_empty() {
+            return;
+        }
+        if rich {
+            s.push_str(&format!("\n  \x1b[1;2m{}\x1b[0m\n", label));
+        } else {
+            s.push_str(&format!("\n{}\n", label));
+        }
+        for t in names {
+            let is_active = t.name == active;
+            let overridden = user.iter().any(|u| u == t.name);
+            if rich {
+                let marker = if is_active {
+                    let (r, g, b) = hex_rgb(t.swatch[2]).unwrap_or((255, 255, 255));
+                    format!("\x1b[38;2;{};{};{}m●\x1b[0m", r, g, b)
+                } else {
+                    " ".to_string()
+                };
+                let pad = " ".repeat(16usize.saturating_sub(t.name.chars().count()));
+                let name = if is_active { format!("\x1b[1m{}\x1b[0m", t.name) } else { t.name.to_string() };
+                let over = if overridden { "  \x1b[2m(overridden by user)\x1b[0m" } else { "" };
+                s.push_str(&format!("  {} {}{}  {}{}\n", marker, name, pad, swatch_strip(&t.swatch), over));
+            } else {
+                let marker = if is_active { "*" } else { " " };
+                let over = if overridden { "  (overridden by user)" } else { "" };
+                s.push_str(&format!("  {} {}{}\n", marker, t.name, over));
+            }
+        }
+    };
+
+    group(&mut s, "light", theme::BUILTIN.iter().filter(|t| t.appearance == Light).collect());
+    group(&mut s, "dark", theme::BUILTIN.iter().filter(|t| t.appearance == Dark).collect());
+    group(&mut s, "auto · follows OS", theme::BUILTIN.iter().filter(|t| t.appearance == Auto).collect());
+
+    let user_only: Vec<&String> = user
+        .iter()
+        .filter(|u| !theme::BUILTIN.iter().any(|t| t.name == u.as_str()))
+        .collect();
+    if !user_only.is_empty() {
+        let header = if rich { "\n  \x1b[1;2muser\x1b[0m\n" } else { "\nuser\n" };
+        s.push_str(header);
+        for name in user_only {
+            let marker = if rich {
+                if name.as_str() == active { "\x1b[1m●\x1b[0m" } else { " " }
+            } else if name.as_str() == active {
+                "*"
+            } else {
+                " "
+            };
+            s.push_str(&format!("  {} {}\n", marker, name));
+        }
+    }
+    s
+}
+
+fn run_theme_command(rest: &[String]) {
+    match rest {
+        [] => {
+            let rich = std::io::stdout().is_terminal();
+            print!("{}", theme_list_text(&theme::read_active_name(), rich));
+        }
+        [name] => {
+            if !theme::theme_exists(name) {
+                eprintln!("md: unknown theme '{}'", name);
+                eprint!("{}", theme_list_text(&theme::read_active_name(), std::io::stderr().is_terminal()));
+                std::process::exit(2);
+            }
+            if let Err(e) = theme::write_active_name(name) {
+                eprintln!("md: cannot save theme: {}", e);
+                std::process::exit(1);
+            }
+            println!("theme set to '{}'", name);
+        }
+        _ => {
+            eprintln!("Usage: md theme [<name>]");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn spawn_watcher(
