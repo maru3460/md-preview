@@ -36,6 +36,9 @@
       var row = document.createElement('div');
       row.className = 'tree-item';
       row.style.paddingLeft = (8 + depth * 16) + 'px';
+      // Phase 2（ツリー項目の右クリック）でパスを引けるよう保持しておく。
+      row.dataset.path = item.path;
+      row.dataset.kind = item.kind;
 
       var icon = document.createElement('span');
       icon.className = 'icon';
@@ -112,6 +115,7 @@
         if (html == null) return;
         if (window.MdSearch) window.MdSearch.reset();
         currentFilePath = relPath;
+        if (window.MdMenu) window.MdMenu.setCurrentFile(relPath);
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
         MdCommon.ensureHeadingIds(pane);
