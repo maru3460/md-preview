@@ -26,6 +26,7 @@ pub const DRAWIO_JS: &str = include_str!("drawio-viewer.min.js");
 pub const INIT_JS: &str = include_str!("init.js");
 pub const SEARCH_JS: &str = include_str!("search.js");
 pub const TOC_JS: &str = include_str!("toc.js");
+pub const COMMON_JS: &str = include_str!("common.js");
 
 pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
@@ -59,6 +60,22 @@ pub fn render_body(markdown: &str) -> String {
     body
 }
 
+/// fence 直後の Text イベントを CodeBlock の End まで集めて生テキストを返す。
+/// mermaid / drawio / filename 付きコードブロックで共通して使う。
+fn collect_code_text<'a, I: Iterator<Item = Event<'a>>>(
+    iter: &mut std::iter::Peekable<I>,
+) -> String {
+    let mut content = String::new();
+    for next in iter.by_ref() {
+        match next {
+            Event::Text(t) => content.push_str(&t),
+            Event::End(TagEnd::CodeBlock) => break,
+            _ => {}
+        }
+    }
+    content
+}
+
 fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'a>> {
     let mut out: Vec<Event<'a>> = Vec::new();
     let mut iter = parser.peekable();
@@ -80,28 +97,14 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
                 let filename = parts.next().map(|s| s.trim().to_string());
 
                 if lang == "mermaid" {
-                    let mut content = String::new();
-                    while let Some(next) = iter.next() {
-                        match next {
-                            Event::Text(t) => content.push_str(&t),
-                            Event::End(TagEnd::CodeBlock) => break,
-                            _ => {}
-                        }
-                    }
+                    let content = collect_code_text(&mut iter);
                     let html = format!("<pre class=\"mermaid\">{}</pre>", html_escape(&content));
                     out.push(Event::Html(html.into()));
                     continue;
                 }
 
                 if lang == "drawio" {
-                    let mut content = String::new();
-                    while let Some(next) = iter.next() {
-                        match next {
-                            Event::Text(t) => content.push_str(&t),
-                            Event::End(TagEnd::CodeBlock) => break,
-                            _ => {}
-                        }
-                    }
+                    let content = collect_code_text(&mut iter);
                     let config = format!(
                         r##"{{"highlight":"#0066cc","nav":true,"resize":true,"lightbox":true,"toolbar":"lightbox","xml":{}}}"##,
                         json_string(content.trim())
@@ -115,14 +118,7 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
                 }
 
                 if let Some(fname) = filename.filter(|s| !s.is_empty()) {
-                    let mut content = String::new();
-                    while let Some(next) = iter.next() {
-                        match next {
-                            Event::Text(t) => content.push_str(&t),
-                            Event::End(TagEnd::CodeBlock) => break,
-                            _ => {}
-                        }
-                    }
+                    let content = collect_code_text(&mut iter);
                     let lang_class = if lang.is_empty() {
                         String::new()
                     } else {
@@ -146,20 +142,47 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
     out
 }
 
-pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
-    let title = html_escape(title);
+/// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、
+/// common.js（init/folder より前に評価させたい共有ヘルパ）・hljs・search・toc を inline する。
+/// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILE 等）を末尾に差し込む。
+fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> String {
     format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
+        r#"<meta charset="utf-8">
 <title>{title}</title>
 <style>{base_css}</style>
 <style>{theme_css}</style>
 <style>{custom_css}</style>
+<script>{common_js}</script>
 <script>{hljs_js}</script>
 <script>{search_js}</script>
 <script>{toc_js}</script>
+{extra_head}"#,
+        title = html_escape(title),
+        base_css = BASE_CSS,
+        theme_css = theme_css,
+        custom_css = custom_css,
+        common_js = COMMON_JS,
+        hljs_js = HLJS_JS,
+        search_js = SEARCH_JS,
+        toc_js = TOC_JS,
+        extra_head = extra_head,
+    )
+}
+
+/// markdown 文字列を frontmatter 込みで完全な HTML ページに変換する。
+/// stdin / 単一ファイル / アセット直開きの本文生成を 1 本にまとめた共通パス。
+pub fn render_full_document(markdown: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
+    let (fm_pairs, body) = parse_frontmatter(markdown);
+    let fm_html = render_frontmatter_html(&fm_pairs);
+    build_html(&format!("{}{}", fm_html, render_body(body)), title, theme_css, custom_css)
+}
+
+pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+{head}
 </head>
 <body>
 <article class="markdown-body">
@@ -167,13 +190,7 @@ pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) ->
 </article>
 </body>
 </html>"#,
-        title = title,
-        base_css = BASE_CSS,
-        theme_css = theme_css,
-        custom_css = custom_css,
-        hljs_js = HLJS_JS,
-        search_js = SEARCH_JS,
-        toc_js = TOC_JS,
+        head = head(title, theme_css, custom_css, ""),
         body = body,
     )
 }
@@ -245,7 +262,6 @@ pub fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
 }
 
 pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial_file: Option<&str>) -> String {
-    let title = html_escape(title);
     let initial_file_json = match initial_file {
         None => "null".to_string(),
         Some(s) => json_string(s),
@@ -255,15 +271,7 @@ pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial
         r#"<!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>{title}</title>
-<style>{base_css}</style>
-<style>{theme_css}</style>
-<style>{custom_css}</style>
-<script>{hljs_js}</script>
-<script>{search_js}</script>
-<script>{toc_js}</script>
-{initial_file_script}
+{head}
 </head>
 <body class="folder-mode">
 <div class="folder-layout">
@@ -273,14 +281,7 @@ pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial
 </div>
 </body>
 </html>"#,
-        title = title,
-        base_css = BASE_CSS,
-        theme_css = theme_css,
-        custom_css = custom_css,
-        hljs_js = HLJS_JS,
-        search_js = SEARCH_JS,
-        toc_js = TOC_JS,
-        initial_file_script = initial_file_script,
+        head = head(title, theme_css, custom_css, &initial_file_script),
     )
 }
 

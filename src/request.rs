@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::html::{build_html, html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
+use crate::html::{html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html, render_full_document, DRAWIO_JS, MERMAID_JS};
 
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -156,23 +156,22 @@ pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
     }
 }
 
-fn decode(encoded: &str) -> String {
-    percent_decode(encoded)
-}
-
 fn is_md(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("md")
 }
 
-fn serve_md_fragment(file_path: &Path) -> Response {
-    let Ok(content) = std::fs::read_to_string(file_path) else { return not_found_response() };
+/// md ファイルを読み、frontmatter HTML と本文 HTML を組にして返す。読めなければ None。
+/// `.markdown-body` ラッパを付けるかは呼び出し側で決める。
+fn render_md_file(file_path: &Path) -> Option<(String, String)> {
+    let content = std::fs::read_to_string(file_path).ok()?;
     let (fm_pairs, body) = parse_frontmatter(&content);
-    let fm_html = render_frontmatter_html(&fm_pairs);
-    let fragment = format!(
-        r#"{}<div class="markdown-body">{}</div>"#,
-        fm_html,
-        render_body(body)
-    );
+    Some((render_frontmatter_html(&fm_pairs), render_body(body)))
+}
+
+// フォルダモードのプレビュー枠用フラグメント。本文だけ `.markdown-body` で包む。
+fn serve_md_fragment(file_path: &Path) -> Response {
+    let Some((fm_html, body_html)) = render_md_file(file_path) else { return not_found_response() };
+    let fragment = format!(r#"{}<div class="markdown-body">{}</div>"#, fm_html, body_html);
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
@@ -209,7 +208,7 @@ fn serve_builtin_lib(name: &str) -> Response {
 }
 
 fn handle_dir(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = decode(rel_encoded);
+    let rel = percent_decode(rel_encoded);
     let target_dir = if rel.is_empty() {
         Some(root_dir.to_path_buf())
     } else {
@@ -225,7 +224,7 @@ fn handle_dir(rel_encoded: &str, root_dir: &Path) -> Response {
 }
 
 fn handle_file(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = decode(rel_encoded);
+    let rel = percent_decode(rel_encoded);
     let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
     if is_md(&file_path) {
         serve_md_fragment(&file_path)
@@ -240,7 +239,8 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
     if is_md(&file_path) {
         let Ok(content) = std::fs::read_to_string(&file_path) else { return not_found_response() };
         let file_title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
-        let rendered = build_html(&render_body(&content), file_title, theme_css, custom_css);
+        // render_full_document を通すことで frontmatter も本来のページと同様に描画する。
+        let rendered = render_full_document(&content, file_title, theme_css, custom_css);
         ok_response("text/html; charset=utf-8", rendered.into_bytes())
     } else {
         let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
@@ -248,11 +248,10 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
     }
 }
 
+// 単一ファイルモードの body=1 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
 pub fn serve_single_file_body(file_path: &Path) -> Response {
-    let Ok(content) = std::fs::read_to_string(file_path) else { return not_found_response() };
-    let (fm_pairs, body) = parse_frontmatter(&content);
-    let fm_html = render_frontmatter_html(&fm_pairs);
-    let fragment = format!("{}{}", fm_html, render_body(body));
+    let Some((fm_html, body_html)) = render_md_file(file_path) else { return not_found_response() };
+    let fragment = format!("{}{}", fm_html, body_html);
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 

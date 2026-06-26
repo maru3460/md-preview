@@ -24,23 +24,6 @@
     panel.querySelector('.md-toc-close').addEventListener('click', closePanel);
   }
 
-  function ensureHeadingId(h) {
-    if (h.id) return h.id;
-    var base = (h.textContent || '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s-]/gu, '')
-      .trim()
-      .replace(/\s+/g, '-');
-    if (!base) base = 'h';
-    var id = base;
-    var n = 2;
-    while (document.getElementById(id)) {
-      id = base + '-' + (n++);
-    }
-    h.id = id;
-    return id;
-  }
-
   function build() {
     if (!scroller) return;
     var headings = Array.prototype.slice.call(
@@ -56,7 +39,7 @@
     emptyEl.hidden = true;
     listEl.hidden = false;
     headings.forEach(function(h) {
-      var id = ensureHeadingId(h);
+      var id = MdCommon.ensureHeadingId(h);
       var li = document.createElement('li');
       li.className = 'md-toc-item lvl-' + h.tagName.charAt(1);
       var a = document.createElement('a');

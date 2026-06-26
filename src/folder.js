@@ -1,20 +1,4 @@
 (function() {
-  var MdLibs = (function() {
-    var cache = {};
-    function load(url) {
-      if (cache[url]) return cache[url];
-      cache[url] = new Promise(function(resolve, reject) {
-        var s = document.createElement('script');
-        s.src = url;
-        s.onload = function() { resolve(); };
-        s.onerror = function() { reject(); };
-        document.head.appendChild(s);
-      });
-      return cache[url];
-    }
-    return { load: load };
-  })();
-
   var expandedDirs = new Set();
   var currentFilePath = null;
   var windowReady = false;
@@ -45,24 +29,6 @@
     } else {
       mdCheckQueue.push({path: path, row: row});
     }
-  }
-
-  function addHeadingIds() {
-    document.querySelectorAll('#preview-pane h1,#preview-pane h2,#preview-pane h3,#preview-pane h4,#preview-pane h5,#preview-pane h6').forEach(function(h) {
-      if (h.id) return;
-      var base = h.textContent
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s-]/gu, '')
-        .trim()
-        .replace(/\s+/g, '-');
-      if (!base) base = 'h';
-      var id = base;
-      var n = 2;
-      while (document.getElementById(id)) {
-        id = base + '-' + (n++);
-      }
-      h.id = id;
-    });
   }
 
   function renderItems(items, parentEl, depth) {
@@ -137,66 +103,6 @@
     return parts.join('/');
   }
 
-  function addCopyButtons(scope) {
-    scope.querySelectorAll('pre > code').forEach(function(code) {
-      var pre = code.parentNode;
-      if (pre.classList.contains('mermaid')) return;
-      var wrapper;
-      if (pre.parentNode && pre.parentNode.classList && pre.parentNode.classList.contains('code-wrapper')) {
-        wrapper = pre.parentNode;
-      } else {
-        wrapper = document.createElement('div');
-        wrapper.className = 'code-wrapper';
-        pre.parentNode.insertBefore(wrapper, pre);
-        wrapper.appendChild(pre);
-      }
-      if (wrapper.querySelector(':scope > .copy-btn')) return;
-      var btn = document.createElement('button');
-      btn.className = 'copy-btn';
-      btn.type = 'button';
-      btn.setAttribute('aria-label', 'Copy code');
-      btn.textContent = 'Copy';
-      btn.addEventListener('click', function() {
-        navigator.clipboard.writeText(code.innerText).then(function() {
-          btn.textContent = 'Copied';
-          btn.classList.add('copied');
-          setTimeout(function() {
-            btn.textContent = 'Copy';
-            btn.classList.remove('copied');
-          }, 1200);
-        }).catch(function() {
-          btn.textContent = 'Failed';
-          setTimeout(function() { btn.textContent = 'Copy'; }, 1200);
-        });
-      });
-      wrapper.appendChild(btn);
-    });
-  }
-
-  function runMermaidIn(scope) {
-    var nodes = scope.querySelectorAll('pre.mermaid');
-    if (!nodes.length) return;
-    MdLibs.load('mdpreview://localhost/__lib/mermaid.min.js').then(function() {
-      if (typeof mermaid === 'undefined') return;
-      if (!mermaid.__mdInit) {
-        var ap = window.MD_APPEARANCE || 'auto';
-        var dark = ap === 'dark' || (ap === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose' });
-        mermaid.__mdInit = true;
-      }
-      try { mermaid.run({ nodes: nodes }); } catch (e) {}
-    }).catch(function() {});
-  }
-
-  function runDrawioIn(scope) {
-    var nodes = scope.querySelectorAll('.mxgraph');
-    if (!nodes.length) return;
-    MdLibs.load('mdpreview://localhost/__lib/drawio-viewer.min.js').then(function() {
-      if (typeof GraphViewer === 'undefined') return;
-      try { GraphViewer.processElements(); } catch (e) {}
-    }).catch(function() {});
-  }
-
   function loadPreview(relPath, preserveScroll) {
     var pane = document.getElementById('preview-pane');
     var savedScroll = preserveScroll ? pane.scrollTop : 0;
@@ -208,11 +114,11 @@
         currentFilePath = relPath;
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
-        addHeadingIds();
+        MdCommon.ensureHeadingIds(pane);
         if (window.hljs) hljs.highlightAll();
-        addCopyButtons(pane);
-        runMermaidIn(pane);
-        runDrawioIn(pane);
+        MdCommon.addCopyButtons(pane);
+        MdCommon.runMermaid(pane);
+        MdCommon.runDrawio(pane);
         if (window.MdToc) window.MdToc.refresh();
       })
       .catch(function() {});
