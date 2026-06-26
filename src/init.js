@@ -1,12 +1,18 @@
 function addHeadingIds() {
     document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function(h) {
-        if (!h.id) {
-            h.id = h.textContent
-                .toLowerCase()
-                .replace(/[^\p{L}\p{N}\s-]/gu, '')
-                .trim()
-                .replace(/\s+/g, '-');
+        if (h.id) return;
+        var base = h.textContent
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s-]/gu, '')
+            .trim()
+            .replace(/\s+/g, '-');
+        if (!base) base = 'h';
+        var id = base;
+        var n = 2;
+        while (document.getElementById(id)) {
+            id = base + '-' + (n++);
         }
+        h.id = id;
     });
 }
 
