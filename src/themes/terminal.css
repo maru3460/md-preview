@@ -1,0 +1,141 @@
+/* ──────────────────────────────────────────────────────────────
+   terminal — 緑リン光のCRT端末。全等幅で、見出しとリンクに微かな発光。
+   固定ダーク。signature: phosphor glow（text-shadow）+ オール等幅。
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: dark; }
+
+body {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    line-height: 1.7;
+    color: #6ee787;
+    background-color: #0b0f0b;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: 0;
+    color: #b9f6c7;
+    text-shadow: 0 0 6px rgba(110, 231, 135, 0.45);
+}
+
+h1 { border-bottom-color: #1c3a24; }
+h2 { border-bottom-color: #1c3a24; }
+
+a { color: #aef5be; text-decoration: underline; text-shadow: 0 0 5px rgba(174, 245, 190, 0.5); }
+a:hover { background-color: #14241a; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #0f1810;
+    color: #6ee787;
+}
+pre { line-height: 1.55; background-color: #0e150e; }
+pre code { background-color: transparent; color: inherit; }
+
+blockquote { color: #4a9d63; border-left-color: #1c3a24; }
+
+th { font-weight: 700; background-color: #0f1810; }
+th, td { border-color: #1c3a24; }
+tr:nth-child(2n) { background-color: #0e140e; }
+hr { background-color: #1c3a24; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 700; }
+
+.frontmatter { background-color: #0e150e; border-color: #1c3a24; line-height: 1.7; }
+.fm-key { color: #4a9d63; font-weight: 700; }
+.fm-val { color: #6ee787; }
+.binary-msg { color: #4a9d63; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 700; line-height: 1; }
+
+blockquote.markdown-alert-note { border-left-color: #6ee787; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #6ee787; }
+blockquote.markdown-alert-tip { border-left-color: #b9f6c7; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #b9f6c7; }
+blockquote.markdown-alert-important { border-left-color: #aef5be; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #aef5be; }
+blockquote.markdown-alert-warning { border-left-color: #ffe066; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #ffe066; }
+blockquote.markdown-alert-caution { border-left-color: #ff6b6b; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #ff6b6b; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #4a9d63;
+    background-color: #0f1810;
+    border-bottom-color: #1c3a24;
+}
+.copy-btn {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #6ee787;
+    background-color: #0e150e;
+    border-color: #1c3a24;
+}
+.copy-btn:hover { color: #b9f6c7; background-color: #14241a; }
+.copy-btn.copied { color: #b9f6c7; border-color: #6ee787; }
+
+#sidebar { background-color: #0e150e; }
+#resizer { background-color: #1c3a24; }
+#resizer:hover, #resizer.dragging { background-color: #6ee787; }
+
+.tree-item { color: inherit; }
+.tree-item:hover { background-color: #14241a; }
+.tree-item.active {
+    background-color: #14241a;
+    color: #b9f6c7;
+    box-shadow: inset 2px 0 0 #6ee787;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #2f5e3d; }
+.tree-item.has-md > .icon { color: #6ee787; font-weight: 700; }
+.tree-item.md-file > .icon { background-color: #4a9d63; }
+
+.md-search-bar {
+    background-color: #0e150e;
+    border-color: #1c3a24;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #6ee787;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #4a9d63; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #6ee787; line-height: 1; }
+.md-search-btn:hover { background-color: #14241a; color: #b9f6c7; }
+.md-search-btn.active { background-color: #14241a; color: #b9f6c7; border-color: #2f6e44; }
+mark.md-search-hit { background-color: #6ee787; color: #0b0f0b; }
+mark.md-search-hit-current { background-color: #ffe066; color: #0b0f0b; outline: 1px solid #ffae00; }
+
+.md-toc-panel {
+    background-color: #0b0f0b;
+    border-left-color: #1c3a24;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.5);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #6ee787;
+}
+.md-toc-header { border-bottom-color: #1c3a24; }
+.md-toc-title { font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #4a9d63; }
+.md-toc-close { background: transparent; color: #4a9d63; line-height: 1; }
+.md-toc-close:hover { color: #b9f6c7; background-color: #14241a; }
+.md-toc-empty { color: #2f5e3d; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #14241a; text-decoration: none; }
+.md-toc-list a.active { color: #b9f6c7; border-left-color: #6ee787; background-color: #14241a; }
+.md-toc-list .lvl-1 > a { font-weight: 700; }
+.md-toc-list .lvl-4 > a { color: #4a9d63; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #4a9d63; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border-color: #1c3a24; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }

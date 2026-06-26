@@ -232,13 +232,13 @@ fn handle_file(rel_encoded: &str, root_dir: &Path) -> Response {
     }
 }
 
-fn handle_asset(url_path: &str, root_dir: &Path, custom_css: &str) -> Response {
+fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &str) -> Response {
     let relative = url_path.strip_prefix('/').unwrap_or(url_path);
     let file_path = root_dir.join(relative);
     if is_md(&file_path) {
         let Ok(content) = std::fs::read_to_string(&file_path) else { return not_found_response() };
         let file_title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
-        let rendered = build_html(&render_body(&content), file_title, custom_css);
+        let rendered = build_html(&render_body(&content), file_title, theme_css, custom_css);
         ok_response("text/html; charset=utf-8", rendered.into_bytes())
     } else {
         let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
@@ -259,6 +259,7 @@ pub fn handle_request(
     query: &str,
     root_dir: &Path,
     html_bytes: &[u8],
+    theme_css: &str,
     custom_css: &str,
     single_file: Option<&Path>,
 ) -> Response {
@@ -280,7 +281,7 @@ pub fn handle_request(
     if url_path == "/" {
         return ok_response("text/html; charset=utf-8", html_bytes.to_vec());
     }
-    handle_asset(url_path, root_dir, custom_css)
+    handle_asset(url_path, root_dir, theme_css, custom_css)
 }
 
 #[cfg(test)]
