@@ -1,0 +1,140 @@
+/* ──────────────────────────────────────────────────────────────
+   solarized-light — 定番の黄み帯びたライト。既存の light 群とは色温度が
+   違う、低彩度で目に優しい配色。固定ライト。
+   palette: ethanschoonover.com/solarized
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: light; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    color: #657b83;
+    background-color: #fdf6e3;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: #586e75;
+}
+
+h1 { border-bottom-color: #eee8d5; }
+h2 { border-bottom-color: #eee8d5; }
+
+a { color: #268bd2; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #eee8d5;
+    color: #586e75;
+}
+pre { line-height: 1.5; background-color: #eee8d5; }
+pre code { background-color: transparent; color: inherit; }
+
+blockquote { color: #93a1a1; border-left-color: #ddd6c1; }
+
+th { font-weight: 600; background-color: #eee8d5; }
+th, td { border-color: #e3dcc6; }
+tr:nth-child(2n) { background-color: #f7f0dc; }
+hr { background-color: #e3dcc6; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 600; }
+
+.frontmatter { background-color: #eee8d5; border-color: #e3dcc6; line-height: 1.8; }
+.fm-key { color: #93a1a1; font-weight: 600; }
+.fm-val { color: #586e75; }
+.binary-msg { color: #93a1a1; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 600; line-height: 1; }
+
+blockquote.markdown-alert-note { border-left-color: #268bd2; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #268bd2; }
+blockquote.markdown-alert-tip { border-left-color: #859900; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #859900; }
+blockquote.markdown-alert-important { border-left-color: #6c71c4; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #6c71c4; }
+blockquote.markdown-alert-warning { border-left-color: #b58900; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #b58900; }
+blockquote.markdown-alert-caution { border-left-color: #dc322f; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #dc322f; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #93a1a1;
+    background-color: #eee8d5;
+    border-bottom-color: #e3dcc6;
+}
+.copy-btn {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #657b83;
+    background-color: #fdf6e3;
+    border-color: #e3dcc6;
+}
+.copy-btn:hover { color: #586e75; background-color: #eee8d5; }
+.copy-btn.copied { color: #859900; border-color: #859900; }
+
+#sidebar { background-color: #f4ecd6; }
+#resizer { background-color: #e3dcc6; }
+#resizer:hover, #resizer.dragging { background-color: #268bd2; }
+
+.tree-item { color: inherit; }
+.tree-item:hover { background-color: #eee8d5; }
+.tree-item.active {
+    background-color: #dceaf2;
+    color: #268bd2;
+    box-shadow: inset 2px 0 0 #268bd2;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #b6b09a; }
+.tree-item.has-md > .icon { color: #268bd2; font-weight: 700; }
+.tree-item.md-file > .icon { background-color: #5a9bc4; }
+
+.md-search-bar {
+    background-color: #fdf6e3;
+    border-color: #e3dcc6;
+    box-shadow: 0 4px 12px rgba(88, 110, 117, 0.12);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #586e75;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #93a1a1; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #657b83; line-height: 1; }
+.md-search-btn:hover { background-color: #eee8d5; color: #586e75; }
+.md-search-btn.active { background-color: #dceaf2; color: #268bd2; border-color: #a9cae0; }
+mark.md-search-hit { background-color: #f3e6a0; color: inherit; }
+mark.md-search-hit-current { background-color: #e8b923; color: #fdf6e3; outline: 1px solid #b58900; }
+
+.md-toc-panel {
+    background-color: #fdf6e3;
+    border-left-color: #e3dcc6;
+    box-shadow: -4px 0 12px rgba(88, 110, 117, 0.1);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #586e75;
+}
+.md-toc-header { border-bottom-color: #e3dcc6; }
+.md-toc-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #93a1a1; }
+.md-toc-close { background: transparent; color: #93a1a1; line-height: 1; }
+.md-toc-close:hover { color: #586e75; background-color: #eee8d5; }
+.md-toc-empty { color: #93a1a1; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #eee8d5; text-decoration: none; }
+.md-toc-list a.active { color: #268bd2; border-left-color: #268bd2; background-color: #dceaf2; }
+.md-toc-list .lvl-1 > a { font-weight: 600; }
+.md-toc-list .lvl-4 > a { color: #93a1a1; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #93a1a1; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border-color: #e3dcc6; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }

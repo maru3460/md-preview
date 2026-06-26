@@ -71,10 +71,11 @@ function runMermaid(root) {
     MdLibs.load('mdpreview://localhost/__lib/mermaid.min.js').then(function() {
         if (typeof mermaid === 'undefined') return;
         if (!mermaid.__mdInit) {
-            var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var ap = window.MD_APPEARANCE || 'auto';
+            var dark = ap === 'dark' || (ap === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
             mermaid.initialize({
                 startOnLoad: false,
-                theme: dark ? 'dark' : 'default',
+                theme: dark ? 'dark' : 'neutral',
                 securityLevel: 'loose'
             });
             mermaid.__mdInit = true;

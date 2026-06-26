@@ -1,0 +1,140 @@
+/* ──────────────────────────────────────────────────────────────
+   rose-pine — くすんだムーディな紫ダーク。iris の落ち着いた階調で、
+   dracula の鮮やかさとは対照的な静けさ。固定ダーク。
+   palette: rosepinetheme.com
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: dark; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    color: #e0def4;
+    background-color: #191724;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: #e0def4;
+}
+
+h1 { border-bottom-color: #26233a; }
+h2 { border-bottom-color: #26233a; }
+
+a { color: #c4a7e7; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #26233a;
+    color: #e0def4;
+}
+pre { line-height: 1.5; background-color: #1f1d2e; }
+pre code { background-color: transparent; color: inherit; }
+
+blockquote { color: #908caa; border-left-color: #403d52; }
+
+th { font-weight: 600; background-color: #1f1d2e; }
+th, td { border-color: #26233a; }
+tr:nth-child(2n) { background-color: #1c1b29; }
+hr { background-color: #26233a; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 600; }
+
+.frontmatter { background-color: #1f1d2e; border-color: #26233a; line-height: 1.8; }
+.fm-key { color: #908caa; font-weight: 600; }
+.fm-val { color: #e0def4; }
+.binary-msg { color: #908caa; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 600; line-height: 1; }
+
+blockquote.markdown-alert-note { border-left-color: #9ccfd8; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #9ccfd8; }
+blockquote.markdown-alert-tip { border-left-color: #56949f; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #56949f; }
+blockquote.markdown-alert-important { border-left-color: #c4a7e7; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #c4a7e7; }
+blockquote.markdown-alert-warning { border-left-color: #f6c177; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #f6c177; }
+blockquote.markdown-alert-caution { border-left-color: #eb6f92; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #eb6f92; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #908caa;
+    background-color: #26233a;
+    border-bottom-color: #403d52;
+}
+.copy-btn {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #e0def4;
+    background-color: #1f1d2e;
+    border-color: #403d52;
+}
+.copy-btn:hover { color: #ffffff; background-color: #26233a; }
+.copy-btn.copied { color: #9ccfd8; border-color: #9ccfd8; }
+
+#sidebar { background-color: #1f1d2e; }
+#resizer { background-color: #26233a; }
+#resizer:hover, #resizer.dragging { background-color: #c4a7e7; }
+
+.tree-item { color: inherit; }
+.tree-item:hover { background-color: #26233a; }
+.tree-item.active {
+    background-color: #26233a;
+    color: #c4a7e7;
+    box-shadow: inset 2px 0 0 #c4a7e7;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #6e6a86; }
+.tree-item.has-md > .icon { color: #9ccfd8; font-weight: 700; }
+.tree-item.md-file > .icon { background-color: #c4a7e7; }
+
+.md-search-bar {
+    background-color: #1f1d2e;
+    border-color: #403d52;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #e0def4;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #908caa; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #e0def4; line-height: 1; }
+.md-search-btn:hover { background-color: #26233a; color: #ffffff; }
+.md-search-btn.active { background-color: #26233a; color: #c4a7e7; border-color: #403d52; }
+mark.md-search-hit { background-color: #f6c177; color: #191724; }
+mark.md-search-hit-current { background-color: #ebbcba; color: #191724; outline: 1px solid #eb6f92; }
+
+.md-toc-panel {
+    background-color: #191724;
+    border-left-color: #26233a;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.45);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #e0def4;
+}
+.md-toc-header { border-bottom-color: #26233a; }
+.md-toc-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #908caa; }
+.md-toc-close { background: transparent; color: #908caa; line-height: 1; }
+.md-toc-close:hover { color: #ffffff; background-color: #26233a; }
+.md-toc-empty { color: #6e6a86; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #26233a; text-decoration: none; }
+.md-toc-list a.active { color: #c4a7e7; border-left-color: #c4a7e7; background-color: #26233a; }
+.md-toc-list .lvl-1 > a { font-weight: 600; }
+.md-toc-list .lvl-4 > a { color: #908caa; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #908caa; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border-color: #26233a; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }

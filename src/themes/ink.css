@@ -1,0 +1,143 @@
+/* ──────────────────────────────────────────────────────────────
+   ink — ブルータリスト。純黒白・極太・装飾ゼロ・最大コントラスト。
+   角丸を潰し、罫線を太い黒線にし、アラートはモノクロ。固定ライト。
+   ────────────────────────────────────────────────────────────── */
+
+:root { color-scheme: light; }
+
+body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+    color: #000000;
+    background-color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    color: #000000;
+}
+/* thick black rules under the top headings */
+h1 { border-bottom: 4px solid #000000; }
+h2 { border-bottom: 2px solid #000000; }
+
+a { color: #000000; text-decoration: underline; text-underline-offset: 2px; }
+a:hover { background-color: #000000; color: #ffffff; text-decoration: none; }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background-color: #ebebeb;
+    color: #000000;
+    border-radius: 0;
+}
+pre { line-height: 1.5; background-color: #f2f2f2; border-radius: 0; }
+pre code { background-color: transparent; color: inherit; border-radius: 0; }
+
+blockquote { color: #000000; border-left: 6px solid #000000; }
+
+th { font-weight: 800; background-color: #000000; color: #ffffff; }
+th, td { border: 2px solid #000000; }
+tr:nth-child(2n) { background-color: #f2f2f2; }
+hr { background-color: #000000; }
+
+sup.footnote-reference a { text-decoration: none; font-weight: 800; }
+
+.frontmatter { background-color: #f2f2f2; border: 2px solid #000000; border-radius: 0; line-height: 1.7; }
+.fm-key { color: #000000; font-weight: 800; }
+.fm-val { color: #000000; }
+.binary-msg { color: #000000; font-style: italic; }
+
+blockquote.markdown-alert-note,
+blockquote.markdown-alert-tip,
+blockquote.markdown-alert-important,
+blockquote.markdown-alert-warning,
+blockquote.markdown-alert-caution { color: inherit; }
+
+.markdown-alert-title { font-weight: 800; line-height: 1; }
+
+/* alerts are monochrome — heavy black left bar, black titles */
+blockquote.markdown-alert-note { border-left-color: #000000; }
+blockquote.markdown-alert-note .markdown-alert-title { color: #000000; }
+blockquote.markdown-alert-tip { border-left-color: #000000; }
+blockquote.markdown-alert-tip .markdown-alert-title { color: #000000; }
+blockquote.markdown-alert-important { border-left-color: #000000; }
+blockquote.markdown-alert-important .markdown-alert-title { color: #000000; }
+blockquote.markdown-alert-warning { border-left-color: #000000; }
+blockquote.markdown-alert-warning .markdown-alert-title { color: #000000; }
+blockquote.markdown-alert-caution { border-left-color: #000000; }
+blockquote.markdown-alert-caution .markdown-alert-title { color: #000000; }
+
+.code-filename {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    color: #ffffff;
+    background-color: #000000;
+    border-bottom-color: #000000;
+}
+.copy-btn {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #000000;
+    background-color: #ffffff;
+    border-color: #000000;
+    border-radius: 0;
+}
+.copy-btn:hover { color: #ffffff; background-color: #000000; }
+.copy-btn.copied { color: #ffffff; background-color: #000000; border-color: #000000; }
+
+#sidebar { background-color: #f5f5f5; }
+#resizer { background-color: #000000; }
+#resizer:hover, #resizer.dragging { background-color: #555555; }
+
+.tree-item { color: inherit; border-radius: 0; }
+.tree-item:hover { background-color: #ebebeb; }
+.tree-item.active {
+    background-color: #000000;
+    color: #ffffff;
+    box-shadow: inset 3px 0 0 #000000;
+}
+.tree-item .icon { font-style: normal; line-height: 18px; color: #555555; }
+.tree-item.has-md > .icon { color: #000000; font-weight: 800; }
+.tree-item.md-file > .icon { background-color: #000000; }
+
+.md-search-bar {
+    background-color: #ffffff;
+    border-color: #000000;
+    border-radius: 0;
+    box-shadow: 4px 4px 0 #000000;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #000000;
+}
+.md-search-input { background: transparent; color: inherit; font-family: inherit; }
+.md-search-counter { color: #000000; font-variant-numeric: tabular-nums; }
+.md-search-btn { background: transparent; color: #000000; line-height: 1; border-radius: 0; }
+.md-search-btn:hover { background-color: #000000; color: #ffffff; }
+.md-search-btn.active { background-color: #000000; color: #ffffff; border-color: #000000; }
+mark.md-search-hit { background-color: #ffeb3b; color: #000000; }
+mark.md-search-hit-current { background-color: #000000; color: #ffffff; outline: 2px solid #000000; }
+
+.md-toc-panel {
+    background-color: #ffffff;
+    border-left: 2px solid #000000;
+    box-shadow: none;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #000000;
+}
+.md-toc-header { border-bottom: 2px solid #000000; }
+.md-toc-title { font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #000000; }
+.md-toc-close { background: transparent; color: #000000; line-height: 1; border-radius: 0; }
+.md-toc-close:hover { color: #ffffff; background-color: #000000; }
+.md-toc-empty { color: #555555; font-style: italic; }
+.md-toc-list a { line-height: 1.4; color: inherit; text-decoration: none; }
+.md-toc-list a:hover { background-color: #ebebeb; text-decoration: none; }
+.md-toc-list a.active { color: #000000; border-left-color: #000000; background-color: #ebebeb; font-weight: 700; }
+.md-toc-list .lvl-1 > a { font-weight: 800; }
+.md-toc-list .lvl-4 > a { color: #555555; }
+.md-toc-list .lvl-5 > a,
+.md-toc-list .lvl-6 > a { color: #555555; }
+
+pre.mermaid { background-color: transparent; }
+
+.drawio-wrap { background-color: #ffffff; border: 2px solid #000000; border-radius: 0; }
+.drawio-wrap .mxgraph { background-color: #ffffff; }
