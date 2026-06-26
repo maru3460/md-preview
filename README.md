@@ -18,7 +18,11 @@ cargo install --path .
 
 `~/.cargo/bin/md` としてインストールされます。`PATH` に含まれていることを確認してください。
 
-アンインストールは `cargo uninstall md-preview`。
+## アンインストール
+
+```sh
+cargo uninstall md-preview
+```
 
 ## 使い方
 
@@ -49,7 +53,7 @@ Markdownファイルを含まないディレクトリは自動的にツリーか
 
 ## キーボードショートカット
 
-`⌘W` でウィンドウを閉じる（起動元のアプリにフォーカスを戻して終了）。
+`⌘W` でウィンドウを閉じる。
 
 ## カスタムCSS
 

@@ -18,10 +18,8 @@ pub fn json_string(s: &str) -> String {
     out
 }
 
-pub const CSS: &str = include_str!("style.css");
+pub const BASE_CSS: &str = include_str!("base.css");
 pub const HLJS_JS: &str = include_str!("highlight.min.js");
-pub const HLJS_LIGHT_CSS: &str = include_str!("hljs-light.min.css");
-pub const HLJS_DARK_CSS: &str = include_str!("hljs-dark.min.css");
 pub const MERMAID_JS: &str = include_str!("mermaid.min.js");
 pub const DRAWIO_JS: &str = include_str!("drawio-viewer.min.js");
 
@@ -148,16 +146,15 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
     out
 }
 
-pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
+pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>{title}</title>
-<style>{css}</style>
-<style>{hljs_light}</style>
-<style>@media(prefers-color-scheme:dark){{{hljs_dark}}}</style>
+<style>{base_css}</style>
+<style>{theme_css}</style>
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
 <script>{search_js}</script>
@@ -170,9 +167,8 @@ pub fn build_html(body: &str, title: &str, custom_css: &str) -> String {
 </body>
 </html>"#,
         title = title,
-        css = CSS,
-        hljs_light = HLJS_LIGHT_CSS,
-        hljs_dark = HLJS_DARK_CSS,
+        base_css = BASE_CSS,
+        theme_css = theme_css,
         custom_css = custom_css,
         hljs_js = HLJS_JS,
         search_js = SEARCH_JS,
@@ -247,7 +243,7 @@ pub fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
     format!(r#"<div class="frontmatter">{}</div>"#, rows)
 }
 
-pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&str>) -> String {
+pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial_file: Option<&str>) -> String {
     let initial_file_json = match initial_file {
         None => "null".to_string(),
         Some(s) => json_string(s),
@@ -259,9 +255,8 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
 <head>
 <meta charset="utf-8">
 <title>{title}</title>
-<style>{css}</style>
-<style>{hljs_light}</style>
-<style>@media(prefers-color-scheme:dark){{{hljs_dark}}}</style>
+<style>{base_css}</style>
+<style>{theme_css}</style>
 <style>{custom_css}</style>
 <script>{hljs_js}</script>
 <script>{search_js}</script>
@@ -277,9 +272,8 @@ pub fn build_folder_html(title: &str, custom_css: &str, initial_file: Option<&st
 </body>
 </html>"#,
         title = title,
-        css = CSS,
-        hljs_light = HLJS_LIGHT_CSS,
-        hljs_dark = HLJS_DARK_CSS,
+        base_css = BASE_CSS,
+        theme_css = theme_css,
         custom_css = custom_css,
         hljs_js = HLJS_JS,
         search_js = SEARCH_JS,
@@ -314,7 +308,7 @@ mod tests {
     #[test]
     fn build_html_no_longer_inlines_diagram_libs() {
         // mermaid alone is ~3MB; with lazy loading the page must stay small.
-        let page = build_html("<p>hi</p>", "t", "");
+        let page = build_html("<p>hi</p>", "t", "", "");
         assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
         assert!(page.contains("<p>hi</p>"));
     }
