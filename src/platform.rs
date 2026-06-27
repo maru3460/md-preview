@@ -1,3 +1,40 @@
+use std::path::Path;
+
+/// 右クリックメニュー由来のクリップボード書き込み（絶対パス）。
+/// IPC ハンドラ（macOS では WKWebView がメインスレッドで配信）から呼ぶ前提。
+#[cfg(target_os = "macos")]
+pub fn copy_to_clipboard(text: &str) {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+    let pb = NSPasteboard::generalPasteboard();
+    let ns = NSString::from_str(text);
+    unsafe {
+        pb.clearContents();
+        pb.setString_forType(&ns, NSPasteboardTypeString);
+    }
+}
+
+/// Finder で対象ファイルを選択表示する（Reveal in Finder）。
+#[cfg(target_os = "macos")]
+pub fn reveal_in_finder(path: &Path) {
+    std::process::Command::new("open").arg("-R").arg(path).spawn().ok();
+}
+
+/// 既定アプリでファイルを開く。実行系拡張子の弾きは呼び出し側で行う。
+#[cfg(target_os = "macos")]
+pub fn open_default(path: &Path) {
+    std::process::Command::new("open").arg(path).spawn().ok();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn copy_to_clipboard(_text: &str) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reveal_in_finder(_path: &Path) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_default(_path: &Path) {}
+
 #[cfg(target_os = "macos")]
 pub fn get_frontmost_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;
