@@ -116,6 +116,25 @@
     }).catch(function() {});
   }
 
+  // Cmd/Ctrl+A で本文（.markdown-body）だけを全選択する。ページ全体（サイドバーや
+  // フロントマター外の UI）を巻き込まないようにするためのもの。
+  // 入力欄や編集可能要素にフォーカスがある時は通常の全選択に任せる。
+  function selectBody(e) {
+    if (!(e.metaKey || e.ctrlKey) || e.key !== 'a') return;
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    var body = document.querySelector('.markdown-body');
+    if (!body) return;
+    e.preventDefault();
+    var sel = window.getSelection();
+    if (!sel) return;
+    var range = document.createRange();
+    range.selectNodeContents(body);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  document.addEventListener('keydown', selectBody);
+
   window.MdCommon = {
     loadLib: loadLib,
     slugify: slugify,
@@ -123,6 +142,7 @@
     ensureHeadingIds: ensureHeadingIds,
     addCopyButtons: addCopyButtons,
     runMermaid: runMermaid,
-    runDrawio: runDrawio
+    runDrawio: runDrawio,
+    selectBody: selectBody
   };
 })();
