@@ -33,6 +33,8 @@ struct AppConfig {
     root_dir: PathBuf,
     single_file_path: Option<PathBuf>,
     watch_enabled: bool,
+    /// 右クリックメニューの出し分けに使う実行モード。"folder" | "single" | "stdin"。
+    menu_mode: &'static str,
 }
 
 /// stdin から読んだ markdown を単一ページとして表示する設定。監視は行わない。
@@ -53,6 +55,7 @@ fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<Pa
         root_dir: root,
         single_file_path: None,
         watch_enabled: false,
+        menu_mode: "stdin",
     }
 }
 
@@ -87,6 +90,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             root_dir: path,
             single_file_path: None,
             watch_enabled: true,
+            menu_mode: "folder",
         }
     } else if file_in_cwd {
         // cwd 配下のファイル: cwd を root にした folder モードで開き、その1枚を初期表示。
@@ -109,6 +113,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             root_dir: cwd,
             single_file_path: None,
             watch_enabled: true,
+            menu_mode: "folder",
         }
     } else {
         // cwd 外の単一ファイル: 単一ページ表示。親ディレクトリを root にして監視する。
@@ -134,6 +139,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             root_dir: base_dir,
             single_file_path: Some(path),
             watch_enabled: true,
+            menu_mode: "single",
         }
     }
 }
@@ -203,6 +209,7 @@ fn main() {
         root_dir,
         single_file_path,
         watch_enabled,
+        menu_mode,
     } = if stdin_mode {
         build_stdin_config(&theme_css, &custom_css, &current_dir)
     } else {
@@ -230,7 +237,21 @@ fn main() {
 
     // Expose the resolved theme's appearance to the page so JS-rendered
     // diagrams (mermaid) follow the theme instead of the OS dark-mode setting.
-    let init_script = format!("window.MD_APPEARANCE = '{}';\n{}", appearance.as_str(), init_script);
+    // MD_MENU_MODE drives which right-click items are enabled/shown. Both are
+    // injected via the initialization script (a WKUserScript), which runs before
+    // page scripts and is exempt from the page CSP — so the context menu can read
+    // them even though the document forbids inline page scripts.
+    let init_script = format!(
+        "window.MD_APPEARANCE = '{}'; window.MD_MENU_MODE = '{}';\n{}",
+        appearance.as_str(),
+        menu_mode,
+        init_script
+    );
+
+    // The custom-protocol closure below moves `root_dir`; clone what the IPC
+    // handler needs (path resolution for copy-abs/reveal/open) beforehand.
+    let ipc_root = root_dir.clone();
+    let ipc_single = single_file_path.clone();
 
     let webview = WebViewBuilder::new()
         .with_initialization_script(&init_script)
@@ -267,10 +288,16 @@ fn main() {
             }
         })
         .with_ipc_handler(move |msg| {
-            match msg.body().as_str() {
+            let body = msg.body().as_str();
+            match body {
                 "close" => { let _ = proxy.send_event(AppEvent::Close); }
                 "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
-                _ => {}
+                _ => {
+                    if let Some(rest) = body.strip_prefix("menu:") {
+                        let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
+                        handle_menu(verb, payload, &ipc_root, ipc_single.as_deref());
+                    }
+                }
             }
         })
         .with_url("mdpreview://localhost/")
@@ -309,6 +336,62 @@ fn main() {
             _ => {}
         }
     });
+}
+
+/// 右クリックメニュー由来の IPC（`menu:<verb>:<payload>`）を処理する。
+/// 相対パス・選択テキストのコピーは JS 側で完結するので、ここに来るのは
+/// 絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つだけ。
+fn handle_menu(verb: &str, payload: &str, root: &Path, single: Option<&Path>) {
+    match verb {
+        "abs" => {
+            if let Some(p) = resolve_target(payload, root, single) {
+                platform::copy_to_clipboard(&p.to_string_lossy());
+            }
+        }
+        "reveal" => {
+            if let Some(p) = resolve_target(payload, root, single) {
+                platform::reveal_in_finder(&p);
+            }
+        }
+        "open" => {
+            if let Some(p) = resolve_target(payload, root, single) {
+                if !is_blocked_ext(&p) {
+                    platform::open_default(&p);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// メニュー操作対象の絶対パスを解決する。`rel` が空なら単一ファイルモードの
+/// single_file_path を、非空なら `safe_join` で root 内に限定して解決する。
+/// root 外（traversal・絶対パス・root 外へ向かう symlink）は None。
+fn resolve_target(rel: &str, root: &Path, single: Option<&Path>) -> Option<PathBuf> {
+    let rel = rel.trim();
+    if rel.is_empty() {
+        single.map(|p| p.to_path_buf())
+    } else {
+        safe_join(root, rel)
+    }
+}
+
+/// `open` で起動すると任意コード実行・任意URL遷移になりうる拡張子を弾く。
+/// CSP で本文の script は無効化済みだが、多層防御として実行系の起動を拒否する。
+/// （`open` はテキスト系拡張子を実行せず既定エディタで開くだけなので、ここでは
+/// 実際に「起動/遷移」しうる型だけを対象にする。）
+fn is_blocked_ext(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some(
+            "app" | "command" | "terminal" | "workflow" | "scpt" | "applescript"
+                | "osascript" | "action" | "webloc" | "url" | "fileloc" | "shortcut"
+                | "appex" | "xpc" | "prefpane" | "qlgenerator" | "vbs"
+        )
+    )
 }
 
 fn hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {

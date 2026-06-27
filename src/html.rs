@@ -27,6 +27,20 @@ pub const INIT_JS: &str = include_str!("init.js");
 pub const SEARCH_JS: &str = include_str!("search.js");
 pub const TOC_JS: &str = include_str!("toc.js");
 pub const COMMON_JS: &str = include_str!("common.js");
+pub const CONTEXT_JS: &str = include_str!("contextmenu.js");
+
+/// CSP の nonce を生成する。本文（untrusted な Markdown）に埋め込まれた inline
+/// script を実行させないため、自前の inline script だけにこの nonce を付ける。
+/// 攻撃者は静的なファイルなので nonce を読めず（ブラウザが nonce 属性を隠す）、
+/// script を走らせて nonce を得ることもできない（鶏卵）ため、時刻由来で十分。
+fn make_nonce() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let n = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:032x}", n)
+}
 
 pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
@@ -145,18 +159,25 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
 /// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、
 /// common.js（init/folder より前に評価させたい共有ヘルパ）・hljs・search・toc を inline する。
 /// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILE 等）を末尾に差し込む。
-fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> String {
+fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce: &str) -> String {
+    // CSP: script は nonce 付きの自前 script と同一オリジン（mdpreview://localhost、
+    // /__lib/ の mermaid・drawio 等）のみ許可。'unsafe-inline' を入れないことで、
+    // 本文に書かれた <script> や on* 属性は実行されない。'unsafe-eval' は mermaid/drawio
+    // 用の保険だが、nonce 無しでは攻撃者 script 自体が走らないため eval には到達できない。
     format!(
         r#"<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; media-src 'self' data:; frame-src 'self'; worker-src 'self' blob:">
 <title>{title}</title>
 <style>{base_css}</style>
 <style>{theme_css}</style>
 <style>{custom_css}</style>
-<script>{common_js}</script>
-<script>{hljs_js}</script>
-<script>{search_js}</script>
-<script>{toc_js}</script>
+<script nonce="{nonce}">{common_js}</script>
+<script nonce="{nonce}">{hljs_js}</script>
+<script nonce="{nonce}">{search_js}</script>
+<script nonce="{nonce}">{toc_js}</script>
+<script nonce="{nonce}">{context_js}</script>
 {extra_head}"#,
+        nonce = nonce,
         title = html_escape(title),
         base_css = BASE_CSS,
         theme_css = theme_css,
@@ -165,6 +186,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> Str
         hljs_js = HLJS_JS,
         search_js = SEARCH_JS,
         toc_js = TOC_JS,
+        context_js = CONTEXT_JS,
         extra_head = extra_head,
     )
 }
@@ -178,6 +200,7 @@ pub fn render_full_document(markdown: &str, title: &str, theme_css: &str, custom
 }
 
 pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
+    let nonce = make_nonce();
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -190,7 +213,7 @@ pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) ->
 </article>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, ""),
+        head = head(title, theme_css, custom_css, "", &nonce),
         body = body,
     )
 }
@@ -266,7 +289,11 @@ pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial
         None => "null".to_string(),
         Some(s) => json_string(s),
     };
-    let initial_file_script = format!("<script>var INITIAL_FILE = {};</script>", initial_file_json);
+    let nonce = make_nonce();
+    let initial_file_script = format!(
+        "<script nonce=\"{}\">var INITIAL_FILE = {};</script>",
+        nonce, initial_file_json
+    );
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -281,7 +308,7 @@ pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial
 </div>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, &initial_file_script),
+        head = head(title, theme_css, custom_css, &initial_file_script, &nonce),
     )
 }
 
