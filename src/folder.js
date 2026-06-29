@@ -56,6 +56,21 @@
 
         scheduleHasMdCheck(item.path, row);
 
+        // 子要素を読み込んで展開する。子の描画完了で解決する Promise を返す。
+        function expand() {
+          children.classList.add('open');
+          row.classList.add('dir-open');
+          expandedDirs.add(item.path);
+          if (loaded) return Promise.resolve();
+          loaded = true;
+          return fetch('/?dir=' + encodeURIComponent(item.path))
+            .then(function(r) { return r.json(); })
+            .then(function(subItems) { renderItems(subItems, children, depth + 1); })
+            .catch(function() {});
+        }
+        // revealFile から祖先フォルダをプログラム的に開けるよう保持しておく。
+        row._expand = expand;
+
         row.addEventListener('click', function(e) {
           e.stopPropagation();
           if (children.classList.contains('open')) {
@@ -63,16 +78,7 @@
             row.classList.remove('dir-open');
             expandedDirs.delete(item.path);
           } else {
-            children.classList.add('open');
-            row.classList.add('dir-open');
-            expandedDirs.add(item.path);
-            if (!loaded) {
-              loaded = true;
-              fetch('/?dir=' + encodeURIComponent(item.path))
-                .then(function(r) { return r.json(); })
-                .then(function(subItems) { renderItems(subItems, children, depth + 1); })
-                .catch(function() {});
-            }
+            expand();
           }
         });
       } else {
@@ -86,14 +92,61 @@
 
         row.addEventListener('click', function(e) {
           e.stopPropagation();
-          document.querySelectorAll('.tree-item.active').forEach(function(el) {
-            el.classList.remove('active');
-          });
-          row.classList.add('active');
           loadPreview(item.path);
         });
       }
     });
+  }
+
+  // パスと種別に一致するツリー行を、描画済みの中から探す。
+  function findRow(path, kind) {
+    var rows = document.querySelectorAll('.tree-item');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.path === path &&
+          (!kind || rows[i].dataset.kind === kind)) {
+        return rows[i];
+      }
+    }
+    return null;
+  }
+
+  // 開いているファイルに対応するツリー項目をハイライトし、見える位置へスクロールする。
+  function updateActiveItem(relPath) {
+    // 非同期な reveal の完走中に別ファイルへ切り替わっていたら、現在の
+    // ハイライトを壊さないよう何もしない。
+    if (relPath !== currentFilePath) return;
+    document.querySelectorAll('.tree-item.active').forEach(function(el) {
+      el.classList.remove('active');
+    });
+    var row = findRow(relPath, 'file');
+    if (row) {
+      row.classList.add('active');
+      row.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  // root 相対パスのファイルまで祖先フォルダを順に展開し、最後にハイライトする。
+  function revealFile(relPath) {
+    var segs = relPath.split('/');
+    var ancestors = [];
+    for (var i = 0; i < segs.length - 1; i++) {
+      ancestors.push(segs.slice(0, i + 1).join('/'));
+    }
+
+    function step(idx) {
+      if (idx >= ancestors.length) {
+        updateActiveItem(relPath);
+        return;
+      }
+      var dirRow = findRow(ancestors[idx], 'dir');
+      if (!dirRow || !dirRow._expand) {
+        // 祖先が見つからなければ諦めて、今ある範囲でハイライトを試みる。
+        updateActiveItem(relPath);
+        return;
+      }
+      Promise.resolve(dirRow._expand()).then(function() { step(idx + 1); });
+    }
+    step(0);
   }
 
   function resolveRelativePath(base, rel) {
@@ -115,6 +168,8 @@
         if (html == null) return;
         if (window.MdSearch) window.MdSearch.reset();
         currentFilePath = relPath;
+        // ホットリロード(同一ファイルの再描画)ではツリーを動かさない。
+        if (!preserveScroll) revealFile(relPath);
         if (window.MdMenu) window.MdMenu.setCurrentFile(relPath);
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
