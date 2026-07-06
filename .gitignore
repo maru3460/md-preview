@@ -1,4 +1,9 @@
+# ビルド成果物
 target/
+
+# ローカル設定
 .claude/
-.wiki/
 CLAUDE.md
+
+# macOS
+.DS_Store
