@@ -1,0 +1,15 @@
+{
+  "name": "md-preview",
+  "owner": { "name": "maru3460" },
+  "metadata": {
+    "description": "md-preview（GitHub風Markdownビューア）のプラグイン配布用マーケットプレイス",
+    "version": "0.1.5"
+  },
+  "plugins": [
+    {
+      "name": "md-preview",
+      "description": "GitHub風Markdownビューア md コマンドの使い方スキル",
+      "source": "."
+    }
+  ]
+}
