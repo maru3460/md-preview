@@ -152,8 +152,7 @@ md - 高速Markdownプレビュー
 
 使い方:
   md <file.md|dir>    ファイルかディレクトリをプレビュー表示します
-  md -                標準入力からMarkdownを読みます
-  cat file.md | md    標準入力から読みます（パイプ経由の省略形）
+  cat file.md | md    標準入力（パイプ）からMarkdownを読みます
   md theme [<name>]   テーマ一覧を表示、または <name> に切り替えます
   md --sample         サンプルのMarkdownを標準出力に出します
   md --help, -h       このヘルプを表示します
@@ -200,8 +199,7 @@ fn main() {
         return;
     }
 
-    let stdin_mode = (args.len() == 1 && !std::io::stdin().is_terminal())
-        || (args.len() == 2 && args[1] == "-");
+    let stdin_mode = args.len() == 1 && !std::io::stdin().is_terminal();
 
     if !stdin_mode && args.len() != 2 {
         eprintln!("{}", USAGE);
