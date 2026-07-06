@@ -135,6 +135,26 @@ draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGrap
 - macOS専用
 - 外部リンク（http/https）はクリックするとデフォルトブラウザで開く
 
+## Claude Code プラグイン
+
+このリポジトリは [Claude Code](https://claude.com/claude-code) のプラグインとしても配布しています。`md` コマンドの使い方をまとめたスキルが同梱されており、Claude Code から Markdown を人に見せたいときに `md` を使えるようになります。
+
+インストール（Claude Code 内で実行）：
+
+```
+/plugin marketplace add maru3460/md-preview
+/plugin install md-preview@md-preview
+```
+
+ローカルで試すだけなら、リポジトリを指定して起動することもできます：
+
+```sh
+claude --plugin-dir /path/to/md-preview
+```
+
+> [!NOTE]
+> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「インストール」の `cargo install --path .` で別途セットアップしてください。
+
 ## ライセンス
 
 MIT
