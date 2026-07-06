@@ -142,8 +142,8 @@ pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
 }
 
 pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
-    // Reject only genuine parent-dir traversal (`..` path component), not
-    // filenames that merely contain a `..` substring (e.g. `my..file.md`).
+    // 本物の親ディレクトリ参照（`..` パス要素）だけを拒否し、単に `..` を部分
+    // 文字列として含むだけのファイル名（例: `my..file.md`）は拒否しない。
     if Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return None;
     }

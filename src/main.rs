@@ -175,24 +175,23 @@ fn main() {
         return;
     }
 
-    // `md theme [<name>]` — list or set the active theme. Handled before any
-    // path resolution so a file literally named `theme` doesn't shadow it
-    // (use `md ./theme` to open such a file).
+    // `md theme [<name>]` — テーマの一覧表示 / 切り替え。`theme` という名前の
+    // ファイルに邪魔されないよう、パス解決より前に処理する（そういうファイルを
+    // 開きたいときは `md ./theme` を使う）。
     if args.len() >= 2 && args[1] == "theme" {
         run_theme_command(&args[2..]);
         return;
     }
 
-    // `md --html <file.md> [theme]` — print the fully rendered page to stdout
-    // instead of opening a window. Same `build_html` path as the live preview,
-    // so the output is faithful to what the WebView shows. Used for headless
-    // rendering (screenshot/visual checks) and snapshot tests. The optional
-    // theme argument overrides which theme is rendered without touching the
-    // user's saved active theme, so a screenshot tool can shoot light/dark
-    // variants without disturbing their config.
+    // `md --html <file.md> [theme]` — ウィンドウを開かず、完全に描画したページを
+    // stdout へ出力する。ライブプレビューと同じ `build_html` を通るので、出力は
+    // WebView の表示に忠実。ヘッドレス描画（スクリーンショット/表示確認）や
+    // スナップショットテストで使う。省略可能な theme 引数は、ユーザーが保存した
+    // 使用中テーマに触れずに描画対象のテーマだけを上書きするので、スクリーン
+    // ショットツールが設定を乱さずライト/ダークを撮り分けられる。
     //
-    // Dev/test-only: gated on `debug_assertions` so it is compiled out of
-    // release builds entirely and never appears as a user-facing command.
+    // 開発/テスト専用: `debug_assertions` でゲートしており、リリースビルドからは
+    // 完全にコンパイル除外され、ユーザー向けコマンドとしては現れない。
     #[cfg(debug_assertions)]
     if (args.len() == 3 || args.len() == 4) && args[1] == "--html" {
         run_html_dump(&args[2], args.get(3).map(String::as_str));
@@ -253,12 +252,12 @@ fn main() {
         .build(&event_loop)
         .expect("Failed to create window");
 
-    // Expose the resolved theme's appearance to the page so JS-rendered
-    // diagrams (mermaid) follow the theme instead of the OS dark-mode setting.
-    // MD_MENU_MODE drives which right-click items are enabled/shown. Both are
-    // injected via the initialization script (a WKUserScript), which runs before
-    // page scripts and is exempt from the page CSP — so the context menu can read
-    // them even though the document forbids inline page scripts.
+    // 解決済みテーマの appearance をページへ公開し、JS で描画する図（mermaid）が
+    // OS のダークモード設定ではなくテーマに追従するようにする。MD_MENU_MODE は
+    // 右クリックメニューのどの項目を有効化/表示するかを制御する。どちらも初期化
+    // スクリプト（WKUserScript）経由で注入する。これはページのスクリプトより先に
+    // 走り、ページの CSP の対象外なので、本文の inline script が禁止されていても
+    // コンテキストメニューはこれらを読める。
     let init_script = format!(
         "window.MD_APPEARANCE = '{}'; window.MD_MENU_MODE = '{}';\n{}",
         appearance.as_str(),
@@ -266,8 +265,8 @@ fn main() {
         init_script
     );
 
-    // The custom-protocol closure below moves `root_dir`; clone what the IPC
-    // handler needs (path resolution for copy-abs/reveal/open) beforehand.
+    // 下のカスタムプロトコルのクロージャが `root_dir` をムーブするので、IPC
+    // ハンドラが必要とするもの（copy-abs/reveal/open のパス解決用）を先に clone する。
     let ipc_root = root_dir.clone();
     let ipc_single = single_file_path.clone();
 
@@ -423,7 +422,7 @@ fn hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-/// A seamless strip of truecolor blocks previewing a theme's palette.
+/// テーマのパレットを見せる、truecolor ブロックを隙間なく並べた帯。
 fn swatch_strip(hexes: &[&str]) -> String {
     let mut s = String::new();
     for hex in hexes {
@@ -434,8 +433,8 @@ fn swatch_strip(hexes: &[&str]) -> String {
     s
 }
 
-/// Grouped theme listing. On a TTY: color swatches per theme + the active one
-/// marked with an accent dot. Piped: plain names so it stays greppable.
+/// テーマをグループ分けして一覧表示する。TTY ではテーマごとの色見本と、使用中の
+/// ものにアクセント色のドットを付ける。パイプ時は grep しやすいよう素の名前だけ。
 fn theme_list_text(active: &str, rich: bool) -> String {
     use theme::Appearance::{Auto, Dark, Light};
     let user = theme::user_theme_names();

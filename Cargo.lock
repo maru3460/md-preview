@@ -1166,9 +1166,8 @@ dependencies = [
 
 [[package]]
 name = "md-preview"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
- "notify",
  "notify-debouncer-mini",
  "objc2",
  "objc2-app-kit",

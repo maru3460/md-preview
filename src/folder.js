@@ -36,7 +36,7 @@
       var row = document.createElement('div');
       row.className = 'tree-item';
       row.style.paddingLeft = (8 + depth * 16) + 'px';
-      // Phase 2（ツリー項目の右クリック）でパスを引けるよう保持しておく。
+      // ツリー項目の右クリック（contextmenu.js）でパスを引けるよう保持しておく。
       row.dataset.path = item.path;
       row.dataset.kind = item.kind;
 
