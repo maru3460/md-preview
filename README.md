@@ -31,7 +31,11 @@ md .                       # フォルダモード（作業ディレクトリを
 md docs/                   # フォルダモード（指定ディレクトリをサイドバー表示）
 md intro.md                # 作業ディレクトリ内のファイル → フォルダモードで開きそのファイルを初期表示
 md ~/other/note.md         # 作業ディレクトリ外のファイル → 単ファイルモード
-md --sample                # サンプルMarkdownを stdout に出力
+md -                       # 標準入力からMarkdownを読む
+cat note.md | md           # 標準入力から読む（パイプ経由の省略形）
+md --sample                # サンプルMarkdownを標準出力に出力
+md --help                  # 使い方を表示（-h も可）
+md --version               # バージョンを表示（-V も可）
 ```
 
 モードの選ばれ方：
@@ -81,7 +85,7 @@ Markdownファイルを含まないディレクトリは自動的にツリーか
 `md theme` コマンドで配色を丸ごと切り替えられます。
 
 ```sh
-md theme                   # テーマ一覧を表示（アクティブなテーマに ● 印、ターミナルでは色見本付き）
+md theme                   # テーマ一覧を表示（使用中のテーマに ● 印、ターミナルでは色見本付き）
 md theme dracula           # テーマを切り替える（~/.config/md-preview/active-theme に保存される）
 ```
 
@@ -97,7 +101,7 @@ light / dark 固定のテーマはシンタックスハイライトの配色も�
 
 ### ユーザーテーマ
 
-`~/.config/md-preview/themes/<名前>.css` にCSSファイルを置くと、`md theme <名前>` で選べる独自テーマになります。組み込みと同じ名前を使うと、そちらが優先されます（`md theme` の一覧に `(overridden by user)` と表示されます）。ユーザーテーマはOS設定に追従（auto）します。テンプレートには `default` テーマのCSSを写すのが手軽です。
+`~/.config/md-preview/themes/<名前>.css` にCSSファイルを置くと、`md theme <名前>` で選べる独自テーマになります。組み込みと同じ名前を使うと、そちらが優先されます（`md theme` の一覧に `（ユーザー定義で上書き）` と表示されます）。ユーザーテーマはOS設定に追従（auto）します。テンプレートには `default` テーマのCSSを写すのが手軽です。
 
 ## カスタムCSS
 

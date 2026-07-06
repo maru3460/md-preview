@@ -125,7 +125,7 @@ pub fn resolve(name: &str) -> (String, Appearance) {
     if let Some((css, ap)) = builtin(name) {
         return (css.to_string(), ap);
     }
-    eprintln!("md: unknown theme '{}', falling back to 'default'", name);
+    eprintln!("md: '{}' というテーマがないため 'default' を使用します", name);
     (DEFAULT_THEME_CSS.to_string(), Appearance::Auto)
 }
 
