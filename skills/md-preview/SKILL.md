@@ -25,7 +25,7 @@ md path/to/document.md &
 
 ```bash
 md <file.md|ディレクトリ>   # ファイルかディレクトリを開く
-cat file.md | md            # 標準入力から読む（`md -` でも可）
+cat file.md | md            # 標準入力（パイプ）から読む
 md theme [<名前>]           # テーマ一覧の表示 / 切り替え
 ```
 
