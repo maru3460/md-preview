@@ -1,5 +1,5 @@
 ---
-name: md-present
+name: md-preview
 description: マークダウンを書く時、ユーザーに見せるときに使う
 ---
 
