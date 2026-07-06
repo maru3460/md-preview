@@ -41,7 +41,7 @@ struct AppConfig {
 fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<PathBuf>) -> AppConfig {
     let mut markdown = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut markdown) {
-        eprintln!("Error: cannot read stdin: {}", e);
+        eprintln!("md: 標準入力を読み込めませんでした: {}", e);
         std::process::exit(1);
     }
     let title = "stdin".to_string();
@@ -65,7 +65,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
     let path = Path::new(arg)
         .canonicalize()
         .unwrap_or_else(|e| {
-            eprintln!("Error: cannot resolve '{}': {}", arg, e);
+            eprintln!("md: '{}' を開けませんでした: {}", arg, e);
             std::process::exit(1);
         });
 
@@ -120,7 +120,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
         let markdown = match std::fs::read_to_string(&path) {
             Ok(content) => content,
             Err(e) => {
-                eprintln!("Error: cannot read '{}': {}", path.display(), e);
+                eprintln!("md: '{}' を読み込めませんでした: {}", path.display(), e);
                 std::process::exit(1);
             }
         };
@@ -146,8 +146,31 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
 
 const SAMPLE_MD: &str = include_str!("sample.md");
 
+/// `--help` とエラー時のどちらでも使い回す使い方テキスト。
+const USAGE: &str = "\
+md - 高速Markdownプレビュー
+
+使い方:
+  md <file.md|dir>    ファイルかディレクトリをプレビュー表示します
+  md -                標準入力からMarkdownを読みます
+  cat file.md | md    標準入力から読みます（パイプ経由の省略形）
+  md theme [<name>]   テーマ一覧を表示、または <name> に切り替えます
+  md --sample         サンプルのMarkdownを標準出力に出します
+  md --help, -h       このヘルプを表示します
+  md --version, -V    バージョンを表示します";
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
+        println!("{}", USAGE);
+        return;
+    }
+    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
+        println!("md {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     if args.len() == 2 && args[1] == "--sample" {
         print!("{}", SAMPLE_MD);
         return;
@@ -181,10 +204,7 @@ fn main() {
         || (args.len() == 2 && args[1] == "-");
 
     if !stdin_mode && args.len() != 2 {
-        eprintln!("Usage: md <file.md|directory>");
-        eprintln!("       md -                     read markdown from stdin");
-        eprintln!("       cat file.md | md         read markdown from stdin (implicit)");
-        eprintln!("       md --sample              print sample markdown to stdout");
+        eprintln!("{}", USAGE);
         std::process::exit(1);
     }
 
@@ -424,9 +444,9 @@ fn theme_list_text(active: &str, rich: bool) -> String {
     let mut s = String::new();
 
     if rich {
-        s.push_str(&format!("\n  \x1b[1mthemes\x1b[0m  \x1b[2m· active: {}\x1b[0m\n", active));
+        s.push_str(&format!("\n  \x1b[1mテーマ\x1b[0m  \x1b[2m· 使用中: {}\x1b[0m\n", active));
     } else {
-        s.push_str(&format!("themes (active: {})\n", active));
+        s.push_str(&format!("テーマ（使用中: {}）\n", active));
     }
 
     let group = |s: &mut String, label: &str, names: Vec<&theme::Theme>| {
@@ -450,26 +470,26 @@ fn theme_list_text(active: &str, rich: bool) -> String {
                 };
                 let pad = " ".repeat(16usize.saturating_sub(t.name.chars().count()));
                 let name = if is_active { format!("\x1b[1m{}\x1b[0m", t.name) } else { t.name.to_string() };
-                let over = if overridden { "  \x1b[2m(overridden by user)\x1b[0m" } else { "" };
+                let over = if overridden { "  \x1b[2m（ユーザー定義で上書き）\x1b[0m" } else { "" };
                 s.push_str(&format!("  {} {}{}  {}{}\n", marker, name, pad, swatch_strip(&t.swatch), over));
             } else {
                 let marker = if is_active { "*" } else { " " };
-                let over = if overridden { "  (overridden by user)" } else { "" };
+                let over = if overridden { "  （ユーザー定義で上書き）" } else { "" };
                 s.push_str(&format!("  {} {}{}\n", marker, t.name, over));
             }
         }
     };
 
-    group(&mut s, "light", theme::BUILTIN.iter().filter(|t| t.appearance == Light).collect());
-    group(&mut s, "dark", theme::BUILTIN.iter().filter(|t| t.appearance == Dark).collect());
-    group(&mut s, "auto · follows OS", theme::BUILTIN.iter().filter(|t| t.appearance == Auto).collect());
+    group(&mut s, "ライト", theme::BUILTIN.iter().filter(|t| t.appearance == Light).collect());
+    group(&mut s, "ダーク", theme::BUILTIN.iter().filter(|t| t.appearance == Dark).collect());
+    group(&mut s, "auto · OS設定に追従", theme::BUILTIN.iter().filter(|t| t.appearance == Auto).collect());
 
     let user_only: Vec<&String> = user
         .iter()
         .filter(|u| !theme::BUILTIN.iter().any(|t| t.name == u.as_str()))
         .collect();
     if !user_only.is_empty() {
-        let header = if rich { "\n  \x1b[1;2muser\x1b[0m\n" } else { "\nuser\n" };
+        let header = if rich { "\n  \x1b[1;2mユーザー\x1b[0m\n" } else { "\nユーザー\n" };
         s.push_str(header);
         for name in user_only {
             let marker = if rich {
@@ -493,18 +513,18 @@ fn run_theme_command(rest: &[String]) {
         }
         [name] => {
             if !theme::theme_exists(name) {
-                eprintln!("md: unknown theme '{}'", name);
+                eprintln!("md: '{}' というテーマはありません", name);
                 eprint!("{}", theme_list_text(&theme::read_active_name(), std::io::stderr().is_terminal()));
                 std::process::exit(2);
             }
             if let Err(e) = theme::write_active_name(name) {
-                eprintln!("md: cannot save theme: {}", e);
+                eprintln!("md: テーマを保存できませんでした: {}", e);
                 std::process::exit(1);
             }
-            println!("theme set to '{}'", name);
+            println!("テーマを '{}' に切り替えました", name);
         }
         _ => {
-            eprintln!("Usage: md theme [<name>]");
+            eprintln!("使い方: md theme [<name>]");
             std::process::exit(1);
         }
     }
@@ -515,7 +535,7 @@ fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     let markdown = match std::fs::read_to_string(arg) {
         Ok(content) => content,
         Err(e) => {
-            eprintln!("md: cannot read '{}': {}", arg, e);
+            eprintln!("md: '{}' を読み込めませんでした: {}", arg, e);
             std::process::exit(1);
         }
     };
