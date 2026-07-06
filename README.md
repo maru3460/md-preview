@@ -31,8 +31,7 @@ md .                       # フォルダモード（作業ディレクトリを
 md docs/                   # フォルダモード（指定ディレクトリをサイドバー表示）
 md intro.md                # 作業ディレクトリ内のファイル → フォルダモードで開きそのファイルを初期表示
 md ~/other/note.md         # 作業ディレクトリ外のファイル → 単ファイルモード
-md -                       # 標準入力からMarkdownを読む
-cat note.md | md           # 標準入力から読む（パイプ経由の省略形）
+cat note.md | md           # 標準入力からMarkdownを読む（パイプ経由）
 md --sample                # サンプルMarkdownを標準出力に出力
 md --help                  # 使い方を表示（-h も可）
 md --version               # バージョンを表示（-V も可）
