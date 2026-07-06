@@ -322,10 +322,10 @@ mod tests {
         let body = render_body(md);
         assert!(body.contains("class=\"mxgraph\""), "missing mxgraph class: {body}");
         assert!(body.contains("data-mxgraph=\""), "missing data attr: {body}");
-        // angle brackets and quotes from the JSON config must be attribute-escaped
+        // JSON 設定内の山括弧・引用符は属性としてエスケープされていなければならない
         assert!(body.contains("&lt;mxGraphModel&gt;"), "xml not escaped: {body}");
         assert!(body.contains("&quot;xml&quot;"), "json quotes not escaped: {body}");
-        // no raw unescaped double-quote breaking out of the attribute
+        // 属性から抜け出すような、エスケープされていない生の二重引用符が無いこと
         assert!(!body.contains("data-mxgraph=\"{\"highlight"), "attr not escaped: {body}");
     }
 
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn build_html_no_longer_inlines_diagram_libs() {
-        // mermaid alone is ~3MB; with lazy loading the page must stay small.
+        // mermaid だけで約 3MB。遅延ロードにより、ページは小さく保たれるはず。
         let page = build_html("<p>hi</p>", "t", "", "");
         assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
         assert!(page.contains("<p>hi</p>"));

@@ -142,7 +142,6 @@
     ensureHeadingIds: ensureHeadingIds,
     addCopyButtons: addCopyButtons,
     runMermaid: runMermaid,
-    runDrawio: runDrawio,
-    selectBody: selectBody
+    runDrawio: runDrawio
   };
 })();

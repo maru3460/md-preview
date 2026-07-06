@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-// Bundled (official) themes — embedded in the binary.
-pub const DEFAULT_THEME_CSS: &str = include_str!("themes/default.css");
+// 同梱（公式）テーマ。バイナリに埋め込む。
+const DEFAULT_THEME_CSS: &str = include_str!("themes/default.css");
 const MINIMAL_CSS: &str = include_str!("themes/minimal.css");
 const EDITORIAL_CSS: &str = include_str!("themes/editorial.css");
 const INK_CSS: &str = include_str!("themes/ink.css");
@@ -15,14 +15,14 @@ const SOLARIZED_LIGHT_CSS: &str = include_str!("themes/solarized-light.css");
 const TERMINAL_CSS: &str = include_str!("themes/terminal.css");
 const BLUEPRINT_CSS: &str = include_str!("themes/blueprint.css");
 
-// Syntax-highlighting CSS. It is part of the swappable style layer: a theme's
-// appearance decides which one applies, so it lives here, not in html.rs.
+// シンタックスハイライト用 CSS。切り替え可能なスタイル層の一部で、どちらを
+// 適用するかはテーマの appearance が決めるため、html.rs ではなくここに置く。
 const HLJS_LIGHT_CSS: &str = include_str!("hljs-light.min.css");
 const HLJS_DARK_CSS: &str = include_str!("hljs-dark.min.css");
 
-/// Whether a theme is fixed to one appearance or follows the OS setting.
-/// This also governs which syntax-highlight palette is used, so a fixed-light
-/// theme never gets dark code blocks on a dark-mode OS (and vice versa).
+/// テーマが特定の外観に固定されるか、OS 設定に追従するか。
+/// これはシンタックスハイライトの配色選択も兼ねるため、ライト固定テーマが
+/// ダークモードの OS でダークなコードブロックになることはない（逆も同様）。
 #[derive(Clone, Copy, PartialEq)]
 pub enum Appearance {
     Light,
@@ -31,8 +31,8 @@ pub enum Appearance {
 }
 
 impl Appearance {
-    /// Lowercase tag injected into the page as `window.MD_APPEARANCE`, so that
-    /// JS-rendered diagrams (mermaid) match the theme instead of the OS setting.
+    /// `window.MD_APPEARANCE` としてページへ注入する小文字タグ。JS で描画する図
+    /// （mermaid）が OS 設定ではなくテーマに合わせられるようにするためのもの。
     pub fn as_str(self) -> &'static str {
         match self {
             Appearance::Light => "light",
@@ -46,7 +46,7 @@ pub struct Theme {
     pub name: &'static str,
     pub css: &'static str,
     pub appearance: Appearance,
-    /// Representative palette for the `md theme` swatch: [bg, fg, accent, accent2, accent3].
+    /// `md theme` の色見本用の代表パレット: [bg, fg, accent, accent2, accent3]。
     pub swatch: [&'static str; 5],
 }
 
@@ -79,8 +79,8 @@ pub const BUILTIN: &[Theme] = &[
         swatch: ["#0e2a4a", "#cfe3f5", "#6fb3e0", "#7fd7c4", "#ffffff"] },
 ];
 
-/// Theme names are simple identifiers. Restricting to `[A-Za-z0-9_-]` makes
-/// path traversal structurally impossible (no `/`, `.`, `..`).
+/// テーマ名は単純な識別子。`[A-Za-z0-9_-]` に限定することで、パストラバーサルを
+/// 構造的に不可能にする（`/`・`.`・`..` を含められない）。
 fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -101,7 +101,7 @@ fn builtin(name: &str) -> Option<(&'static str, Appearance)> {
     BUILTIN.iter().find(|t| t.name == name).map(|t| (t.css, t.appearance))
 }
 
-/// User theme CSS, if `~/.config/md-preview/themes/<name>.css` exists.
+/// `~/.config/md-preview/themes/<name>.css` があればユーザーテーマの CSS を返す。
 fn user_css(name: &str) -> Option<String> {
     if !valid_name(name) {
         return None;
@@ -114,10 +114,10 @@ pub fn theme_exists(name: &str) -> bool {
     user_css(name).is_some() || builtin(name).is_some()
 }
 
-/// Resolve a theme name to its paint CSS plus appearance. User themes win over
-/// bundled ones; an unknown name warns and falls back to the default theme.
-/// User themes have unknown appearance, so they follow the OS (Auto) — the same
-/// behaviour as copying the default theme, which is the documented template.
+/// テーマ名を、その paint CSS と appearance に解決する。ユーザーテーマが同梱テーマ
+/// より優先され、未知の名前は警告して default テーマにフォールバックする。
+/// ユーザーテーマは appearance 不明なので OS に追従（Auto）する。これは default
+/// テーマをコピーしたとき（ドキュメント記載のテンプレート）と同じ挙動。
 pub fn resolve(name: &str) -> (String, Appearance) {
     if let Some(css) = user_css(name) {
         return (css, Appearance::Auto);
@@ -129,9 +129,9 @@ pub fn resolve(name: &str) -> (String, Appearance) {
     (DEFAULT_THEME_CSS.to_string(), Appearance::Auto)
 }
 
-/// The full swappable style layer: the appearance-matched syntax highlighting
-/// CSS followed by the theme's paint. Loaded after base.css and before the
-/// user's custom style.css.
+/// 切り替え可能なスタイル層の全体。appearance に合わせたシンタックスハイライト
+/// CSS に続けてテーマの paint を並べる。base.css の後、ユーザーの style.css の
+/// 前に読み込まれる。
 pub fn style_layer(appearance: Appearance, paint: &str) -> String {
     let hljs = match appearance {
         Appearance::Light => HLJS_LIGHT_CSS.to_string(),
@@ -150,8 +150,8 @@ fn resolve_style_layer(name: &str) -> String {
     style_layer(appearance, &paint)
 }
 
-/// The active theme name, from `~/.config/md-preview/active-theme`.
-/// Missing/empty file → "default" (the file is only created by `md theme <name>`).
+/// 使用中のテーマ名を `~/.config/md-preview/active-theme` から読む。
+/// ファイルが無い/空なら "default"（このファイルは `md theme <name>` でのみ作られる）。
 pub fn read_active_name() -> String {
     active_theme_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -193,16 +193,16 @@ mod tests {
 
     #[test]
     fn auto_theme_keeps_os_following_syntax_highlight() {
-        // The default theme follows the OS, so its style layer must carry the
-        // dark-mode syntax-highlight override.
+        // default テーマは OS に追従するので、そのスタイル層はダークモード用の
+        // シンタックスハイライトの上書きを含んでいなければならない。
         assert!(resolve_style_layer("default").contains("prefers-color-scheme"));
     }
 
     #[test]
     fn fixed_themes_have_no_os_dependent_syntax_highlight() {
-        // A fixed-appearance theme (light or dark) must NOT pull in any
-        // prefers-color-scheme rule, or code blocks would flip with the OS
-        // while the body stays put (the bug this guards against).
+        // 外観固定のテーマ（ライト/ダーク）は prefers-color-scheme ルールを一切
+        // 引き込んではいけない。さもないと本文はそのままなのにコードブロックだけが
+        // OS に合わせて反転してしまう（このテストが防いでいるバグ）。
         for name in [
             "minimal", "editorial", "ink", "paper", "mono", "solarized-light",
             "nord", "dracula", "gruvbox", "rose-pine", "terminal", "blueprint",
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn unknown_theme_falls_back_to_default() {
-        // Falls back to default (Auto), so it is OS-following again.
+        // default（Auto）にフォールバックするので、再び OS 追従になる。
         assert!(resolve_style_layer("nope-not-real").contains("prefers-color-scheme"));
     }
 
