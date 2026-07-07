@@ -135,18 +135,20 @@
   }
   document.addEventListener('keydown', selectBody);
 
-  // 表(.table-wrap)は横スクロール領域なので、その上でホイールを回すと横に
-  // まだ動かせる間はブラウザがホイールを横スクロールに吸ってしまい、ページの
-  // 縦スクロールが止まる。縦方向主体のホイールは表に吸わせず、ページを縦へ
-  // スクロールさせて回避する。横方向主体(trackpad 横フリック / Shift+ホイール)は
-  // 既定の横スクロールに任せる。table-wrap 自体は高さ固定でなく縦には
-  // スクロールしないため、縦は常にページへ流してよい。
+  // 横スクロールする表(.table-wrap)の上でホイールを回すと、横にまだ動かせる間は
+  // ブラウザがホイールを横スクロールに吸ってしまい、ページの縦スクロールが止まる。
+  // 縦方向主体のホイールは表に吸わせず、実際のスクロール親を自前で縦に動かして回避する。
+  // 横方向主体(trackpad 横フリック / Shift+ホイール)は既定の横スクロールに任せる。
   function tableWheel(e) {
     var wrap = e.target && e.target.closest && e.target.closest('.table-wrap');
     if (!wrap) return;
+    // 横あふれが無い表は問題が起きないので一切介入しない(ネイティブの慣性を保つ)。
+    if (wrap.scrollWidth <= wrap.clientWidth) return;
     if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-    var unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? window.innerHeight : 1);
-    window.scrollBy(0, e.deltaY * unit);
+    // スクロール主体は単一ファイル表示では window、folder モードでは #preview-pane。
+    var sc = wrap.closest('#preview-pane') || document.scrollingElement || document.documentElement;
+    var unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? sc.clientHeight : 1);
+    sc.scrollTop += e.deltaY * unit;
     e.preventDefault();
   }
   document.addEventListener('wheel', tableWheel, { passive: false });
