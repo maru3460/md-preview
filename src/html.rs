@@ -150,6 +150,17 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
 
                 out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))));
             }
+            // テーブルは読み幅(720px)を飛び出して広く使えるよう、スクロール用の
+            // ラッパー div で囲む。長い file:line などがはみ出しても本文ごとでは
+            // なく表の中だけ横スクロールになる。
+            Event::Start(Tag::Table(align)) => {
+                out.push(Event::Html("<div class=\"table-wrap\">".into()));
+                out.push(Event::Start(Tag::Table(align)));
+            }
+            Event::End(TagEnd::Table) => {
+                out.push(Event::End(TagEnd::Table));
+                out.push(Event::Html("</div>".into()));
+            }
             other => out.push(other),
         }
     }

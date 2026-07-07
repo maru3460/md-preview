@@ -72,10 +72,31 @@ blockquote {
     border-left: 0.25em solid;
 }
 
+/* 表は読み幅(720px)を飛び出して広く使えるようにする。
+   はみ出した分は本文ごとではなく表の中だけ横スクロールさせる。 */
+.table-wrap {
+    overflow-x: auto;
+    margin: 16px 0;
+}
+
+/* 読み幅より広い画面では、表だけウィンドウ幅(左右48pxの余白付き)まで拡張する。
+   .markdown-body の中央を軸に、ビューポート中央へ配置し直す計算。 */
+@media (min-width: 816px) {
+    .table-wrap {
+        width: calc(100vw - 96px);
+        margin-left: calc(408px - 50vw);
+    }
+}
+
 table {
     border-collapse: collapse;
     width: 100%;
     margin: 16px 0;
+}
+
+/* ラッパー内の表は上下マージンをラッパー側に任せる。 */
+.table-wrap > table {
+    margin: 0;
 }
 
 th, td {

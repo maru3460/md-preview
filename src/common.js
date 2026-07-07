@@ -135,6 +135,22 @@
   }
   document.addEventListener('keydown', selectBody);
 
+  // 表(.table-wrap)は横スクロール領域なので、その上でホイールを回すと横に
+  // まだ動かせる間はブラウザがホイールを横スクロールに吸ってしまい、ページの
+  // 縦スクロールが止まる。縦方向主体のホイールは表に吸わせず、ページを縦へ
+  // スクロールさせて回避する。横方向主体(trackpad 横フリック / Shift+ホイール)は
+  // 既定の横スクロールに任せる。table-wrap 自体は高さ固定でなく縦には
+  // スクロールしないため、縦は常にページへ流してよい。
+  function tableWheel(e) {
+    var wrap = e.target && e.target.closest && e.target.closest('.table-wrap');
+    if (!wrap) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    var unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? window.innerHeight : 1);
+    window.scrollBy(0, e.deltaY * unit);
+    e.preventDefault();
+  }
+  document.addEventListener('wheel', tableWheel, { passive: false });
+
   window.MdCommon = {
     loadLib: loadLib,
     slugify: slugify,
