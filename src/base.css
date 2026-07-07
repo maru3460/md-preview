@@ -468,6 +468,71 @@ pre.mermaid {
     overflow-x: auto;
 }
 
+/* ── details / summary アコーディオン ────────────────────────────
+   本文コンテンツだが色のアクセントを持たない中立的な箱なので、
+   themes/*.css に色を分散させず currentColor 由来の淡いトーンで
+   全テーマに自動追従させる（context-menu と同じ theme-agnostic 方針）。 */
+details {
+    margin: 16px 0;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+summary {
+    cursor: pointer;
+    padding: 10px 16px;
+    font-weight: 600;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    transition: background-color 0.15s;
+}
+
+/* デフォルトの三角マーカーを消す（標準 + Safari 系） */
+summary::-webkit-details-marker {
+    display: none;
+}
+
+/* 自前の三角マーカー。開くと 90deg 回転する。 */
+summary::before {
+    content: "";
+    flex-shrink: 0;
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 0.15s ease;
+}
+
+details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+summary:hover {
+    background-color: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+/* 開いた時は summary と本文の間に区切り線を入れる。 */
+details[open] > summary {
+    border-bottom: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+
+/* summary 以外の直下要素（＝展開される本文）に左右・上下の余白を付ける。 */
+details > :not(summary) {
+    margin-left: 16px;
+    margin-right: 16px;
+}
+
+details > summary + * {
+    margin-top: 16px;
+}
+
+details[open] {
+    padding-bottom: 8px;
+}
+
 /* ── 右クリック コンテキストメニュー ─────────────────────────────
    OS の右クリックメニューに相当する chrome UI なので、本文テーマには
    追従させず CSS システムカラー（Canvas / Highlight 等）で配色する。
