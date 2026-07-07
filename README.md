@@ -145,14 +145,41 @@ draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGrap
 /plugin install md-preview@md-preview
 ```
 
-ローカルで試すだけなら、リポジトリを指定して起動することもできます：
+### プラグインの更新
 
-```sh
-claude --plugin-dir /path/to/md-preview
+`marketplace add` で入れたプラグインは、リポジトリ側でバージョンが上がっても自動では更新されません。最新版に更新するには、マーケットプレイスのメタデータを取り直してから再インストールします（Claude Code 内で実行）：
+
+```
+/plugin marketplace update md-preview
+/plugin install md-preview@md-preview
+```
+
+反映されたかは `/plugin list`、または `/plugin` → **Installed** タブ（**Last updated** 日付）で確認できます。
+
+### 自動更新を有効にする
+
+カスタムマーケットプレイス（GitHub リポジトリ）はデフォルトで自動更新が無効です。有効にすると起動時に自動で最新版へ更新されます。
+
+1. `/plugin` を開く
+2. **Marketplaces** タブ → `md-preview` を選択
+3. **Enable auto-update** を選ぶ
+
+以降はバージョンを上げて push するだけで、次回起動時に反映されます。
+
+### プラグインのアンインストール
+
+```
+/plugin uninstall md-preview@md-preview
+```
+
+マーケットプレイスの登録ごと削除する場合は：
+
+```
+/plugin marketplace remove md-preview
 ```
 
 > [!NOTE]
-> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「インストール」の `cargo install --path .` で別途セットアップしてください。
+> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「インストール」の `cargo install --path .` で別途セットアップしてください。プラグインを消しても `md` コマンドは残るので、本体も消すには `cargo uninstall md-preview` を実行してください。
 
 ## ライセンス
 
