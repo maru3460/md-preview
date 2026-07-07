@@ -43,6 +43,33 @@ date: 2026-05-10
 
 ---
 
+## アコーディオン
+
+標準の `<details>` / `<summary>` タグがそのまま使える。クリックで開閉できる折りたたみUIになる。
+
+<details>
+<summary>クリックで開くのだ</summary>
+
+`</summary>` の後に**空行を1行**入れると、中身が普通のマークダウンとして解釈される。
+
+- リストも
+- 書ける
+
+```rust
+fn main() {}
+```
+
+</details>
+
+<details open>
+<summary>最初から開いておく（open 属性）</summary>
+
+`<details open>` と書くと、初期状態で展開されている。
+
+</details>
+
+---
+
 ## Mermaid
 
 シーケンス図：
