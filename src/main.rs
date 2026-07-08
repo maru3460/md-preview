@@ -52,7 +52,8 @@ fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<Pa
         title,
         init_script: INIT_JS,
         html_bytes: html.into_bytes(),
-        window_width: 900.0,
+        // 見出しナビ(TOC)を初期表示できる幅。本文720px＋右サイドバーが収まる。
+        window_width: 1100.0,
         root_dir: root,
         single_file_path: None,
         watch_enabled: false,
@@ -87,7 +88,8 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             title,
             init_script: FOLDER_JS,
             html_bytes: html.into_bytes(),
-            window_width: 1200.0,
+            // ファイルツリー(250px)＋本文＋見出しナビ(TOC)が並んでも収まる幅。
+            window_width: 1280.0,
             root_dir: path,
             single_file_path: None,
             watch_enabled: true,
@@ -110,7 +112,8 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             title: dir_title,
             init_script: FOLDER_JS,
             html_bytes: html.into_bytes(),
-            window_width: 1200.0,
+            // ファイルツリー(250px)＋本文＋見出しナビ(TOC)が並んでも収まる幅。
+            window_width: 1280.0,
             root_dir: cwd,
             single_file_path: None,
             watch_enabled: true,
@@ -136,7 +139,8 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             title,
             init_script: INIT_JS,
             html_bytes: html.into_bytes(),
-            window_width: 900.0,
+            // 見出しナビ(TOC)を初期表示できる幅。本文720px＋右サイドバーが収まる。
+            window_width: 1100.0,
             root_dir: base_dir,
             single_file_path: Some(path),
             watch_enabled: true,
