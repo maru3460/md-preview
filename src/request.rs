@@ -255,6 +255,35 @@ pub fn serve_single_file_body(file_path: &Path) -> Response {
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
+// フォルダモードの diff 用フラグメント。プレビュー枠を丸ごと差し替えるので .markdown-body で包む。
+// ソース差分なので md 以外のテキストファイルも対象にする（バイナリは中で弾く）。
+fn serve_diff_fragment(rel_encoded: &str, root_dir: &Path) -> Response {
+    let rel = percent_decode(rel_encoded);
+    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
+    let inner = crate::diff::render_diff_inner(&file_path);
+    let fragment = format!(r#"<div class="markdown-body">{}</div>"#, inner);
+    ok_response("text/html; charset=utf-8", fragment.into_bytes())
+}
+
+// 単一ファイルモードの diff 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
+fn serve_single_file_diff(file_path: &Path) -> Response {
+    let inner = crate::diff::render_diff_inner(file_path);
+    ok_response("text/html; charset=utf-8", inner.into_bytes())
+}
+
+// トグルボタンのバッジ用に、追加/削除行数だけを JSON で返す（軽量・非ブロッキング用途）。
+fn diffstat_json(file_path: &Path) -> Response {
+    let (add, del) = crate::diff::diff_stat(file_path);
+    let body = format!(r#"{{"add":{},"del":{}}}"#, add, del).into_bytes();
+    ok_response("application/json; charset=utf-8", body)
+}
+
+fn serve_diffstat(rel_encoded: &str, root_dir: &Path) -> Response {
+    let rel = percent_decode(rel_encoded);
+    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
+    diffstat_json(&file_path)
+}
+
 pub fn handle_request(
     url_path: &str,
     query: &str,
@@ -278,6 +307,26 @@ pub fn handle_request(
             return serve_single_file_body(path);
         }
         return not_found_response();
+    }
+    // diff=1 は単一ファイルモードの番兵。folder モードの diff=<rel> より先に判定する
+    // （strip_prefix("diff=") は "diff=1" も拾ってしまうため）。single_file が無い
+    // （＝folder モード）なら番兵ではなく、"1" という名前のファイル指定として後続に流す。
+    if query == "diff=1" {
+        if let Some(path) = single_file {
+            return serve_single_file_diff(path);
+        }
+    }
+    if let Some(rel_encoded) = query.strip_prefix("diff=") {
+        return serve_diff_fragment(rel_encoded, root_dir);
+    }
+    // diff と同じく diffstat=1 は単一ファイルの番兵、diffstat=<rel> は folder。
+    if query == "diffstat=1" {
+        if let Some(path) = single_file {
+            return diffstat_json(path);
+        }
+    }
+    if let Some(rel_encoded) = query.strip_prefix("diffstat=") {
+        return serve_diffstat(rel_encoded, root_dir);
     }
     if url_path == "/" {
         return ok_response("text/html; charset=utf-8", html_bytes.to_vec());

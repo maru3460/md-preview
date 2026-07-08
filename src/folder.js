@@ -162,15 +162,27 @@
   function loadPreview(relPath, preserveScroll) {
     var pane = document.getElementById('preview-pane');
     var savedScroll = preserveScroll ? pane.scrollTop : 0;
+    currentFilePath = relPath;
+    // ホットリロード(同一ファイルの再描画)ではツリーを動かさない。
+    if (!preserveScroll) revealFile(relPath);
+    if (window.MdMenu) window.MdMenu.setCurrentFile(relPath);
+    if (window.MdSearch) window.MdSearch.reset();
+    // バッジ（変更行数）は表示状態に関わらず、開いているファイルに追従させる。
+    if (window.MdDiff) window.MdDiff.refreshStat();
+
+    // diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
+    // 差分を表示する（本文レンダリングには戻さない）。
+    if (window.MdDiff && window.MdDiff.isActive()) {
+      // ファイル切替（preserveScroll=false）は先頭から、ホットリロードは位置維持。
+      if (!preserveScroll) pane.scrollTop = 0;
+      window.MdDiff.refresh();
+      return;
+    }
+
     fetch('/?file=' + encodeURIComponent(relPath), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
         if (html == null) return;
-        if (window.MdSearch) window.MdSearch.reset();
-        currentFilePath = relPath;
-        // ホットリロード(同一ファイルの再描画)ではツリーを動かさない。
-        if (!preserveScroll) revealFile(relPath);
-        if (window.MdMenu) window.MdMenu.setCurrentFile(relPath);
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
         MdCommon.ensureHeadingIds(pane);
@@ -186,6 +198,8 @@
   window.MdReload = function(relPath) {
     if (!currentFilePath) return;
     if (relPath && relPath !== currentFilePath) return;
+    // diff 表示中はファイル変更を diff の再取得に回す（本文には戻さない）。
+    if (window.MdDiff && window.MdDiff.isActive()) { window.MdDiff.refresh(); return; }
     loadPreview(currentFilePath, true);
   };
 
@@ -222,6 +236,15 @@
     }
     if (window.MdToc) {
       window.MdToc.init(document.getElementById('preview-pane'));
+    }
+    if (window.MdDiff) {
+      window.MdDiff.init({
+        getContainer: function() { return document.getElementById('preview-pane'); },
+        getScroller: function() { return document.getElementById('preview-pane'); },
+        getDiffUrl: function() { return currentFilePath ? '/?diff=' + encodeURIComponent(currentFilePath) : null; },
+        getStatUrl: function() { return currentFilePath ? '/?diffstat=' + encodeURIComponent(currentFilePath) : null; },
+        reloadNormal: function() { if (currentFilePath) loadPreview(currentFilePath, true); }
+      });
     }
 
     fetch('/?dir=')
