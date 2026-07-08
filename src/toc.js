@@ -7,6 +7,23 @@
   var initialized = false;
   var open = false;
   var scrollTarget = null;
+  // ユーザーが明示的に閉じたか。true の間は自動表示で開き直さない
+  // （幅による自動退避／復帰とは区別する）。
+  var userClosed = false;
+  // 初回の自動表示が未実施か。デフォルトで開くときの「ぴょん」を防ぐため、
+  // この 1 回だけスライドイン（transition）を抑止する。手動 ⌘T や
+  // 狭→広での再表示はアニメする。folder モードは本文が非同期ロードで
+  // 実際に開くのが後になるので、init 後の固定フレームではなく
+  // 「実際に開く瞬間」で判定する（単一/フォルダ両モードで一貫）。
+  var autoFirstPending = true;
+
+  // 自動表示のしきい値。見出しがこの数以上あり、かつ本文＋TOC が収まる幅が
+  // あるときだけ自動で開く。狭い/見出しが少ないときは引っ込めて本文に被せない。
+  var MIN_HEADINGS = 3;
+  // 本文＋TOC が収まる最小幅。単一ファイルは viewport 幅、folder モードは
+  // preview-pane 幅で判定する。デフォルトのウィンドウ幅はこれを上回るよう
+  // main.rs 側で設定してあり、初期表示でサイドバーが出る。
+  var MIN_WIDTH = 900;
 
   function buildPanel() {
     panel = document.createElement('div');
@@ -75,17 +92,68 @@
     }
   }
 
-  function openPanel() {
+  // 実表示/非表示のみを担う内部関数。userClosed は触らない。
+  // body.md-toc-open を付け外しし、CSS 側で右ガターや chrome UI の退避を効かせる。
+  // instant=true のときはスライドインさせずに即表示する（初回の自動表示用）。
+  function show(instant) {
     if (!initialized || open) return;
     open = true;
+    if (instant) {
+      panel.classList.add('no-anim');
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() { panel.classList.remove('no-anim'); });
+      });
+    }
     panel.classList.remove('hidden');
+    document.body.classList.add('md-toc-open');
     build();
   }
 
-  function closePanel() {
+  function hide() {
     if (!open) return;
     open = false;
     panel.classList.add('hidden');
+    document.body.classList.remove('md-toc-open');
+  }
+
+  // 現在ページで自動表示すべきか判定して開閉する。
+  // ・幅不足/見出し不足 → 開いていれば退避（userClosed は変えない＝広くなれば戻る）
+  // ・条件を満たす      → ユーザーが閉じていなければ開く
+  function autoEvaluate() {
+    if (!initialized) return;
+    var enough = headingCount() >= MIN_HEADINGS;
+    var fits = availWidth() >= MIN_WIDTH;
+    if (!enough || !fits) {
+      hide();
+    } else if (!open && !userClosed) {
+      show(autoFirstPending);
+      autoFirstPending = false;
+    }
+  }
+
+  function headingCount() {
+    if (!scroller) return 0;
+    return scroller.querySelectorAll('h1,h2,h3,h4,h5,h6').length;
+  }
+
+  // 本文＋TOC が収まるか判定するための利用可能幅。
+  // 単一ファイルは viewport 幅、folder モードは preview-pane の幅を見る。
+  function availWidth() {
+    if (scrollTarget === window || !scroller) {
+      return document.documentElement.clientWidth || window.innerWidth || 0;
+    }
+    return scroller.clientWidth || 0;
+  }
+
+  // ユーザー操作の入口。手動で開けば userClosed を解除、閉じれば設定する。
+  function openPanel() {
+    userClosed = false;
+    show(false);
+  }
+
+  function closePanel() {
+    userClosed = true;
+    hide();
   }
 
   function toggle() {
@@ -124,11 +192,28 @@
           }
         });
         attachScrollListener();
+        // 画面幅が変わったら自動表示条件を再評価（狭くなれば退避、広がれば復帰）。
+        var rTick = false;
+        window.addEventListener('resize', function() {
+          if (rTick) return;
+          rTick = true;
+          requestAnimationFrame(function() { rTick = false; autoEvaluate(); });
+        }, { passive: true });
       }
+      // 初期表示の判定。見出しが十分で画面が広ければ自動で開く。
+      // （初回自動表示のスライドイン抑止は show() 側で行う。）
+      autoEvaluate();
     },
     refresh: function() {
-      if (open) build();
+      // 内容が差し替わった後の再構築＋再評価。diff の ON/OFF で見出し数が
+      // 0⇔N と変わるので、autoEvaluate で自動的に退避/復帰する。
+      var wasOpen = open;
+      autoEvaluate();
+      if (wasOpen && open) build();
     },
+    // 幅ベースの自動表示を再判定する。window の resize 以外に幅が変わる経路
+    // （folder モードのファイルツリー リサイズ等）から呼ぶ。
+    reevaluate: autoEvaluate,
     close: closePanel,
     open: openPanel
   };

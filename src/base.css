@@ -7,6 +7,8 @@
 
 :root {
     color-scheme: light dark;
+    /* 見出しナビ(TOC)サイドバーの幅。開いている間は右ガターをこの幅ぶん空ける。 */
+    --md-toc-w: 260px;
 }
 
 body {
@@ -101,10 +103,11 @@ table {
    左揃えのまま右方向へだけ広がる。狭い表は width:auto で縮み左寄せのまま。
    ※ この 50vw 基準は「markdown-body が viewport 中央」の単一ファイル表示専用。
    　 folder モードは markdown-body が preview-pane 内でサイドバーぶんズレるため、
-   　 body:not(.folder-mode) で除外する。folder モードでは width:auto のまま
-   　 markdown-body(720px) 内に収め、はみ出しは .table-wrap 内で横スクロールさせる。 */
+   　 また TOC を開いている間(md-toc-open)は本文が右ガターぶん左へ寄り中央でなくなるため、
+   　 どちらも除外する。除外時は width:auto のまま markdown-body(720px) 内に収め、
+   　 はみ出しは .table-wrap 内で横スクロールさせる。 */
 @media (min-width: 816px) {
-    body:not(.folder-mode) .table-wrap {
+    body:not(.folder-mode):not(.md-toc-open) .table-wrap {
         width: calc(50vw + 312px);
     }
 }
@@ -385,7 +388,7 @@ mark.md-search-hit {
     position: fixed;
     top: 0;
     right: 0;
-    width: 280px;
+    width: var(--md-toc-w);
     height: 100vh;
     border-left: 1px solid;
     z-index: 999;
@@ -400,6 +403,13 @@ mark.md-search-hit {
 .md-toc-panel.hidden {
     transform: translateX(100%);
     pointer-events: none;
+}
+
+/* 初期表示（デフォルトで開く）ときはスライドイン（ぴょん）させない。
+   toc.js が init 直後にこのクラスを付けて表示し、次フレームで外すので、
+   以降の ⌘T 手動トグルはアニメーションする。 */
+.md-toc-panel.no-anim {
+    transition: none;
 }
 
 .md-toc-header {
@@ -451,6 +461,31 @@ mark.md-search-hit {
 .md-toc-list .lvl-4 > a { padding-left: 52px; font-size: 12px; }
 .md-toc-list .lvl-5 > a,
 .md-toc-list .lvl-6 > a { padding-left: 64px; font-size: 12px; }
+
+/* ── TOC を常設サイドバーとして開いている間のレイアウト ───────────────
+   パネルは fixed なので本文に被る。開いている間だけ右ガターを --md-toc-w ぶん
+   空け、中央寄せ本文(または preview-pane の本文)をその左へ収める。Zen/Qiita 風に
+   「本文＋目次」を一塊に見せる。左パディング(48px)と対称になるよう +48px する。
+   狭い画面では JS(toc.js)側が自動でパネルを閉じ、このクラスも外れる。 */
+body.md-toc-open {
+    padding-right: calc(var(--md-toc-w) + 48px);
+}
+
+/* folder モードは body 余白を持たず preview-pane 側で本文を描くので、
+   ガターは preview-pane に確保する（body 側の padding は打ち消す）。 */
+body.folder-mode.md-toc-open {
+    padding-right: 0;
+}
+body.folder-mode.md-toc-open #preview-pane {
+    padding-right: calc(var(--md-toc-w) + 48px);
+}
+
+/* chrome UI（⌘F 検索バー・⌘D diff ボタン）は fixed で右端に出るため、
+   TOC を開くとパネルに隠れる。開いている間は TOC の左へ退避させて生かす。 */
+body.md-toc-open .md-search-bar,
+body.md-toc-open .md-diff-toggle {
+    right: calc(var(--md-toc-w) + 16px);
+}
 
 /* ── Mermaid ────────────────────────────────────────────────── */
 pre.mermaid {
@@ -586,7 +621,8 @@ details[open] {
     position: fixed;
     bottom: 16px;
     right: 16px;
-    /* TOC パネル(999)より下。TOC を開いた時はパネルに隠れて重ならない。 */
+    /* TOC パネル(999)より下。TOC を開いた時は body.md-toc-open 側でパネルの
+       左へ退避するので重ならない（退避は base.css の md-toc-open ルール参照）。 */
     z-index: 998;
     padding: 6px 14px;
     border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);

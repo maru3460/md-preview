@@ -229,6 +229,9 @@
       resizer.classList.remove('dragging');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // ツリーを広げて preview-pane が閾値を割ったら TOC を退避、
+      // 戻したら復帰させる（window resize を経由しない幅変化のため）。
+      if (window.MdToc) window.MdToc.reevaluate();
     });
 
     if (window.MdSearch) {
