@@ -5,7 +5,7 @@ description: マークダウンを書く時、ユーザーに見せるときに�
 
 # md-preview チートシート
 
-`md` コマンドで起動する macOS 向けの Markdown ビューア。GitHub 風の Markdown を WebKit ウィンドウで描画する。テーマ、検索（⌘F）、アウトライン（⌘T）、遅延ロードの図に対応している。
+`md` コマンドで起動する macOS 向けの Markdown ビューア。GitHub 風の Markdown を WebKit ウィンドウで描画する。テーマ、検索（⌘F）、アウトライン（⌘T）、git 差分表示（⌘D。右下のトグルでも切替可。VSCode 風のインラインソース差分で `git diff HEAD` を表示。行＋行内文字単位で強調、全ファイル対応、モードとして維持。トグルに変更行数 `+N −M` バッジ）、遅延ロードの図に対応している。
 
 ## 開き方
 

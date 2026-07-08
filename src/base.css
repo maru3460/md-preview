@@ -575,3 +575,125 @@ details[open] {
     margin: 4px 8px;
     background: color-mix(in srgb, CanvasText 16%, transparent);
 }
+
+/* ── git diff 表示（Cmd/Ctrl+D）─────────────────────────────────
+   追加=緑 / 削除=赤 は意味を持つ色なので、details / context-menu と同じく
+   themes/*.css には分散させず、全テーマの前景色（currentColor）に重ねても
+   成立する半透明ティントで theme-agnostic に配色する。トグルボタンは chrome
+   UI なのでシステムカラー（Canvas/Highlight）で color-scheme に追従させる。
+   ────────────────────────────────────────────────────────────── */
+.md-diff-toggle {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    /* TOC パネル(999)より下。TOC を開いた時はパネルに隠れて重ならない。 */
+    z-index: 998;
+    padding: 6px 14px;
+    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    background: Canvas;
+    color: CanvasText;
+    opacity: 0.75;
+    transition: opacity 0.15s, background-color 0.15s;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.md-diff-toggle:hover {
+    opacity: 1;
+}
+
+.md-diff-toggle.active {
+    background: Highlight;
+    color: HighlightText;
+    border-color: transparent;
+    opacity: 1;
+}
+
+/* トグルボタンの変更数バッジ（+N −M）。空文字のときは何も出ない。 */
+.md-diff-count {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+}
+
+/* VSCode 風インラインソース差分。行単位の +/- に加え、変わった行の中の変わった
+   文字だけを濃く強調する。追加=緑 / 削除=赤。地色は薄いティント、文字強調は濃いめ。 */
+.diff-source {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 8px 0;
+}
+
+/* 内側トラック。幅を最長行(max-content)に揃え、最低でも枠いっぱい(min-width:100%)。
+   行はこのトラック幅に 100% 追従するので、横スクロール時も短い行の地色が右端まで届く。 */
+.diff-body {
+    width: max-content;
+    min-width: 100%;
+}
+
+.diff-row {
+    display: flex;
+    box-sizing: border-box;
+    /* add/del の色帯と桁を揃えるため、ctx 行も透明で 3px 確保しておく。 */
+    border-left: 3px solid transparent;
+}
+
+.diff-gutter {
+    flex: 0 0 auto;
+    width: 40px;
+    padding: 0 8px;
+    text-align: right;
+    color: color-mix(in srgb, currentColor 40%, transparent);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.diff-sign {
+    flex: 0 0 auto;
+    width: 20px;
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+    color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+.diff-text {
+    flex: 0 0 auto;
+    white-space: pre;
+    padding-right: 16px;
+    tab-size: 4;
+}
+
+/* 地色に加えて左端に色帯を出す。色相だけに頼らない冗長な手掛かり（色覚多様性）と、
+   暗いテーマでの視認性を兼ねる（+/- 記号と合わせた三重の区別）。 */
+.diff-del {
+    background: rgba(248, 81, 73, 0.15);
+    border-left-color: rgba(248, 81, 73, 0.7);
+}
+
+.diff-add {
+    background: rgba(46, 160, 67, 0.15);
+    border-left-color: rgba(46, 160, 67, 0.7);
+}
+
+/* 行内の変わった文字だけを濃く強調（VSCode の char-level highlight 相当）。 */
+.diff-char-del {
+    background: rgba(248, 81, 73, 0.4);
+    border-radius: 2px;
+}
+
+.diff-char-add {
+    background: rgba(46, 160, 67, 0.4);
+    border-radius: 2px;
+}
+
+.diff-msg {
+    text-align: center;
+    color: color-mix(in srgb, currentColor 55%, transparent);
+    padding: 32px 0;
+}

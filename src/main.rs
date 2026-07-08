@@ -9,6 +9,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::{RequestAsyncResponder, WebViewBuilder};
 
+mod diff;
 mod html;
 mod platform;
 mod request;

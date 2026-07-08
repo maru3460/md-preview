@@ -28,6 +28,7 @@ pub const SEARCH_JS: &str = include_str!("search.js");
 pub const TOC_JS: &str = include_str!("toc.js");
 pub const COMMON_JS: &str = include_str!("common.js");
 pub const CONTEXT_JS: &str = include_str!("contextmenu.js");
+pub const DIFF_JS: &str = include_str!("diff.js");
 
 /// CSP の nonce を生成する。本文（untrusted な Markdown）に埋め込まれた inline
 /// script を実行させないため、自前の inline script だけにこの nonce を付ける。
@@ -187,6 +188,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <script nonce="{nonce}">{search_js}</script>
 <script nonce="{nonce}">{toc_js}</script>
 <script nonce="{nonce}">{context_js}</script>
+<script nonce="{nonce}">{diff_js}</script>
 {extra_head}"#,
         nonce = nonce,
         title = html_escape(title),
@@ -198,6 +200,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         search_js = SEARCH_JS,
         toc_js = TOC_JS,
         context_js = CONTEXT_JS,
+        diff_js = DIFF_JS,
         extra_head = extra_head,
     )
 }
