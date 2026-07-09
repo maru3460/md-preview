@@ -611,6 +611,74 @@ details[open] {
     background: color-mix(in srgb, CanvasText 16%, transparent);
 }
 
+/* ── ショートカット一覧オーバーレイ（?キー）──────────────────────
+   context-menu / diff-toggle と同じくシステムカラー（Canvas/CanvasText/
+   Highlight）と color-mix で組むため、themes/*.css への追記なしで全テーマ・
+   ライト/ダーク両方に追従する。 */
+.md-help-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: color-mix(in srgb, CanvasText 32%, transparent);
+}
+
+.md-help-panel {
+    min-width: 320px;
+    max-width: 440px;
+    max-height: 100%;
+    overflow-y: auto;
+    padding: 18px 22px 16px;
+    border-radius: 12px;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.md-help-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 14px;
+}
+
+.md-help-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 5px 0;
+}
+
+.md-help-key {
+    flex: 0 0 auto;
+    min-width: 76px;
+    text-align: center;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+    background: color-mix(in srgb, CanvasText 8%, transparent);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.md-help-desc {
+    flex: 1 1 auto;
+}
+
+.md-help-hint {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+    color: GrayText;
+    font-size: 12px;
+    text-align: center;
+}
+
 /* ── git diff 表示（Cmd/Ctrl+D）─────────────────────────────────
    追加=緑 / 削除=赤 は意味を持つ色なので、details / context-menu と同じく
    themes/*.css には分散させず、全テーマの前景色（currentColor）に重ねても

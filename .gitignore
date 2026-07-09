@@ -7,3 +7,6 @@ CLAUDE.md
 
 # macOS
 .DS_Store
+
+# playwright-cli の作業ディレクトリ（動作確認の一時成果物）
+.playwright-cli/

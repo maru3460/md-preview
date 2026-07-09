@@ -74,6 +74,9 @@
       case 'reload':
         if (window.MdReload) window.MdReload();
         break;
+      case 'help':
+        if (window.MdHelp) window.MdHelp.open();
+        break;
     }
   }
 
@@ -106,6 +109,8 @@
       items.push({ sep: true });
     }
     items.push({ label: '再読み込み', action: 'reload', enabled: true });
+    items.push({ sep: true });
+    items.push({ label: 'ショートカット一覧 (?)', action: 'help', enabled: true });
     return trimSeparators(items);
   }
 
