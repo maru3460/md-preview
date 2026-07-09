@@ -43,13 +43,44 @@ pub fn get_frontmost_pid() -> Option<i32> {
     Some(app.processIdentifier())
 }
 
+/// ウィンドウを閉じたとき、フォーカスを起動元（md を起動したターミナルなど）へ戻す。
+///
+/// macOS 14 で「協調的アクティベーション」が導入され、旧来の
+/// `activateWithOptions(ActivateIgnoringOtherApps)` は no-op になった。加えて、
+/// 非アクティブなアプリが他アプリのフォーカスを奪うこと自体が禁じられている。
+/// そのため以下の手順を踏む（いずれも macOS 14+ の非 deprecated API）:
+///
+/// 1. md 自身がアクティブなときだけ処理する。非アクティブなら、ユーザーは既に別の
+///    アプリを操作しているので、そのフォーカスを横取りしてはいけない。
+/// 2. `yieldActivationToApplication:` で「起動元にフォーカスを譲る」許可を出す。
+///    これ自体は何も動かさない“許可”で、無いとシステムに次の要求を拒否されうる。
+/// 3. `activateFromApplication:options:` で起動元を実際に前面化する。
 #[cfg(target_os = "macos")]
 pub fn activate_pid(pid: i32) {
-    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
-    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
-        #[allow(deprecated)]
-        app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSRunningApplication};
+
+    // NSApplication はメインスレッド専用。閉じる処理はイベントループ（メインスレッド）
+    // から呼ばれるので通常は Some。念のため、そうでなければ何もしない。
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+
+    // 自分がフォーカスを持っていないなら手を出さない（持っていないものは渡せないし、
+    // ユーザーが今見ている別アプリを奪う事故になる）。
+    if !app.isActive() {
+        return;
     }
+
+    // 戻し先が既に終了していれば諦める。
+    let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
+        return;
+    };
+
+    let current = NSRunningApplication::currentApplication();
+    app.yieldActivationToApplication(&target);
+    target.activateFromApplication_options(&current, NSApplicationActivationOptions(0));
 }
 
 #[cfg(target_os = "macos")]
@@ -66,10 +97,14 @@ pub fn setup_menu() {
     let app_item = NSMenuItem::new(mtm);
     let app_menu = NSMenu::new(mtm);
     unsafe {
+        // terminate: は tao の CloseRequested を経由せずプロセスを即終了するため、
+        // 閉じたときのフォーカス戻し（activate_pid）が走らない。performClose: にすると
+        // ウィンドウ閉じ → windowShouldClose: → CloseRequested に乗り、×ボタンと同じ
+        // 経路を通る。単一ウィンドウなので「閉じる＝終了」で体験は変わらない。
         let quit = NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
             ns_string!("Quit"),
-            Some(sel!(terminate:)),
+            Some(sel!(performClose:)),
             ns_string!("q"),
         );
         app_menu.addItem(&quit);
