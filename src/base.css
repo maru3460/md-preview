@@ -245,6 +245,90 @@ blockquote.markdown-alert-caution {
     opacity: 1;
 }
 
+/* ── ソース表示（.md 以外のファイル）: 全幅・行番号つきソースビュー ──
+   ここは「構造」だけ。カード枠や独自地色は持たず、コードをメインパネル（body 地）に
+   直接乗せて markdown 本文と同じ土俵にする。色（ガター・ファイル名バー・区切り線）は
+   テーマ層（themes/*.css）で塗る。ここには currentColor ベースの無難なフォールバックだけ
+   置き、どのテーマでも破綻しないようにする。
+   行番号ガターは .source-main 内で <pre> の兄弟として置くので hljs のハイライトには触れない。 */
+
+/* ソース表示ページは本文の 720px 中央制約を外して全幅・左寄せにする。 */
+.markdown-body.source-page {
+    max-width: none;
+}
+
+.source-view {
+    margin: 0;
+}
+
+/* ファイル名バー。マークアップから外せばそのまま消える。カードの一部ではなく、
+   本文の見出しのようにメインパネル上へ直接置く（塗りつぶし面は持たない）。 */
+.source-titlebar {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 2px 2px 10px;
+    margin-bottom: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    /* 非デフォルトテーマ用のフォールバック罫線。default.css は明示色で上書きする。 */
+    border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+.source-fname {
+    font-weight: 600;
+}
+.source-lang {
+    margin-left: auto;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.source-main {
+    display: flex;
+    align-items: stretch;
+}
+.source-gutter {
+    flex: 0 0 auto;
+    padding: 0 16px 0 0;
+    text-align: right;
+    white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    user-select: none;
+    -webkit-user-select: none;
+    color: color-mix(in srgb, currentColor 30%, transparent);
+}
+/* Copy ボタン付与で pre が .code-wrapper に包まれても崩れないよう両対応。 */
+.source-main > .code-wrapper,
+.source-main > pre {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+}
+/* コードもメインパネル地に直接乗せる（独自の pre 背景・余白・枠を消す）。 */
+.source-main > .code-wrapper > pre,
+.source-main > pre {
+    margin: 0;
+    border-radius: 0;
+    padding: 0;
+}
+.source-view pre,
+.source-view pre code.hljs,
+.source-view pre code {
+    background: transparent;
+}
+.source-view pre code.hljs {
+    padding: 0;
+}
+/* pre / code の 85% 複合を打ち消し、ガターと同じ絶対サイズに固定して行を揃える。 */
+.source-gutter,
+.source-main pre,
+.source-main pre code {
+    font-size: 13px;
+    line-height: 1.55;
+}
+
 /* ── Folder mode layout ─────────────────────────────────────── */
 .folder-layout {
     display: flex;
@@ -731,14 +815,14 @@ details[open] {
 
 /* VSCode 風インラインソース差分。行単位の +/- に加え、変わった行の中の変わった
    文字だけを濃く強調する。追加=緑 / 削除=赤。地色は薄いティント、文字強調は濃いめ。 */
+/* diff もソースビューと同じく「箱」を持たず、メインパネル直に流す。
+   フォント/行間はソースビューと一致（13px / 1.55）。横スクロールだけ確保する。 */
 .diff-source {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 13px;
     line-height: 1.55;
-    border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-    border-radius: 6px;
     overflow-x: auto;
-    margin: 8px 0;
+    margin: 0;
 }
 
 /* 内側トラック。幅を最長行(max-content)に揃え、最低でも枠いっぱい(min-width:100%)。
@@ -760,7 +844,8 @@ details[open] {
     width: 40px;
     padding: 0 8px;
     text-align: right;
-    color: color-mix(in srgb, currentColor 40%, transparent);
+    /* ソースビューの行番号ガターと同じ濃さに揃える。 */
+    color: color-mix(in srgb, currentColor 30%, transparent);
     user-select: none;
     -webkit-user-select: none;
 }

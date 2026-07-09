@@ -216,11 +216,18 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 pub fn render_full_document(markdown: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
     let (fm_pairs, body) = parse_frontmatter(markdown);
     let fm_html = render_frontmatter_html(&fm_pairs);
-    build_html(&format!("{}{}", fm_html, render_body(body)), title, theme_css, custom_css)
+    build_html(&format!("{}{}", fm_html, render_body(body)), title, theme_css, custom_css, "")
 }
 
-pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
+/// `body_class` は `.markdown-body` に足す追加クラス（空文字なら無し）。
+/// ソース表示は `"source-page"` を渡して 720px 中央制約を外し全幅にする。
+pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, body_class: &str) -> String {
     let nonce = make_nonce();
+    let class_attr = if body_class.is_empty() {
+        "markdown-body".to_string()
+    } else {
+        format!("markdown-body {}", body_class)
+    };
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -228,12 +235,13 @@ pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str) ->
 {head}
 </head>
 <body>
-<article class="markdown-body">
+<article class="{class_attr}">
 {body}
 </article>
 </body>
 </html>"#,
         head = head(title, theme_css, custom_css, "", &nonce),
+        class_attr = class_attr,
         body = body,
     )
 }
@@ -358,7 +366,7 @@ mod tests {
     #[test]
     fn build_html_no_longer_inlines_diagram_libs() {
         // mermaid だけで約 3MB。遅延ロードにより、ページは小さく保たれるはず。
-        let page = build_html("<p>hi</p>", "t", "", "");
+        let page = build_html("<p>hi</p>", "t", "", "", "");
         assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
         assert!(page.contains("<p>hi</p>"));
     }

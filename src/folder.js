@@ -82,7 +82,7 @@
           }
         });
       } else {
-        if (item.name.endsWith('.md')) {
+        if (isMarkdownPath(item.name)) {
           row.classList.add('md-file');
         }
         icon.textContent = '';
@@ -159,6 +159,10 @@
     return parts.join('/');
   }
 
+  function isMarkdownPath(p) {
+    return /\.(md|markdown)$/i.test(p || '');
+  }
+
   function loadPreview(relPath, preserveScroll) {
     var pane = document.getElementById('preview-pane');
     var savedScroll = preserveScroll ? pane.scrollTop : 0;
@@ -169,6 +173,9 @@
     if (window.MdSearch) window.MdSearch.reset();
     // バッジ（変更行数）は表示状態に関わらず、開いているファイルに追従させる。
     if (window.MdDiff) window.MdDiff.refreshStat();
+    // 非 md は通常表示が既にソースなので raw は無効化（トグルを隠す）。raw 表示中に
+    // 非md へ切り替えたら setAvailable(false) が状態を畳むので、下の通常フェッチに落ちる。
+    if (window.MdRaw && window.MdRaw.setAvailable) window.MdRaw.setAvailable(isMarkdownPath(relPath));
 
     // raw / diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
     // ソース / 差分を表示する（本文レンダリングには戻さない）。両者は排他。
@@ -194,6 +201,7 @@
         MdCommon.ensureHeadingIds(pane);
         if (window.hljs) hljs.highlightAll();
         MdCommon.addCopyButtons(pane);
+        MdCommon.addLineNumbers(pane);
         MdCommon.runMermaid(pane);
         MdCommon.runDrawio(pane);
         if (window.MdToc) window.MdToc.refresh();
@@ -305,7 +313,7 @@
       var hashIdx = href.indexOf('#');
       var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
       var anchorPart = hashIdx !== -1 ? href.slice(hashIdx + 1) : '';
-      if (pathPart.endsWith('.md')) {
+      if (isMarkdownPath(pathPart)) {
         e.preventDefault();
         var resolved = currentFilePath ? resolveRelativePath(currentFilePath, pathPart) : pathPart;
         loadPreview(resolved);

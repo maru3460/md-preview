@@ -87,6 +87,27 @@
     });
   }
 
+  // .source-view（.md 以外のソース表示）に行番号ガターを付ける。多重付与は防ぐ。
+  // ガターは .source-main 内で <pre> の兄弟として置くので hljs のハイライトには触れない。
+  function addLineNumbers(scope) {
+    var root = scope || document;
+    root.querySelectorAll('.source-main').forEach(function(main) {
+      if (main.querySelector(':scope > .source-gutter')) return;
+      var code = main.querySelector('code');
+      if (!code) return;
+      // 末尾の改行は「余分な空行」なので数えない（textContent は hljs 適用後も不変）。
+      var text = code.textContent.replace(/\n$/, '');
+      var count = text.split('\n').length;
+      var nums = new Array(count);
+      for (var i = 0; i < count; i++) nums[i] = i + 1;
+      var gutter = document.createElement('div');
+      gutter.className = 'source-gutter';
+      gutter.setAttribute('aria-hidden', 'true');
+      gutter.textContent = nums.join('\n');
+      main.insertBefore(gutter, main.firstChild);
+    });
+  }
+
   // scope 内に mermaid 図があれば lib を遅延ロードして描画する。
   function runMermaid(scope) {
     var root = scope || document;
@@ -159,6 +180,7 @@
     ensureHeadingId: ensureHeadingId,
     ensureHeadingIds: ensureHeadingIds,
     addCopyButtons: addCopyButtons,
+    addLineNumbers: addLineNumbers,
     runMermaid: runMermaid,
     runDrawio: runDrawio
   };

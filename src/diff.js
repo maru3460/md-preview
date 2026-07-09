@@ -10,6 +10,7 @@
   var btn = null;
   var countEl = null;
   var opts = null;
+  var widthAdded = false; // diff 用に source-page(全幅)を自分で付けたか。付けた時だけ外す。
   var reqSeq = 0; // 進行中フェッチの世代。無関係になった応答（OFF/別ファイル/連打）を捨てる。
   var statSeq = 0; // バッジ集計フェッチの世代（同上）。
 
@@ -59,12 +60,30 @@
       .catch(function() {});
   }
 
+  // diff はソース差分なので、非md ソースビュー / raw と同じく全幅にする。単一ファイルモードでは
+  // コンテナ（.markdown-body 記事）に source-page を付けて 720px 制約を外す。フォルダモードでは
+  // Rust 側フラグメントが source-page を持つため #preview-pane への付与は実質 no-op。
+  // 自分で付けた時だけ外す（非md記事が恒久的に持つ source-page を誤って剥がさないため）。
+  function applyWidth(container) {
+    if (container && !container.classList.contains('source-page')) {
+      container.classList.add('source-page');
+      widthAdded = true;
+    }
+  }
+  function clearWidth() {
+    if (!widthAdded) return;
+    var c = opts && opts.getContainer ? opts.getContainer() : null;
+    if (c) c.classList.remove('source-page');
+    widthAdded = false;
+  }
+
   // diff の取得/表示に失敗したら、モードを解除して通常表示へ戻す。
   // 進行中の他フェッチも世代を進めて無効化する（HTTP/ネットワーク双方で一貫）。
   function fail() {
     active = false;
     updateButton();
     reqSeq++;
+    clearWidth();
     if (opts) opts.reloadNormal();
   }
 
@@ -87,6 +106,7 @@
         if (html == null) { fail(); return; }
         if (window.MdSearch) window.MdSearch.reset();
         container.innerHTML = html;
+        applyWidth(container);
         if (window.MdSearch) window.MdSearch.init(container);
         if (window.MdToc) window.MdToc.refresh();
         if (scroller) scroller.scrollTop = savedScroll;
@@ -100,6 +120,7 @@
       active = false;
       updateButton();
       reqSeq++; // 進行中の diff フェッチを無効化してから通常表示へ戻す。
+      clearWidth();
       opts.reloadNormal();
     } else {
       // 表示できるファイルが無ければ何もしない（フォルダモードで未選択のとき等）。
@@ -119,6 +140,7 @@
     active = false;
     updateButton();
     reqSeq++; // 進行中の diff フェッチを無効化する。
+    clearWidth();
   }
 
   window.MdDiff = {

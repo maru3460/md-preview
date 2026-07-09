@@ -99,7 +99,7 @@ pub fn has_md_descendant(dir: &Path) -> bool {
             if has_md_descendant(&p) {
                 return true;
             }
-        } else if p.extension().and_then(|e| e.to_str()) == Some("md") {
+        } else if is_md(&p) {
             return true;
         }
     }
@@ -158,7 +158,10 @@ pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 fn is_md(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()) == Some("md")
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("md") | Some("markdown")
+    )
 }
 
 /// md ファイルを読み、frontmatter HTML と本文 HTML を組にして返す。読めなければ None。
@@ -176,15 +179,54 @@ fn serve_md_fragment(file_path: &Path) -> Response {
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
+/// 生ソースを VSCode 風のソースビュー（ファイル名バー + 行番号ガター + コード）にする。
+/// 行番号ガターはクライアント側（MdCommon.addLineNumbers）が .source-main に後付けする。
+pub fn source_view_html(file_path: &Path, content: &str) -> String {
+    let lang = extension_to_hljs_lang(file_path);
+    let fname = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let label = lang_label(lang);
+    format!(
+        r#"<div class="source-view"><div class="source-titlebar"><span class="source-fname">{fname}</span><span class="source-lang">{label}</span></div><div class="source-main"><pre><code class="language-{lang}">{code}</code></pre></div></div>"#,
+        fname = html_escape(fname),
+        label = html_escape(&label),
+        lang = lang,
+        code = html_escape(content),
+    )
+}
+
+/// hljs の言語 ID をファイル名バー右端に出す表示名にする（"rust" → "Rust"）。
+/// 頭文字を大文字にするだけでは崩れる略語・記号入りの言語名は個別に対応する。
+fn lang_label(hljs_lang: &str) -> String {
+    match hljs_lang {
+        "plaintext" => return "Text".to_string(),
+        "cpp" => return "C++".to_string(),
+        "csharp" => return "C#".to_string(),
+        "javascript" => return "JavaScript".to_string(),
+        "typescript" => return "TypeScript".to_string(),
+        "xml" => return "XML".to_string(),
+        "css" => return "CSS".to_string(),
+        "scss" => return "SCSS".to_string(),
+        "sql" => return "SQL".to_string(),
+        "json" => return "JSON".to_string(),
+        "yaml" => return "YAML".to_string(),
+        "toml" => return "TOML".to_string(),
+        "php" => return "PHP".to_string(),
+        _ => {}
+    }
+    let mut chars = hljs_lang.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 fn serve_non_md_fragment(file_path: &Path) -> Response {
     let Ok(bytes) = std::fs::read(file_path) else { return not_found_response() };
     match String::from_utf8(bytes) {
         Ok(content) => {
-            let lang = extension_to_hljs_lang(file_path);
             let fragment = format!(
-                r#"<div class="markdown-body"><pre><code class="language-{}">{}</code></pre></div>"#,
-                lang,
-                html_escape(&content)
+                r#"<div class="markdown-body source-page">{}</div>"#,
+                source_view_html(file_path, &content)
             );
             ok_response("text/html; charset=utf-8", fragment.into_bytes())
         }
@@ -251,6 +293,11 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
 
 // 単一ファイルモードの body=1 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
 pub fn serve_single_file_body(file_path: &Path) -> Response {
+    // 非 md は初回 build_html と同じソースビューを返す。これを md 描画にすると、
+    // ホットリロードや diff/off の再取得（loadNormalBody）で全幅 Markdown に化ける。
+    if !is_md(file_path) {
+        return ok_response("text/html; charset=utf-8", render_raw_inner(file_path).into_bytes());
+    }
     let Some((fm_html, body_html)) = render_md_file(file_path) else { return not_found_response() };
     let fragment = format!("{}{}", fm_html, body_html);
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
@@ -262,7 +309,8 @@ fn serve_diff_fragment(rel_encoded: &str, root_dir: &Path) -> Response {
     let rel = percent_decode(rel_encoded);
     let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
     let inner = crate::diff::render_diff_inner(&file_path);
-    let fragment = format!(r#"<div class="markdown-body">{}</div>"#, inner);
+    // diff はソース差分なので raw / 非mdソースビューと同じく全幅で出す（md/非md問わず）。
+    let fragment = format!(r#"<div class="markdown-body source-page">{}</div>"#, inner);
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
@@ -294,21 +342,18 @@ fn render_raw_inner(file_path: &Path) -> String {
         return r#"<p class="diff-msg">ファイルを読めなかったのだ</p>"#.to_string();
     };
     match String::from_utf8(bytes) {
-        Ok(content) => format!(
-            r#"<pre><code class="language-{}">{}</code></pre>"#,
-            extension_to_hljs_lang(file_path),
-            html_escape(&content)
-        ),
+        Ok(content) => source_view_html(file_path, &content),
         Err(_) => r#"<p class="diff-msg">バイナリファイルは表示できないのだ</p>"#.to_string(),
     }
 }
 
 // フォルダモードの raw 用フラグメント。プレビュー枠を丸ごと差し替えるので .markdown-body で包む。
+// raw はソース表示なので、非md のソースビューと同じく全幅（source-page）で出す。
 fn serve_raw_fragment(rel_encoded: &str, root_dir: &Path) -> Response {
     let rel = percent_decode(rel_encoded);
     let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
     let inner = render_raw_inner(&file_path);
-    let fragment = format!(r#"<div class="markdown-body">{}</div>"#, inner);
+    let fragment = format!(r#"<div class="markdown-body source-page">{}</div>"#, inner);
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
