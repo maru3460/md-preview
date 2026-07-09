@@ -169,6 +169,23 @@ blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
     border-color: #1a7f37;
 }
 
+/* ── Source view（.md 以外のファイル）の塗り ─────────────────
+   構造は base.css。ここは色だけ。行番号・ファイル名バーの区切り線などを
+   テーマのパレットで塗る。カスタムテーマはこの4セレクタを上書きすればよい。 */
+.source-fname {
+    color: #1f2328;
+}
+.source-lang {
+    color: #656d76;
+}
+.source-titlebar {
+    border-bottom-color: #d0d7de;
+}
+.source-gutter,
+.diff-gutter {
+    color: #8c959f;
+}
+
 /* ── Folder mode layout ─────────────────────────────────────── */
 #sidebar {
     background-color: #f6f8fa;
@@ -483,6 +500,13 @@ pre.mermaid {
         color: #3fb950;
         border-color: #3fb950;
     }
+
+    /* Source view */
+    .source-fname { color: #e6edf3; }
+    .source-lang { color: #8b949e; }
+    .source-titlebar { border-bottom-color: #30363d; }
+    .source-gutter,
+    .diff-gutter { color: #6e7681; }
 }
 
 /* ── draw.io diagrams ───────────────────────────────────────────

@@ -127,7 +127,13 @@
           if (p.classList) {
             if (p.classList.contains('md-search-bar')) return NodeFilter.FILTER_REJECT;
             if (p.classList.contains('copy-btn')) return NodeFilter.FILTER_REJECT;
+            // 行番号ガター・diff の +/- 記号は装飾なので検索対象外（ヒット/件数を汚さない）。
+            if (p.classList.contains('source-gutter')) return NodeFilter.FILTER_REJECT;
+            if (p.classList.contains('diff-gutter')) return NodeFilter.FILTER_REJECT;
+            if (p.classList.contains('diff-sign')) return NodeFilter.FILTER_REJECT;
           }
+          // aria-hidden の装飾要素（行番号など）も一律で除外する。
+          if (p.getAttribute && p.getAttribute('aria-hidden') === 'true') return NodeFilter.FILTER_REJECT;
           if (tag === 'MARK' && p.classList && p.classList.contains('md-search-hit')) return NodeFilter.FILTER_REJECT;
           p = p.parentNode;
         }

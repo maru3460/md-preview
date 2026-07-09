@@ -39,7 +39,14 @@ pub fn render_diff_inner(file_path: &Path) -> String {
         // 空ファイル等。何も出さない。
         return String::new();
     }
-    inner
+    // ソースビュー（.md 以外の表示）と同じファイル名バーを付けて見た目を揃える。
+    // 右ラベルは差分モードであることを示す "Diff"（変更行数バッジは右下トグル側）。
+    let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    format!(
+        r#"<div class="source-view"><div class="source-titlebar"><span class="source-fname">{}</span><span class="source-lang">Diff</span></div>{}</div>"#,
+        html_escape(name),
+        inner
+    )
 }
 
 /// HEAD にあるそのファイルの内容を取り出す。未追跡 / リポジトリ外 / コミット前などで

@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', function() {
     MdCommon.ensureHeadingIds();
     hljs.highlightAll();
     MdCommon.addCopyButtons();
+    MdCommon.addLineNumbers();
     MdCommon.runMermaid();
     MdCommon.runDrawio();
     if (window.MdSearch) {
@@ -28,6 +29,10 @@ document.addEventListener('DOMContentLoaded', function() {
             getRawUrl: function() { return '/?raw=1'; },
             reloadNormal: loadNormalBody
         });
+        // 単一ファイルが .md 以外なら通常表示が既にソースなので raw は無効。
+        // 非md表示は .markdown-body に source-page が付く（build_html 側）ことで判別する。
+        var body = document.querySelector('.markdown-body');
+        window.MdRaw.setAvailable(!(body && body.classList.contains('source-page')));
     }
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
@@ -45,6 +50,7 @@ function loadNormalBody() {
             MdCommon.ensureHeadingIds();
             if (window.hljs) hljs.highlightAll();
             MdCommon.addCopyButtons(article);
+            MdCommon.addLineNumbers(article);
             MdCommon.runMermaid(article);
             MdCommon.runDrawio(article);
             if (window.MdSearch) {

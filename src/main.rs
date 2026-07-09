@@ -15,8 +15,8 @@ mod platform;
 mod request;
 mod theme;
 
-use html::{build_folder_html, json_string, render_full_document, FOLDER_JS, INIT_JS};
-use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join};
+use html::{build_folder_html, build_html, json_string, render_full_document, FOLDER_JS, INIT_JS};
+use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join, source_view_html};
 
 enum AppEvent {
     Close,
@@ -133,7 +133,17 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             .and_then(|n| n.to_str())
             .unwrap_or("Markdown Preview")
             .to_string();
-        let html = render_full_document(&markdown, &title, theme_css, custom_css);
+        // .md 以外は markdown としてではなく、行番号付きのソース表示にする
+        // （folder / cwd モードの ?file= 経路と挙動を揃える）。
+        let is_markdown = matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("md") | Some("markdown")
+        );
+        let html = if is_markdown {
+            render_full_document(&markdown, &title, theme_css, custom_css)
+        } else {
+            build_html(&source_view_html(&path, &markdown), &title, theme_css, custom_css, "source-page")
+        };
         let base_dir = path.parent().unwrap_or(&path).to_path_buf();
         AppConfig {
             title,
@@ -557,7 +567,17 @@ fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     let (theme_paint, appearance) = theme::resolve(&theme_name);
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
-    let html = render_full_document(&markdown, &title, &theme_css, &custom_css);
+    // ライブプレビューと挙動を揃える。.md 以外は本文としてではなくソース表示にする。
+    let path = Path::new(arg);
+    let is_markdown = matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("md") | Some("markdown")
+    );
+    let html = if is_markdown {
+        render_full_document(&markdown, &title, &theme_css, &custom_css)
+    } else {
+        build_html(&source_view_html(path, &markdown), &title, &theme_css, &custom_css, "source-page")
+    };
     print!("{}", html);
 }
 
