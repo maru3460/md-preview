@@ -480,10 +480,11 @@ body.folder-mode.md-toc-open #preview-pane {
     padding-right: calc(var(--md-toc-w) + 48px);
 }
 
-/* chrome UI（⌘F 検索バー・⌘D diff ボタン）は fixed で右端に出るため、
+/* chrome UI（⌘F 検索バー・⌘D diff / ⌘R raw ボタン）は fixed で右端に出るため、
    TOC を開くとパネルに隠れる。開いている間は TOC の左へ退避させて生かす。 */
 body.md-toc-open .md-search-bar,
-body.md-toc-open .md-diff-toggle {
+body.md-toc-open .md-diff-toggle,
+body.md-toc-open .md-raw-toggle {
     right: calc(var(--md-toc-w) + 16px);
 }
 
@@ -679,15 +680,16 @@ details[open] {
     text-align: center;
 }
 
-/* ── git diff 表示（Cmd/Ctrl+D）─────────────────────────────────
+/* ── git diff 表示（Cmd/Ctrl+D）/ raw ソース表示（Cmd/Ctrl+R）─────────
    追加=緑 / 削除=赤 は意味を持つ色なので、details / context-menu と同じく
    themes/*.css には分散させず、全テーマの前景色（currentColor）に重ねても
    成立する半透明ティントで theme-agnostic に配色する。トグルボタンは chrome
    UI なのでシステムカラー（Canvas/Highlight）で color-scheme に追従させる。
+   diff と raw の 2 ボタンは右下に縦積みする（raw が上、diff が下）。
    ────────────────────────────────────────────────────────────── */
-.md-diff-toggle {
+.md-diff-toggle,
+.md-raw-toggle {
     position: fixed;
-    bottom: 16px;
     right: 16px;
     /* TOC パネル(999)より下。TOC を開いた時は body.md-toc-open 側でパネルの
        左へ退避するので重ならない（退避は base.css の md-toc-open ルール参照）。 */
@@ -704,11 +706,17 @@ details[open] {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
-.md-diff-toggle:hover {
+.md-diff-toggle { bottom: 16px; }
+/* diff ボタン(高さ ~32px + 下 16px)の上に少し間隔を空けて重ねる。 */
+.md-raw-toggle { bottom: 56px; }
+
+.md-diff-toggle:hover,
+.md-raw-toggle:hover {
     opacity: 1;
 }
 
-.md-diff-toggle.active {
+.md-diff-toggle.active,
+.md-raw-toggle.active {
     background: Highlight;
     color: HighlightText;
     border-color: transparent;

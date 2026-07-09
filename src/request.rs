@@ -63,6 +63,7 @@ pub fn guess_mime(path: &Path) -> &'static str {
 
 pub fn extension_to_hljs_lang(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
+        Some("md" | "markdown") => "markdown",
         Some("rs") => "rust",
         Some("js" | "mjs" | "cjs") => "javascript",
         Some("ts") => "typescript",
@@ -284,6 +285,39 @@ fn serve_diffstat(rel_encoded: &str, root_dir: &Path) -> Response {
     diffstat_json(&file_path)
 }
 
+/// ファイルのソースを、拡張子に応じた言語クラス付きの `<pre><code>` フラグメントにして
+/// 返す。レンダリング結果ではなく生ソースなので、.md 以外のテキストファイルも対象。
+/// 返すのは中身だけ（`.markdown-body` ラッパは呼び出し側で付ける）。ハイライトは
+/// クライアント側の hljs が担当する。バイナリ / 読めない場合は通知メッセージを返す。
+fn render_raw_inner(file_path: &Path) -> String {
+    let Ok(bytes) = std::fs::read(file_path) else {
+        return r#"<p class="diff-msg">ファイルを読めなかったのだ</p>"#.to_string();
+    };
+    match String::from_utf8(bytes) {
+        Ok(content) => format!(
+            r#"<pre><code class="language-{}">{}</code></pre>"#,
+            extension_to_hljs_lang(file_path),
+            html_escape(&content)
+        ),
+        Err(_) => r#"<p class="diff-msg">バイナリファイルは表示できないのだ</p>"#.to_string(),
+    }
+}
+
+// フォルダモードの raw 用フラグメント。プレビュー枠を丸ごと差し替えるので .markdown-body で包む。
+fn serve_raw_fragment(rel_encoded: &str, root_dir: &Path) -> Response {
+    let rel = percent_decode(rel_encoded);
+    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
+    let inner = render_raw_inner(&file_path);
+    let fragment = format!(r#"<div class="markdown-body">{}</div>"#, inner);
+    ok_response("text/html; charset=utf-8", fragment.into_bytes())
+}
+
+// 単一ファイルモードの raw 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
+fn serve_single_file_raw(file_path: &Path) -> Response {
+    let inner = render_raw_inner(file_path);
+    ok_response("text/html; charset=utf-8", inner.into_bytes())
+}
+
 pub fn handle_request(
     url_path: &str,
     query: &str,
@@ -327,6 +361,15 @@ pub fn handle_request(
     }
     if let Some(rel_encoded) = query.strip_prefix("diffstat=") {
         return serve_diffstat(rel_encoded, root_dir);
+    }
+    // diff と同じく raw=1 は単一ファイルモードの番兵、raw=<rel> は folder モード。
+    if query == "raw=1" {
+        if let Some(path) = single_file {
+            return serve_single_file_raw(path);
+        }
+    }
+    if let Some(rel_encoded) = query.strip_prefix("raw=") {
+        return serve_raw_fragment(rel_encoded, root_dir);
     }
     if url_path == "/" {
         return ok_response("text/html; charset=utf-8", html_bytes.to_vec());

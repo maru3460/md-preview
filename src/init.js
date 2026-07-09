@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window.MdToc) {
         window.MdToc.init(document.scrollingElement || document.documentElement);
     }
-    // stdin モードにはファイルが無いので diff トグルは出さない。
+    // stdin モードにはファイルが無いので diff / raw トグルは出さない。
     if (window.MdDiff && window.MD_MENU_MODE !== 'stdin') {
         window.MdDiff.init({
             getContainer: function() { return document.querySelector('.markdown-body'); },
@@ -20,6 +20,14 @@ document.addEventListener('DOMContentLoaded', function() {
             reloadNormal: loadNormalBody
         });
         window.MdDiff.refreshStat();
+    }
+    if (window.MdRaw && window.MD_MENU_MODE !== 'stdin') {
+        window.MdRaw.init({
+            getContainer: function() { return document.querySelector('.markdown-body'); },
+            getScroller: function() { return document.scrollingElement || document.documentElement; },
+            getRawUrl: function() { return '/?raw=1'; },
+            reloadNormal: loadNormalBody
+        });
     }
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
@@ -51,7 +59,8 @@ function loadNormalBody() {
 }
 
 window.MdReload = function() {
-    // diff 表示中はファイル変更を diff の再取得に回す（本文には戻さない）。
+    // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
+    if (window.MdRaw && window.MdRaw.isActive()) { window.MdRaw.refresh(); return; }
     if (window.MdDiff && window.MdDiff.isActive()) { window.MdDiff.refresh(); return; }
     loadNormalBody();
 };

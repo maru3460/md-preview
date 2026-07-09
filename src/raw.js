@@ -1,0 +1,122 @@
+// raw（ソース）表示のトグル。diff.js と同じ流儀で window.MdRaw を公開する。
+// レンダリングされたプレビューと、Markdown の生ソース（レンダリング前のテキスト）を、
+// 右下ボタン or Cmd/Ctrl+R で切り替える。raw は diff と同じく「モード」として維持され、
+// ON のまま別ファイルへ移るとそのファイルのソースが出る（folder モードの loadPreview 側が
+// isActive() を見て分岐する）。diff と raw は排他で、一方を ON にすると他方は畳まれる。
+// init.js（単一ファイル）と folder.js（フォルダ）が init() でモード固有の入出力を渡す。
+(function() {
+  var active = false;
+  var initialized = false;
+  var btn = null;
+  var opts = null;
+  var reqSeq = 0; // 進行中フェッチの世代。無関係になった応答（OFF/別ファイル/連打）を捨てる。
+
+  function buildButton() {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'md-raw-toggle';
+    btn.setAttribute('aria-pressed', 'false');
+    btn.title = 'Toggle raw source (Cmd/Ctrl+R)';
+    btn.appendChild(document.createTextNode('Raw'));
+    btn.addEventListener('click', function() { toggle(); });
+    document.body.appendChild(btn);
+  }
+
+  function updateButton() {
+    if (!btn) return;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
+  // raw の取得/表示に失敗したら、モードを解除して通常表示へ戻す。
+  function fail() {
+    active = false;
+    updateButton();
+    reqSeq++;
+    if (opts) opts.reloadNormal();
+  }
+
+  // ソースを取得して表示中のコンテナに差し込む。中身は 1 個の <pre><code> なので、
+  // hljs で構文ハイライトし、Copy ボタンも付ける（全文コピー用）。
+  // active は呼び出し側（toggle / loadPreview）で先に立てておく前提。
+  function showRaw() {
+    if (!opts) return;
+    var url = opts.getRawUrl();
+    var container = opts.getContainer();
+    if (!url || !container) { fail(); return; }
+    var scroller = opts.getScroller ? opts.getScroller() : null;
+    var savedScroll = scroller ? scroller.scrollTop : 0;
+    var myReq = ++reqSeq;
+    fetch(url, { cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.text() : null; })
+      .then(function(html) {
+        // 応答が届くまでに OFF/別ファイル/別トグルで無効化されていたら捨てる。
+        if (myReq !== reqSeq || !active) return;
+        if (html == null) { fail(); return; }
+        if (window.MdSearch) window.MdSearch.reset();
+        container.innerHTML = html;
+        if (window.hljs) {
+          container.querySelectorAll('pre code').forEach(function(el) {
+            hljs.highlightElement(el);
+          });
+        }
+        if (window.MdCommon) MdCommon.addCopyButtons(container);
+        if (window.MdSearch) window.MdSearch.init(container);
+        if (window.MdToc) window.MdToc.refresh();
+        if (scroller) scroller.scrollTop = savedScroll;
+      })
+      .catch(function() { if (myReq === reqSeq) fail(); });
+  }
+
+  function toggle() {
+    if (!opts) return;
+    if (active) {
+      active = false;
+      updateButton();
+      reqSeq++; // 進行中の raw フェッチを無効化してから通常表示へ戻す。
+      opts.reloadNormal();
+    } else {
+      // 表示できるファイルが無ければ何もしない（フォルダモードで未選択のとき等）。
+      if (!opts.getRawUrl()) return;
+      // diff 表示とは排他。相手が出ていたら先に畳む（本文には戻さず raw で上書きする）。
+      if (window.MdDiff && window.MdDiff.isActive()) window.MdDiff.deactivate();
+      active = true;
+      updateButton();
+      showRaw();
+    }
+  }
+
+  // 状態だけ OFF にする（通常表示には戻さない）。diff 表示へ切り替える時など、
+  // この直後に別モードがコンテナを上書きする前提で使う。
+  function deactivate() {
+    if (!active) return;
+    active = false;
+    updateButton();
+    reqSeq++;
+  }
+
+  window.MdRaw = {
+    // opts: { getContainer(), getScroller(), getRawUrl(), reloadNormal() }
+    init: function(o) {
+      opts = o;
+      if (initialized) return;
+      initialized = true;
+      buildButton();
+      document.addEventListener('keydown', function(e) {
+        if (!((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey
+            && (e.key === 'r' || e.key === 'R' || e.code === 'KeyR'))) return;
+        // 入力欄（検索ボックス等）にフォーカス中は通常のブラウザ挙動に委ねる。
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        e.preventDefault();
+        toggle();
+      });
+    },
+    isActive: function() { return active; },
+    // diff 表示など、他モードへ切り替える際に状態だけ畳む（通常表示には戻さない）。
+    deactivate: deactivate,
+    // raw 表示中に（現在ファイルに対して）再取得する。ファイル切替・監視リロード・
+    // 明示更新のいずれからも使う。
+    refresh: function() { if (active) showRaw(); }
+  };
+})();
