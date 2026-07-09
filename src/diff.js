@@ -104,10 +104,21 @@
     } else {
       // 表示できるファイルが無ければ何もしない（フォルダモードで未選択のとき等）。
       if (!opts.getDiffUrl()) return;
+      // raw 表示とは排他。相手が出ていたら先に畳む（本文には戻さず差分で上書きする）。
+      if (window.MdRaw && window.MdRaw.isActive()) window.MdRaw.deactivate();
       active = true;
       updateButton();
       showDiff();
     }
+  }
+
+  // 状態だけ OFF にする（通常表示には戻さない）。raw 表示へ切り替える時など、
+  // この直後に別モードがコンテナを上書きする前提で使う。
+  function deactivate() {
+    if (!active) return;
+    active = false;
+    updateButton();
+    reqSeq++; // 進行中の diff フェッチを無効化する。
   }
 
   window.MdDiff = {
@@ -128,6 +139,8 @@
       });
     },
     isActive: function() { return active; },
+    // raw 表示など、他モードへ切り替える際に状態だけ畳む（通常表示には戻さない）。
+    deactivate: deactivate,
     // diff 表示中に（現在ファイルに対して）再取得する。ファイル切替・監視リロード・
     // 明示更新のいずれからも使う。バッジも合わせて更新する。
     refresh: function() { if (active) showDiff(); refreshStat(); },

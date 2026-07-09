@@ -170,8 +170,14 @@
     // バッジ（変更行数）は表示状態に関わらず、開いているファイルに追従させる。
     if (window.MdDiff) window.MdDiff.refreshStat();
 
-    // diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
-    // 差分を表示する（本文レンダリングには戻さない）。
+    // raw / diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
+    // ソース / 差分を表示する（本文レンダリングには戻さない）。両者は排他。
+    if (window.MdRaw && window.MdRaw.isActive()) {
+      // ファイル切替（preserveScroll=false）は先頭から、ホットリロードは位置維持。
+      if (!preserveScroll) pane.scrollTop = 0;
+      window.MdRaw.refresh();
+      return;
+    }
     if (window.MdDiff && window.MdDiff.isActive()) {
       // ファイル切替（preserveScroll=false）は先頭から、ホットリロードは位置維持。
       if (!preserveScroll) pane.scrollTop = 0;
@@ -198,7 +204,8 @@
   window.MdReload = function(relPath) {
     if (!currentFilePath) return;
     if (relPath && relPath !== currentFilePath) return;
-    // diff 表示中はファイル変更を diff の再取得に回す（本文には戻さない）。
+    // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
+    if (window.MdRaw && window.MdRaw.isActive()) { window.MdRaw.refresh(); return; }
     if (window.MdDiff && window.MdDiff.isActive()) { window.MdDiff.refresh(); return; }
     loadPreview(currentFilePath, true);
   };
@@ -246,6 +253,14 @@
         getScroller: function() { return document.getElementById('preview-pane'); },
         getDiffUrl: function() { return currentFilePath ? '/?diff=' + encodeURIComponent(currentFilePath) : null; },
         getStatUrl: function() { return currentFilePath ? '/?diffstat=' + encodeURIComponent(currentFilePath) : null; },
+        reloadNormal: function() { if (currentFilePath) loadPreview(currentFilePath, true); }
+      });
+    }
+    if (window.MdRaw) {
+      window.MdRaw.init({
+        getContainer: function() { return document.getElementById('preview-pane'); },
+        getScroller: function() { return document.getElementById('preview-pane'); },
+        getRawUrl: function() { return currentFilePath ? '/?raw=' + encodeURIComponent(currentFilePath) : null; },
         reloadNormal: function() { if (currentFilePath) loadPreview(currentFilePath, true); }
       });
     }
