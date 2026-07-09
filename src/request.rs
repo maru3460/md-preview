@@ -179,17 +179,38 @@ fn serve_md_fragment(file_path: &Path) -> Response {
     ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
+/// このサイズ / 行数を超えるソースは hljs のハイライトを切る（プレーン表示）。
+/// 巨大ファイルを全文同期ハイライトするとメインスレッドが数百 ms 凍結し、
+/// `<code>` が数十万ノードに膨張して検索まで実質使用不能になるのを避けるため。
+/// VSCode の largeFileOptimizations と同じ割り切り（大ファイルは色なし）。
+const HIGHLIGHT_MAX_BYTES: usize = 1_000_000;
+const HIGHLIGHT_MAX_LINES: usize = 10_000;
+
 /// 生ソースを VSCode 風のソースビュー（ファイル名バー + 行番号ガター + コード）にする。
 /// 行番号ガターはクライアント側（MdCommon.addLineNumbers）が .source-main に後付けする。
 pub fn source_view_html(file_path: &Path, content: &str) -> String {
     let lang = extension_to_hljs_lang(file_path);
     let fname = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let label = lang_label(lang);
+    // 閾値超過なら hljs をスキップさせる。`nohighlight` は hljs の noHighlightRe に
+    // マッチするため highlightAll/highlightElement 双方が処理を飛ばし、<code> が
+    // 1 テキストノードのまま残る（凍結・ノード爆発・検索激重を一括で回避）。
+    let too_big = content.len() > HIGHLIGHT_MAX_BYTES
+        || content.bytes().filter(|&b| b == b'\n').count() >= HIGHLIGHT_MAX_LINES;
+    let code_class = if too_big {
+        "nohighlight".to_string()
+    } else {
+        format!("language-{}", lang)
+    };
+    let label = if too_big {
+        format!("{} · 大ファイルのためハイライト無効", lang_label(lang))
+    } else {
+        lang_label(lang)
+    };
     format!(
-        r#"<div class="source-view"><div class="source-titlebar"><span class="source-fname">{fname}</span><span class="source-lang">{label}</span></div><div class="source-main"><pre><code class="language-{lang}">{code}</code></pre></div></div>"#,
+        r#"<div class="source-view"><div class="source-titlebar"><span class="source-fname">{fname}</span><span class="source-lang">{label}</span></div><div class="source-main"><pre><code class="{code_class}">{code}</code></pre></div></div>"#,
         fname = html_escape(fname),
         label = html_escape(&label),
-        lang = lang,
+        code_class = code_class,
         code = html_escape(content),
     )
 }

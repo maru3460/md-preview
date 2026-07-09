@@ -127,8 +127,9 @@
           if (p.classList) {
             if (p.classList.contains('md-search-bar')) return NodeFilter.FILTER_REJECT;
             if (p.classList.contains('copy-btn')) return NodeFilter.FILTER_REJECT;
-            // 行番号ガター・diff の +/- 記号は装飾なので検索対象外（ヒット/件数を汚さない）。
-            if (p.classList.contains('source-gutter')) return NodeFilter.FILTER_REJECT;
+            // diff の行番号・+/- 記号は装飾なので検索対象外（ヒット/件数を汚さない）。
+            // ソースビューの行番号ガター(.source-gutter)は aria-hidden="true" を持つので
+            // 下の aria-hidden チェックで弾かれる（ここで重ねてチェックしない）。
             if (p.classList.contains('diff-gutter')) return NodeFilter.FILTER_REJECT;
             if (p.classList.contains('diff-sign')) return NodeFilter.FILTER_REJECT;
           }
