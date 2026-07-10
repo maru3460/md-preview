@@ -15,7 +15,7 @@ mod platform;
 mod request;
 mod theme;
 
-use html::{build_folder_html, build_html, json_string, render_full_document, FOLDER_JS, INIT_JS};
+use html::{build_folder_html, build_html, html_escape, json_string, render_full_document, FOLDER_JS, INIT_JS};
 use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join, source_view_html};
 
 enum AppEvent {
@@ -121,8 +121,11 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
         }
     } else {
         // cwd 外の単一ファイル: 単一ページ表示。親ディレクトリを root にして監視する。
-        let markdown = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
+        // read_to_string だと非UTF-8(バイナリ)で即エラー終了し、GUI 起動では stderr が
+        // 見えず「無反応」になる。フォルダの ?file= 経路と揃えて、バイトで読んで
+        // 非UTF-8 なら「表示できません」窓を出す（読み込み自体の失敗だけ終了扱い）。
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
             Err(e) => {
                 eprintln!("md: '{}' を読み込めませんでした: {}", path.display(), e);
                 std::process::exit(1);
@@ -139,10 +142,23 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             path.extension().and_then(|e| e.to_str()),
             Some("md") | Some("markdown")
         );
-        let html = if is_markdown {
-            render_full_document(&markdown, &title, theme_css, custom_css)
-        } else {
-            build_html(&source_view_html(&path, &markdown), &title, theme_css, custom_css, "source-page")
+        let html = match String::from_utf8(bytes) {
+            Ok(text) if is_markdown => render_full_document(&text, &title, theme_css, custom_css),
+            Ok(text) => {
+                build_html(&source_view_html(&path, &text), &title, theme_css, custom_css, "source-page")
+            }
+            // バイナリも非md扱い（source-page）にして、init.js の raw 有効判定
+            // （source-page 有無で見る）で raw トグルが出ないように揃える。
+            Err(_) => build_html(
+                &format!(
+                    r#"<p class="binary-msg">バイナリファイルは表示できません: {}</p>"#,
+                    html_escape(&title)
+                ),
+                &title,
+                theme_css,
+                custom_css,
+                "source-page",
+            ),
         };
         let base_dir = path.parent().unwrap_or(&path).to_path_buf();
         AppConfig {
@@ -544,8 +560,10 @@ fn run_theme_command(rest: &[String]) {
 
 #[cfg(debug_assertions)]
 fn run_html_dump(arg: &str, theme_override: Option<&str>) {
-    let markdown = match std::fs::read_to_string(arg) {
-        Ok(content) => content,
+    // ライブプレビューと揃えて、非UTF-8(バイナリ)はエラー終了ではなく
+    // 「表示できません」メッセージにする（読み込み自体の失敗だけ終了扱い）。
+    let bytes = match std::fs::read(arg) {
+        Ok(b) => b,
         Err(e) => {
             eprintln!("md: '{}' を読み込めませんでした: {}", arg, e);
             std::process::exit(1);
@@ -573,10 +591,22 @@ fn run_html_dump(arg: &str, theme_override: Option<&str>) {
         path.extension().and_then(|e| e.to_str()),
         Some("md") | Some("markdown")
     );
-    let html = if is_markdown {
-        render_full_document(&markdown, &title, &theme_css, &custom_css)
-    } else {
-        build_html(&source_view_html(path, &markdown), &title, &theme_css, &custom_css, "source-page")
+    let html = match String::from_utf8(bytes) {
+        Ok(text) if is_markdown => render_full_document(&text, &title, &theme_css, &custom_css),
+        Ok(text) => {
+            build_html(&source_view_html(path, &text), &title, &theme_css, &custom_css, "source-page")
+        }
+        // 単一ファイル経路と揃えてバイナリも source-page 扱いにする。
+        Err(_) => build_html(
+            &format!(
+                r#"<p class="binary-msg">バイナリファイルは表示できません: {}</p>"#,
+                html_escape(&title)
+            ),
+            &title,
+            &theme_css,
+            &custom_css,
+            "source-page",
+        ),
     };
     print!("{}", html);
 }

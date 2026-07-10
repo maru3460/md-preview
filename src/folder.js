@@ -163,6 +163,22 @@
     return /\.(md|markdown)$/i.test(p || '');
   }
 
+  // ファイル取得が非200だった時に、無反応にせず理由をペインへ出す。
+  // textContent で組むのでファイル名に < 等が入っても安全。
+  function showLoadError(pane, relPath) {
+    var name = (relPath || '').split('/').pop() || relPath || '';
+    var article = document.createElement('div');
+    article.className = 'markdown-body';
+    var p = document.createElement('p');
+    p.className = 'binary-msg';
+    p.textContent = 'このファイルは開けませんでした: ' + name
+      + '（フォルダ外を指すリンク・権限・壊れたファイルなどの可能性）';
+    article.appendChild(p);
+    pane.innerHTML = '';
+    pane.appendChild(article);
+    if (window.MdToc) window.MdToc.refresh();
+  }
+
   function loadPreview(relPath, preserveScroll) {
     var pane = document.getElementById('preview-pane');
     var savedScroll = preserveScroll ? pane.scrollTop : 0;
@@ -195,7 +211,10 @@
     fetch('/?file=' + encodeURIComponent(relPath), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
-        if (html == null) return;
+        // 非200(html==null)は握りつぶさず理由を表示する。サーバは safe_join が弾いた時
+        // （フォルダ外を指すシンボリックリンク等）や読めない時に not_found を返すので、
+        // 黙って無反応にならないようメッセージを出す。
+        if (html == null) { showLoadError(pane, relPath); return; }
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
         MdCommon.ensureHeadingIds(pane);
@@ -206,7 +225,7 @@
         MdCommon.runDrawio(pane);
         if (window.MdToc) window.MdToc.refresh();
       })
-      .catch(function() {});
+      .catch(function() { showLoadError(pane, relPath); });
   }
 
   window.MdReload = function(relPath) {

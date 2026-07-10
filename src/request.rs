@@ -194,8 +194,10 @@ pub fn source_view_html(file_path: &Path, content: &str) -> String {
     // 閾値超過なら hljs をスキップさせる。`nohighlight` は hljs の noHighlightRe に
     // マッチするため highlightAll/highlightElement 双方が処理を飛ばし、<code> が
     // 1 テキストノードのまま残る（凍結・ノード爆発・検索激重を一括で回避）。
+    // 行数は改行数で近似する（末尾改行の有無で ±1 ブレるがソフト閾値なので許容）。
+    // バイト側と演算子を `>` で揃える。
     let too_big = content.len() > HIGHLIGHT_MAX_BYTES
-        || content.bytes().filter(|&b| b == b'\n').count() >= HIGHLIGHT_MAX_LINES;
+        || content.bytes().filter(|&b| b == b'\n').count() > HIGHLIGHT_MAX_LINES;
     let code_class = if too_big {
         "nohighlight".to_string()
     } else {
@@ -360,11 +362,18 @@ fn serve_diffstat(rel_encoded: &str, root_dir: &Path) -> Response {
 /// クライアント側の hljs が担当する。バイナリ / 読めない場合は通知メッセージを返す。
 fn render_raw_inner(file_path: &Path) -> String {
     let Ok(bytes) = std::fs::read(file_path) else {
-        return r#"<p class="diff-msg">ファイルを読めなかったのだ</p>"#.to_string();
+        return r#"<p class="diff-msg">ファイルを読み込めませんでした</p>"#.to_string();
     };
     match String::from_utf8(bytes) {
         Ok(content) => source_view_html(file_path, &content),
-        Err(_) => r#"<p class="diff-msg">バイナリファイルは表示できないのだ</p>"#.to_string(),
+        Err(_) => {
+            // バイナリ通知は他経路（serve_non_md_fragment / 単一ファイル / --html）と文言を揃える。
+            let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+            format!(
+                r#"<p class="diff-msg">バイナリファイルは表示できません: {}</p>"#,
+                html_escape(name)
+            )
+        }
     }
 }
 
