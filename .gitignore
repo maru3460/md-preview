@@ -10,3 +10,9 @@ CLAUDE.md
 
 # playwright-cli の作業ディレクトリ（動作確認の一時成果物）
 .playwright-cli/
+
+# cargo-fuzz の成果物（コーパス・クラッシュ入力・ビルド）
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
