@@ -51,7 +51,7 @@ date: 2026-05-10
 標準の `<details>` / `<summary>` タグがそのまま使える。クリックで開閉できる折りたたみUIになる。
 
 <details>
-<summary>クリックで開くのだ</summary>
+<summary>クリックで開く</summary>
 
 `</summary>` の後に**空行を1行**入れると、中身が普通のマークダウンとして解釈される。
 

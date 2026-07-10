@@ -15,9 +15,9 @@ pub fn render_diff_inner(file_path: &Path) -> String {
     let new_src = match std::fs::read(file_path) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(s) => s,
-            Err(_) => return message_html("バイナリファイルは差分表示できないのだ"),
+            Err(_) => return message_html("バイナリファイルは差分表示できません"),
         },
-        Err(_) => return message_html("ファイルを読めなかったのだ"),
+        Err(_) => return message_html("ファイルを読み込めませんでした"),
     };
     let dir = file_path.parent().unwrap_or(Path::new("."));
 
@@ -144,7 +144,7 @@ fn render_source_diff(old_src: &str, new_src: &str) -> String {
     // （例: 数百万行 vs 1行）のアロケーション爆発を、product で DP セル数を抑える。
     let (m, n) = (old_lines.len(), new_lines.len());
     if m.max(n) > 20_000 || m.saturating_mul(n) > 4_000_000 {
-        return message_html("ファイルが大きすぎて差分表示できないのだ");
+        return message_html("ファイルが大きすぎて差分表示できません");
     }
 
     let ops = line_diff(&old_lines, &new_lines);
