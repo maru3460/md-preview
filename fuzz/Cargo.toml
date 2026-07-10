@@ -1,0 +1,55 @@
+[package]
+name = "md-preview-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.md-preview]
+path = ".."
+
+# 親クレート（単一パッケージ）に巻き込まれないよう、fuzz は独立ワークスペースにする。
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "render_body"
+path = "fuzz_targets/render_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_frontmatter"
+path = "fuzz_targets/parse_frontmatter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "percent_decode"
+path = "fuzz_targets/percent_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "source_view_html"
+path = "fuzz_targets/source_view_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "safe_join"
+path = "fuzz_targets/safe_join.rs"
+test = false
+doc = false
+bench = false

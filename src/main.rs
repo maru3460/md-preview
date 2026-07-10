@@ -9,14 +9,11 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::{RequestAsyncResponder, WebViewBuilder};
 
-mod diff;
-mod html;
 mod platform;
-mod request;
-mod theme;
 
-use html::{build_folder_html, build_html, html_escape, json_string, render_full_document, FOLDER_JS, INIT_JS};
-use request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join, source_view_html};
+use md_preview::theme;
+use md_preview::html::{build_folder_html, build_html, html_escape, json_string, render_full_document, FOLDER_JS, INIT_JS};
+use md_preview::request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join, source_view_html};
 
 enum AppEvent {
     Close,
