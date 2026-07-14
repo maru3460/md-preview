@@ -17,7 +17,7 @@ date: 2026-05-10
 
 ### 小見出し H3
 
-リンクは [GitHub](https://github.com/) のように青基調。
+リンクは [GitHub](https://github.com/) のように青基調。URL をそのまま貼るときは山カッコで囲むと飛べる → <https://github.com/>（裸の `https://github.com/` はテキストのまま）。
 
 #### さらに小さく H4
 
