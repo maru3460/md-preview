@@ -49,7 +49,8 @@ pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
     .union(Options::ENABLE_STRIKETHROUGH)
     .union(Options::ENABLE_FOOTNOTES)
-    .union(Options::ENABLE_GFM);
+    .union(Options::ENABLE_GFM)
+    .union(Options::ENABLE_WIKILINKS);
 
 pub const FOLDER_JS: &str = include_str!("folder.js");
 
