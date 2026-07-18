@@ -26,7 +26,9 @@
     return window.MD_MENU_MODE === 'stdin';
   }
 
-  function build() {
+  function build(welcome) {
+    // パネルを一度でも開いたら、初回の自動表示はもう出さない。
+    markOnboarded();
     overlay = document.createElement('div');
     overlay.className = 'md-help-backdrop';
 
@@ -37,6 +39,14 @@
     title.className = 'md-help-title';
     title.textContent = 'キーボードショートカット';
     panel.appendChild(title);
+
+    // 初回だけ、使い方の一言を添える。「?」でいつでも呼べることを伝える。
+    if (welcome) {
+      var intro = document.createElement('div');
+      intro.className = 'md-help-welcome';
+      intro.textContent = 'md へようこそ。使えるショートカットの一覧です。この一覧は「?」でいつでも開けます。';
+      panel.appendChild(intro);
+    }
 
     var stdin = isStdin();
     SHORTCUTS.forEach(function(sc) {
@@ -67,15 +77,42 @@
     document.body.appendChild(overlay);
   }
 
-  function open() {
+  function open(welcome) {
     if (overlay) { close(); return; }
-    build();
+    build(welcome);
   }
 
   function close() {
     if (!overlay) return;
     overlay.remove();
     overlay = null;
+  }
+
+  // 初回オンボーディング。初めて使うときだけ、ショートカット一覧を
+  // 自動で開いて使い方を提示する。一度出したら（＝パネルを一度でも開いたら）
+  // 二度と自動では出さない。
+  var ONBOARDED_KEY = 'md-help-onboarded';
+
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  function markOnboarded() { lsSet(ONBOARDED_KEY, '1'); }
+
+  function maybeOnboard() {
+    if (lsGet(ONBOARDED_KEY) === '1') return;
+    // 既にユーザーが自分で開いていたら邪魔しない（フラグだけ立てる）。
+    if (overlay) { markOnboarded(); return; }
+    // 描画が落ち着いてから、歓迎の一言つきで一覧を開く。
+    setTimeout(function() {
+      if (overlay || lsGet(ONBOARDED_KEY) === '1') { markOnboarded(); return; }
+      open(true);
+    }, 500);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', maybeOnboard);
+  } else {
+    maybeOnboard();
   }
 
   document.addEventListener('keydown', function(e) {

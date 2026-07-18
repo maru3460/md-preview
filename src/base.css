@@ -764,6 +764,18 @@ details[open] {
     text-align: center;
 }
 
+/* 初回オンボーディングでだけタイトル直下に出す一言。使い方の導入なので
+   本文と同じ落ち着いたトーンで、キー行より前に置く。 */
+.md-help-welcome {
+    margin-bottom: 14px;
+    padding: 9px 11px;
+    border-radius: 8px;
+    background: color-mix(in srgb, CanvasText 6%, transparent);
+    color: color-mix(in srgb, CanvasText 82%, transparent);
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
 /* ── git diff 表示（Cmd/Ctrl+D）/ raw ソース表示（Cmd/Ctrl+R）─────────
    追加=緑 / 削除=赤 は意味を持つ色なので、details / context-menu と同じく
    themes/*.css には分散させず、全テーマの前景色（currentColor）に重ねても
