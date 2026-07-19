@@ -194,21 +194,25 @@
   function syncFrameBackground(frame) {
     // レイアウト・スタイル確定後に読むため 1 フレーム待つ。
     requestAnimationFrame(function() {
-      var doc;
-      try { doc = frame.contentDocument; } catch (e) { return; }
-      if (!doc || !doc.documentElement) return;
-      var isClear = function(c) { return !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)'; };
-      // body → html の順で最初の非透明な背景色を採る（キャンバス背景の伝播順に合わせる）。
-      var bg = doc.body ? getComputedStyle(doc.body).backgroundColor : '';
-      if (isClear(bg)) bg = getComputedStyle(doc.documentElement).backgroundColor;
-      if (isClear(bg)) {
-        // 背景無指定（未装飾ページ）。中身の文字色の明暗から読みやすい地色を選ぶ
-        // ＝ 明るい文字ならダーク地、暗い文字なら白地。color-scheme:dark 宣言ページで
-        // 白帯が復活するのも、これで一緒に防げる。
-        var probe = doc.body || doc.documentElement;
-        bg = isLightColor(getComputedStyle(probe).color) ? '#1c1c1e' : '#ffffff';
-      }
-      frame.style.background = bg;
+      try {
+        var doc = frame.contentDocument;
+        if (doc && doc.documentElement) {
+          var isClear = function(c) { return !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)'; };
+          // body → html の順で最初の非透明な背景色を採る（キャンバス背景の伝播順に合わせる）。
+          var bg = doc.body ? getComputedStyle(doc.body).backgroundColor : '';
+          if (isClear(bg)) bg = getComputedStyle(doc.documentElement).backgroundColor;
+          if (isClear(bg)) {
+            // 背景無指定（未装飾ページ）。中身の文字色の明暗から読みやすい地色を選ぶ
+            // ＝ 明るい文字ならダーク地、暗い文字なら白地。color-scheme:dark 宣言ページで
+            // 白帯が復活するのも、これで一緒に防げる。
+            var probe = doc.body || doc.documentElement;
+            bg = isLightColor(getComputedStyle(probe).color) ? '#1c1c1e' : '#ffffff';
+          }
+          frame.style.background = bg;
+        }
+      } catch (e) { /* cross-origin 等: 背景は CSS のフォールバックのまま */ }
+      // 背景を確定させてから表示する（読み込み中の地色フラッシュを隠すため opacity:0→1）。
+      frame.style.opacity = '1';
     });
   }
 
@@ -272,9 +276,16 @@
       if (frame.__mdWired) return;
       frame.__mdWired = true;
       frame.addEventListener('load', function() { bindFrame(frame, opts); });
-      // 既にロード済み（キャッシュ等）なら即バインドする。
+      // 保険: load が来ない/バインドに失敗しても、一定時間で必ず表示する
+      // （opacity:0 のまま永久に空白、を防ぐ）。表示済みなら実質 no-op。
+      setTimeout(function() { frame.style.opacity = '1'; }, 4000);
+      // 既にロード済み（キャッシュ等）なら即バインドする。ただし挿入直後の iframe は
+      // まだ初期 about:blank（readyState='complete'）のことがある。これを即バインドすると
+      // 本物の文書が来る前に opacity を開け（＝ちらつき対策が無効化）、about:blank の背景を
+      // 誤読して白箱を焼き付けてしまう。about:blank は除外し、本物の load を待つ。
       try {
-        if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') {
+        var d = frame.contentDocument;
+        if (d && d.readyState !== 'loading' && d.URL !== 'about:blank') {
           bindFrame(frame, opts);
         }
       } catch (e) {}

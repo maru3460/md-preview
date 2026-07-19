@@ -371,9 +371,78 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
         // render_full_document を通すことで frontmatter も本来のページと同様に描画する。
         let rendered = render_full_document(&content, file_title, theme_css, custom_css);
         ok_response("text/html; charset=utf-8", rendered.into_bytes())
+    } else if is_html(&file_path) {
+        // iframe に配信する html は、head 内 CSS が JS より先に適用されるよう
+        // style-gate を注入してから返す（下記 inject_style_gate 参照）。
+        let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
+        ok_response("text/html; charset=utf-8", inject_style_gate(bytes))
     } else {
         let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
         ok_response(guess_mime(&file_path), bytes)
+    }
+}
+
+/// ASCII パターンを大文字小文字無視で探し、元バイト列での開始位置を返す。
+fn find_ci_ascii(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len())
+        .find(|&i| hay[i..i + needle.len()].iter().zip(needle).all(|(a, b)| a.eq_ignore_ascii_case(b)))
+}
+
+/// `hay[i..]` が ASCII パターンで（大文字小文字無視で）始まるか。
+fn starts_ci_at(hay: &[u8], i: usize, needle: &[u8]) -> bool {
+    i + needle.len() <= hay.len()
+        && hay[i..i + needle.len()].iter().zip(needle).all(|(a, b)| a.eq_ignore_ascii_case(b))
+}
+
+/// 本物の `</head>` の位置を返す。`<script>...</script>` とコメント `<!-- ... -->` の中身は
+/// スキップするので、そこに現れる文字列 `</head>` を誤検出しない（誤検出して script 内へ
+/// 注入すると、注入した `</script>` がページの script を途中で閉じて壊すため）。
+/// 見つからなければ None。閉じられていない script/コメントがあれば安全側に None。
+fn find_head_close(hay: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i < hay.len() {
+        if starts_ci_at(hay, i, b"<script") {
+            let rel = find_ci_ascii(&hay[i..], b"</script>")?;
+            i += rel + b"</script>".len();
+        } else if starts_ci_at(hay, i, b"<!--") {
+            let rel = find_ci_ascii(&hay[i..], b"-->")?;
+            i += rel + b"-->".len();
+        } else if starts_ci_at(hay, i, b"</head>") {
+            return Some(i);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// html の `</head>` 直前へ、パーサーブロッキングな空 script を1つ挿入する。
+///
+/// なぜ必要か: `<script>` を `<link rel=stylesheet>` より前に置くページ（例: SimpleCov の
+/// カバレッジレポート）は、CSS 適用前にページ初期化(`$(document).ready`)が走ると、まだ効いて
+/// いない `.hide{display:none}` を見て「もう表示されている」と誤判定し、本体を表示する処理が
+/// 空振りする。その後 CSS が適用されて本体が隠れ、白紙/黒画面のまま止まる。custom scheme の
+/// 配信タイミングのばらつきで CSS が遅れると顕在化する「読み込み順レース」。
+///
+/// 対策: `</head>` 直前（＝head 内の全 stylesheet より後）に空 script を1つ挟むと、
+/// 「先行する stylesheet が適用されるまで script 実行＝ページ初期化を待つ」というブラウザ標準の
+/// 挙動が働き、CSS が必ずページ初期化より先に適用される。見た目は変えず、無害な1タグを足すだけ。
+/// バイト列で処理するので文字コードに依存しない。`</head>` が無ければそのまま返す。
+/// 注入位置は `find_head_close`（script/コメント内の擬似 `</head>` を避ける）で決める。
+fn inject_style_gate(bytes: Vec<u8>) -> Vec<u8> {
+    const GATE: &[u8] = b"<script>/*md:style-gate*/void 0</script>";
+    match find_head_close(&bytes) {
+        Some(pos) => {
+            let mut out = Vec::with_capacity(bytes.len() + GATE.len());
+            out.extend_from_slice(&bytes[..pos]);
+            out.extend_from_slice(GATE);
+            out.extend_from_slice(&bytes[pos..]);
+            out
+        }
+        None => bytes,
     }
 }
 
@@ -577,6 +646,52 @@ mod tests {
         assert!(frag.contains(r#"src="/sub%20dir/page.html""#), "{frag}");
         // 引用符を割らない（属性脱出しない）こと。
         assert!(!frag.contains(r#"src="/sub dir"#), "{frag}");
+    }
+
+    #[test]
+    fn style_gate_inserted_before_head_close() {
+        let out = inject_style_gate(b"<html><head><link rel=stylesheet></HEAD><body>x</body></html>".to_vec());
+        let s = String::from_utf8(out).unwrap();
+        // gate は </head>（大文字小文字問わず）直前に入る。
+        assert!(s.contains("<script>/*md:style-gate*/void 0</script></HEAD>"), "{s}");
+        // stylesheet より後に入る（順序が逆転しない）。
+        assert!(s.find("stylesheet").unwrap() < s.find("md:style-gate").unwrap(), "{s}");
+    }
+
+    #[test]
+    fn style_gate_noop_without_head() {
+        let src = b"<div>no head here</div>".to_vec();
+        assert_eq!(inject_style_gate(src.clone()), src);
+    }
+
+    #[test]
+    fn style_gate_skips_script_and_comment_pseudo_head() {
+        // head 内の script 文字列やコメントに現れる "</head>" は無視し、本物の直前へ入れる。
+        let src = br#"<head><script>var s="</head>";</script><!-- </head> --><link></head><body>x</body>"#.to_vec();
+        let out = String::from_utf8(inject_style_gate(src)).unwrap();
+        // gate は1個だけ、しかも本物の </head>（<link> の後）直前に入る。
+        assert_eq!(out.matches("md:style-gate").count(), 1, "{out}");
+        assert!(out.contains("<link><script>/*md:style-gate*/void 0</script></head>"), "{out}");
+        // script の中身は壊されない（元の script がそのまま残る）。
+        assert!(out.contains(r#"<script>var s="</head>";</script>"#), "{out}");
+    }
+
+    #[test]
+    fn style_gate_handles_non_utf8() {
+        // 非 UTF-8 バイト（0xFF）が混じってもパニックせず、本物の </head> 直前へ入る。
+        let mut src = b"<head>".to_vec();
+        src.push(0xFF);
+        src.extend_from_slice(b"</head><body>x</body>");
+        let out = inject_style_gate(src);
+        assert!(find_ci_ascii(&out, b"md:style-gate").is_some());
+    }
+
+    #[test]
+    fn find_ci_ascii_edges() {
+        assert_eq!(find_ci_ascii(b"", b"x"), None);          // hay 空
+        assert_eq!(find_ci_ascii(b"ab", b"abc"), None);      // needle > hay（アンダーフロー防止）
+        assert_eq!(find_ci_ascii(b"abc", b""), None);        // needle 空
+        assert_eq!(find_ci_ascii(b"aXaX", b"ax"), Some(0));  // 最初の一致・大小無視
     }
 
     #[test]
