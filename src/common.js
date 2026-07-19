@@ -174,6 +174,113 @@
   }
   document.addEventListener('wheel', tableWheel, { passive: false });
 
+  // iframe（.html-frame）で描画した html は、フォーカスが iframe 内にあると親 document
+  // のショートカット（Cmd+W/R/F 等）が届かなくなる。iframe は同一オリジン（sandbox 無し）
+  // なので、内部の keydown を親へ転送して既存のグローバルハンドラを効かせる。
+  // 相対リンクは opts.onLinkClick に委ね、true が返れば iframe 内遷移を止める
+  // （フォルダモードは親のプレビュー遷移に回してサイドバー等の状態を同期させる）。
+  // "rgb(r, g, b)" の明度がしきい値超え（＝明るい色）か。パースできなければ false。
+  function isLightColor(c) {
+    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || '');
+    if (!m) return false;
+    var lum = (0.299 * +m[1] + 0.587 * +m[2] + 0.114 * +m[3]) / 255;
+    return lum > 0.5;
+  }
+
+  // iframe 要素の背景を、中身ドキュメントの実効キャンバス色に合わせる。
+  // WebKit はサブフレームのスクロールバー・ガター（描画されない領域）を子のキャンバス色で
+  // 塗らず、そこに iframe 要素の背景が透ける。固定の白だとダークページで「右端の白帯」に
+  // なるため、中身の色へ追従させて帯を消す。中身は読むだけで書き換えない（忠実性を保つ）。
+  function syncFrameBackground(frame) {
+    // レイアウト・スタイル確定後に読むため 1 フレーム待つ。
+    requestAnimationFrame(function() {
+      var doc;
+      try { doc = frame.contentDocument; } catch (e) { return; }
+      if (!doc || !doc.documentElement) return;
+      var isClear = function(c) { return !c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)'; };
+      // body → html の順で最初の非透明な背景色を採る（キャンバス背景の伝播順に合わせる）。
+      var bg = doc.body ? getComputedStyle(doc.body).backgroundColor : '';
+      if (isClear(bg)) bg = getComputedStyle(doc.documentElement).backgroundColor;
+      if (isClear(bg)) {
+        // 背景無指定（未装飾ページ）。中身の文字色の明暗から読みやすい地色を選ぶ
+        // ＝ 明るい文字ならダーク地、暗い文字なら白地。color-scheme:dark 宣言ページで
+        // 白帯が復活するのも、これで一緒に防げる。
+        var probe = doc.body || doc.documentElement;
+        bg = isLightColor(getComputedStyle(probe).color) ? '#1c1c1e' : '#ffffff';
+      }
+      frame.style.background = bg;
+    });
+  }
+
+  function bindFrame(frame, opts) {
+    var doc;
+    try { doc = frame.contentDocument; } catch (e) { return; } // 外部遷移などで cross-origin
+    if (!doc) return;
+    // 同一文書への二重バインドを防ぐ（load と即時バインドの両方が走る窓があるため）。
+    // 文書が差し替われば(iframe内遷移)新しい doc にはフラグが無いので再バインドされる。
+    if (doc.__mdBound) return;
+    doc.__mdBound = true;
+
+    syncFrameBackground(frame);
+
+    doc.addEventListener('keydown', function(e) {
+      // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / w=close)だけ親へ委譲する。
+      // ⌘A(全選択)・⌘F(検索)・⌘C 等は iframe のネイティブ動作に任せる。特に検索は親 DOM しか
+      // 走査せず iframe 内テキストに当たらないため、転送すると 0/0 の空振りバーが出てしまう。
+      if (!(e.metaKey || e.ctrlKey)) return;
+      var k = (e.key || '').toLowerCase();
+      if (k !== 'r' && k !== 'd' && k !== 't' && k !== 'w') return;
+      var ev = new KeyboardEvent('keydown', {
+        key: e.key, code: e.code,
+        metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
+        bubbles: true, cancelable: true
+      });
+      document.dispatchEvent(ev);
+      if (ev.defaultPrevented) e.preventDefault();
+    });
+
+    // 右クリック: iframe 内では WebKit 標準メニュー（"Open Frame in New Window" 等、
+    // このアプリでは機能しない項目）が出てしまう。抑止して、親のカスタムメニューを
+    // iframe の位置ぶんずらした座標で開く（キー転送と同じ「親へ委譲」方針）。
+    doc.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      var rect = frame.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true,
+        clientX: rect.left + e.clientX,
+        clientY: rect.top + e.clientY
+      }));
+    });
+
+    if (opts && typeof opts.onLinkClick === 'function') {
+      doc.addEventListener('click', function(e) {
+        var a = e.target && e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        var href = a.getAttribute('href');
+        if (!href) return;
+        if (opts.onLinkClick(href)) e.preventDefault();
+      });
+    }
+  }
+
+  // scope 内の .html-frame を配線する。onload ごとに再バインドし、iframe 内遷移後も
+  // ショートカット転送を効かせ続ける。要素単位でメモ化して二重登録を防ぐ。
+  function wireHtmlFrames(scope, opts) {
+    var root = scope || document;
+    var frames = root.querySelectorAll('iframe.html-frame');
+    frames.forEach(function(frame) {
+      if (frame.__mdWired) return;
+      frame.__mdWired = true;
+      frame.addEventListener('load', function() { bindFrame(frame, opts); });
+      // 既にロード済み（キャッシュ等）なら即バインドする。
+      try {
+        if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') {
+          bindFrame(frame, opts);
+        }
+      } catch (e) {}
+    });
+  }
+
   window.MdCommon = {
     loadLib: loadLib,
     slugify: slugify,
@@ -182,6 +289,7 @@
     addCopyButtons: addCopyButtons,
     addLineNumbers: addLineNumbers,
     runMermaid: runMermaid,
-    runDrawio: runDrawio
+    runDrawio: runDrawio,
+    wireHtmlFrames: wireHtmlFrames
   };
 })();

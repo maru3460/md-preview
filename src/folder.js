@@ -82,7 +82,7 @@
           }
         });
       } else {
-        if (isMarkdownPath(item.name)) {
+        if (isRenderablePath(item.name)) {
           row.classList.add('md-file');
         }
         icon.textContent = '';
@@ -163,6 +163,27 @@
     return /\.(md|markdown)$/i.test(p || '');
   }
 
+  function isHtmlPath(p) {
+    return /\.html?$/i.test(p || '');
+  }
+
+  // 通常表示がレンダリング結果になるファイル（md / html）。Raw トグルが意味を持つ対象。
+  function isRenderablePath(p) {
+    return isMarkdownPath(p) || isHtmlPath(p);
+  }
+
+  // iframe(.html-frame) 内の相対リンククリックを親のプレビュー遷移に回す。true を返すと
+  // iframe 内遷移を止める。外部/アンカーや、md/html 以外（画像等）は iframe/wry に任せる。
+  function frameLinkClick(href) {
+    if (/^(https?:|mailto:|#)/i.test(href)) return false;
+    var hashIdx = href.indexOf('#');
+    var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
+    if (!isRenderablePath(pathPart)) return false;
+    var resolved = currentFilePath ? resolveRelativePath(currentFilePath, pathPart) : pathPart;
+    loadPreview(resolved);
+    return true;
+  }
+
   // ファイル取得が非200だった時に、無反応にせず理由をペインへ出す。
   // textContent で組むのでファイル名に < 等が入っても安全。
   function showLoadError(pane, relPath) {
@@ -189,9 +210,10 @@
     if (window.MdSearch) window.MdSearch.reset();
     // バッジ（変更行数）は表示状態に関わらず、開いているファイルに追従させる。
     if (window.MdDiff) window.MdDiff.refreshStat();
-    // 非 md は通常表示が既にソースなので raw は無効化（トグルを隠す）。raw 表示中に
-    // 非md へ切り替えたら setAvailable(false) が状態を畳むので、下の通常フェッチに落ちる。
-    if (window.MdRaw && window.MdRaw.setAvailable) window.MdRaw.setAvailable(isMarkdownPath(relPath));
+    // md / html は通常表示がレンダリング結果なので Raw（ソース）トグルを有効化する。
+    // それ以外は通常表示が既にソースなので raw は無効化（トグルを隠す）。raw 表示中に
+    // 無効ファイルへ切り替えたら setAvailable(false) が状態を畳むので通常フェッチに落ちる。
+    if (window.MdRaw && window.MdRaw.setAvailable) window.MdRaw.setAvailable(isRenderablePath(relPath));
 
     // raw / diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
     // ソース / 差分を表示する（本文レンダリングには戻さない）。両者は排他。
@@ -224,6 +246,8 @@
         MdCommon.runMermaid(pane);
         MdCommon.runDrawio(pane);
         if (window.MdToc) window.MdToc.refresh();
+        // html 表示（iframe）なら、ショートカット転送＋相対リンクの親側ルーティングを配線する。
+        if (MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(pane, { onLinkClick: frameLinkClick });
       })
       .catch(function() { showLoadError(pane, relPath); });
   }
@@ -332,7 +356,9 @@
       var hashIdx = href.indexOf('#');
       var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
       var anchorPart = hashIdx !== -1 ? href.slice(hashIdx + 1) : '';
-      if (isMarkdownPath(pathPart)) {
+      // md / html はプレビュー枠内で遷移させる。html を top-level 遷移させると、text/html
+      // 配信になった今はウィンドウ全体が生ページに化けてサイドバー・トグルが消えてしまう。
+      if (isRenderablePath(pathPart)) {
         e.preventDefault();
         var resolved = currentFilePath ? resolveRelativePath(currentFilePath, pathPart) : pathPart;
         loadPreview(resolved);

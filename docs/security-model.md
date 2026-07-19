@@ -196,6 +196,28 @@ flowchart TB
 
 ---
 
+## `.html` ファイルは信頼モデルが違う（重要）
+
+上記の CSP による防御は **Markdown 本文**（`.md`）に対するものです。`.html` / `.htm`
+ファイルを開いたときは話が別で、**そのファイル本来の見た目で忠実に描画する**ため、
+`<iframe>`（sandbox なし・同一オリジン・JS 実行可）でレンダリングします。
+
+つまり `.html` については、上の「他人の書いたファイルを開いても勝手にコードが動かない」
+という保証は **成立しません**:
+
+- `.html` 内の `<script>` は**そのまま実行される**（iframe 文書には CSP を付けていない）。
+- 同一オリジンなので、iframe 内スクリプトは `window.top.ipc` や `?file=` 経由で
+  **root ディレクトリ配下のファイルを読み取り・外部へ送信**できます。
+
+これは **「手元のローカル HTML ファイルを見る」用途に振り切った意図的な割り切り**です
+（`md path/to/file` の体験優先）。安いガードとして `is_blocked_ext`（`.jar`/`.jnlp` など
+実行系を「デフォルトアプリで開く」から除外）だけは残していますが、**信頼できない
+`.html` を開くのは避けてください**。将来より厳しくするなら、iframe への sandbox 付与か、
+`.html` 応答への CSP ヘッダ付与（`connect-src`/`form-action` 制限）が次の一手です。
+
+関連: `src/request.rs`（`render_html_iframe` / `guess_mime`）、`src/common.js`
+（`wireHtmlFrames` / `syncFrameBackground`）、`src/base.css`（`.html-frame`）。
+
 ## 関連する実装
 
 | ファイル | 役割 |
