@@ -34,6 +34,9 @@ document.addEventListener('DOMContentLoaded', function() {
         var body = document.querySelector('.markdown-body');
         window.MdRaw.setAvailable(!(body && body.classList.contains('source-page')));
     }
+    // html 表示（iframe）なら、フォーカスが iframe 内でもショートカットが効くよう配線する。
+    // 単一ファイルモードは onLinkClick を渡さない＝iframe 内の相対遷移はそのまま許す。
+    if (window.MdCommon && MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(document);
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
 
@@ -59,6 +62,7 @@ function loadNormalBody() {
             }
             if (window.MdToc) window.MdToc.refresh();
             if (window.MdDiff) window.MdDiff.refreshStat();
+            if (window.MdCommon && MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(article);
             scroller.scrollTop = savedScroll;
         })
         .catch(function() {});

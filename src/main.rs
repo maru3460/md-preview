@@ -13,7 +13,7 @@ mod platform;
 
 use md_preview::theme;
 use md_preview::html::{build_folder_html, build_html, html_escape, json_string, render_full_document, FOLDER_JS, INIT_JS};
-use md_preview::request::{handle_request, has_md_descendant, ok_response, percent_decode, safe_join, source_view_html};
+use md_preview::request::{handle_request, has_md_descendant, ok_response, percent_decode, render_html_iframe, safe_join, source_view_html};
 
 enum AppEvent {
     Close,
@@ -133,29 +133,38 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             .and_then(|n| n.to_str())
             .unwrap_or("Markdown Preview")
             .to_string();
-        // .md 以外は markdown としてではなく、行番号付きのソース表示にする
-        // （folder / cwd モードの ?file= 経路と挙動を揃える）。
-        let is_markdown = matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("md") | Some("markdown")
-        );
-        let html = match String::from_utf8(bytes) {
-            Ok(text) if is_markdown => render_full_document(&text, &title, theme_css, custom_css),
-            Ok(text) => {
-                build_html(&source_view_html(&path, &text), &title, theme_css, custom_css, "source-page")
-            }
-            // バイナリも非md扱い（source-page）にして、init.js の raw 有効判定
-            // （source-page 有無で見る）で raw トグルが出ないように揃える。
-            Err(_) => build_html(
-                &format!(
-                    r#"<p class="binary-msg">バイナリファイルは表示できません: {}</p>"#,
-                    html_escape(&title)
+        // .md はレンダリング、.html は iframe 描画、それ以外は行番号付きのソース表示
+        // にする（folder / cwd モードの ?file= 経路と挙動を揃える）。
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        let is_markdown = matches!(ext.as_deref(), Some("md") | Some("markdown"));
+        let is_html_file = matches!(ext.as_deref(), Some("html") | Some("htm"));
+        let html = if is_html_file {
+            // html は中身をソースではなく iframe で描画する。root=親ディレクトリなので
+            // src はファイル名。article に html-page クラスを付けて全幅・iframe 前提にする。
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(&title);
+            build_html(&render_html_iframe(name), &title, theme_css, custom_css, "html-page")
+        } else {
+            match String::from_utf8(bytes) {
+                Ok(text) if is_markdown => render_full_document(&text, &title, theme_css, custom_css),
+                Ok(text) => {
+                    build_html(&source_view_html(&path, &text), &title, theme_css, custom_css, "source-page")
+                }
+                // バイナリも非md扱い（source-page）にして、init.js の raw 有効判定
+                // （source-page 有無で見る）で raw トグルが出ないように揃える。
+                Err(_) => build_html(
+                    &format!(
+                        r#"<p class="binary-msg">バイナリファイルは表示できません: {}</p>"#,
+                        html_escape(&title)
+                    ),
+                    &title,
+                    theme_css,
+                    custom_css,
+                    "source-page",
                 ),
-                &title,
-                theme_css,
-                custom_css,
-                "source-page",
-            ),
+            }
         };
         let base_dir = path.parent().unwrap_or(&path).to_path_buf();
         AppConfig {
@@ -432,9 +441,12 @@ fn is_blocked_ext(path: &Path) -> bool {
             .map(|e| e.to_ascii_lowercase())
             .as_deref(),
         Some(
-            "app" | "command" | "terminal" | "workflow" | "scpt" | "applescript"
+            "app" | "command" | "terminal" | "workflow" | "scpt" | "scptd" | "applescript"
                 | "osascript" | "action" | "webloc" | "url" | "fileloc" | "shortcut"
                 | "appex" | "xpc" | "prefpane" | "qlgenerator" | "vbs"
+                // Java 実行系。html を iframe 描画するようになり、悪意ある html が
+                // top.ipc 経由で menu:open を叩ける経路が増えたため実行系を塞いでおく。
+                | "jar" | "jnlp"
         )
     )
 }
@@ -629,7 +641,15 @@ fn spawn_watcher(
                 }
                 continue;
             }
-            if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
+            // レンダリング対象（md / html）の変更だけをホットリロードに回す。
+            // 以前は "md" だけ見ており .markdown が漏れていた（＋html 未対応だった）。
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            if !matches!(ext.as_deref(), Some("md") | Some("markdown") | Some("html") | Some("htm")) {
+                continue;
+            }
             let rel = path.strip_prefix(&root_for_cb)
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned());

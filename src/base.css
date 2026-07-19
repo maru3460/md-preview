@@ -257,6 +257,28 @@ blockquote.markdown-alert-caution {
     max-width: none;
 }
 
+/* html ファイルは iframe（ミニブラウザ）で描画する。source-page と同様に本文の
+   720px 中央制約を外し、iframe はビューポート高から本文パディング(48px×2)を引いた
+   分を満たして内部スクロールする。単一ファイル/フォルダ両モードとも縦パディングは
+   48px なので calc(100vh - 96px) で揃う（folder モードは preview-pane の padding）。 */
+.markdown-body.html-page {
+    max-width: none;
+    margin: 0;
+}
+
+.html-frame {
+    display: block;
+    width: 100%;
+    height: calc(100vh - 96px);
+    border: 0;
+    /* アプリのテーマ(dracula 等)の color-scheme に引きずられず OS 準拠で描画する
+       （ブラウザでファイルを直接開いたときに寄せる）。実際の地色は読込後に JS が
+       中身のキャンバス色へ合わせる（common.js の syncFrameBackground）。これはその前・
+       クロスオリジンで中身を読めない時のフォールバック。Canvas は color-scheme に追従。 */
+    color-scheme: light dark;
+    background: Canvas;
+}
+
 .source-view {
     margin: 0;
 }

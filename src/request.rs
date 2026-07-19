@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::html::{html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html, render_full_document, DRAWIO_JS, MERMAID_JS};
+use crate::html::{attr_escape, html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html, render_full_document, DRAWIO_JS, MERMAID_JS};
 
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -49,7 +49,13 @@ pub fn not_found_response() -> Response {
 }
 
 pub fn guess_mime(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
+    // 判定側（is_html / is_md / JS の isHtmlPath）は拡張子を case-insensitive に見るので、
+    // 配信側も小文字化して揃える。揃えないと `.HTML` が octet-stream で返り iframe が空白になる。
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
@@ -57,6 +63,18 @@ pub fn guess_mime(path: &Path) -> &'static str {
         Some("webp") => "image/webp",
         Some("ico") => "image/x-icon",
         Some("bmp") => "image/bmp",
+        // html を iframe で描画するので、本体と、そこから参照される css/js/フォント/
+        // 画像などのサブリソースも正しい Content-Type で返す（WKWebView は strict-MIME
+        // で text/css・text/javascript 以外の CSS/JS 適用を拒否するため）。
+        Some("html" | "htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js" | "mjs" | "cjs") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
         _ => "application/octet-stream",
     }
 }
@@ -161,6 +179,44 @@ fn is_md(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
         Some("md") | Some("markdown")
+    )
+}
+
+fn is_html(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("html") | Some("htm")
+    )
+}
+
+/// root 相対パスを URL パスとして安全にエンコードする（`/` 区切りは残す）。
+/// iframe の `src` に埋め込むため。空白・非ASCII・記号を percent-encode する。
+fn encode_path(rel: &str) -> String {
+    let mut out = String::with_capacity(rel.len());
+    for b in rel.bytes() {
+        match b {
+            b'/' | b'-' | b'_' | b'.' | b'~'
+            | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// html ファイルを iframe（ミニブラウザ）で描画するフラグメント（iframe 要素のみ）。
+/// `rel` は root 相対パス。`src` を同一スキームのファイル URL にすることで、
+/// iframe 内の相対リンク・画像・CSS が `mdpreview://localhost/<dir>/` 基準で解決される。
+/// sandbox は付けない（ローカルファイル閲覧用途。JS 実行・同一オリジンを許可して忠実に描画）。
+pub fn render_html_iframe(rel: &str) -> String {
+    format!(
+        r#"<iframe class="html-frame" src="/{src}" title="{title}" referrerpolicy="no-referrer"></iframe>"#,
+        src = encode_path(rel),
+        // title は属性値なのでクォートも潰す attr_escape を使う（html_escape は " を素通しし、
+        // " 入りファイル名で親の信頼ドキュメントへ属性注入できてしまう）。
+        title = attr_escape(rel),
     )
 }
 
@@ -294,6 +350,13 @@ fn handle_file(rel_encoded: &str, root_dir: &Path) -> Response {
     let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
     if is_md(&file_path) {
         serve_md_fragment(&file_path)
+    } else if is_html(&file_path) {
+        // html は通常表示をソースではなく iframe 描画にする（.md と同じ立ち位置）。
+        let fragment = format!(
+            r#"<div class="markdown-body html-page">{}</div>"#,
+            render_html_iframe(&rel)
+        );
+        ok_response("text/html; charset=utf-8", fragment.into_bytes())
     } else {
         serve_non_md_fragment(&file_path)
     }
@@ -316,7 +379,14 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
 
 // 単一ファイルモードの body=1 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
 pub fn serve_single_file_body(file_path: &Path) -> Response {
-    // 非 md は初回 build_html と同じソースビューを返す。これを md 描画にすると、
+    // html は iframe 描画。初期 article は html-page クラスを持つ（build_html 側）ので、
+    // ここでは中身の iframe だけ返す。単一ファイルモードは root=親ディレクトリなので
+    // rel はファイル名。
+    if is_html(file_path) {
+        let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        return ok_response("text/html; charset=utf-8", render_html_iframe(name).into_bytes());
+    }
+    // その他の非 md は初回 build_html と同じソースビューを返す。これを md 描画にすると、
     // ホットリロードや diff/off の再取得（loadNormalBody）で全幅 Markdown に化ける。
     if !is_md(file_path) {
         return ok_response("text/html; charset=utf-8", render_raw_inner(file_path).into_bytes());
@@ -470,5 +540,51 @@ mod tests {
     fn builtin_lib_404_for_unknown() {
         assert_eq!(serve_builtin_lib("../secret.js").status(), 404);
         assert_eq!(serve_builtin_lib("nope.js").status(), 404);
+    }
+
+    #[test]
+    fn html_mime_is_text_html() {
+        assert_eq!(guess_mime(Path::new("a.html")), "text/html; charset=utf-8");
+        // 大文字拡張子も html として配信する（判定側と揃える。揃わないと iframe が空白になる）。
+        assert_eq!(guess_mime(Path::new("a.HTM")), "text/html; charset=utf-8");
+        assert_eq!(guess_mime(Path::new("a.HTML")), "text/html; charset=utf-8");
+        assert!(guess_mime(Path::new("a.css")).starts_with("text/css"));
+        assert!(guess_mime(Path::new("a.js")).starts_with("text/javascript"));
+    }
+
+    #[test]
+    fn html_iframe_title_escapes_quotes() {
+        // " 入りファイル名で title 属性から脱出できないこと（親ドキュメントへの属性注入防止）。
+        let frag = render_html_iframe(r#"ev"il.html"#);
+        assert!(!frag.contains(r#"title="ev"il"#), "title のクォートが素通し: {frag}");
+        assert!(frag.contains("&quot;"), "title がエスケープされていない: {frag}");
+    }
+
+    #[test]
+    fn is_html_detects_extensions() {
+        assert!(is_html(Path::new("a.html")));
+        assert!(is_html(Path::new("a.HTML")));
+        assert!(is_html(Path::new("a.htm")));
+        assert!(!is_html(Path::new("a.md")));
+        assert!(!is_html(Path::new("a.txt")));
+    }
+
+    #[test]
+    fn html_iframe_fragment_has_encoded_src() {
+        let frag = render_html_iframe("sub dir/page.html");
+        assert!(frag.contains(r#"class="html-frame""#), "{frag}");
+        // 空白は %20、`/` は温存されていること。
+        assert!(frag.contains(r#"src="/sub%20dir/page.html""#), "{frag}");
+        // 引用符を割らない（属性脱出しない）こと。
+        assert!(!frag.contains(r#"src="/sub dir"#), "{frag}");
+    }
+
+    #[test]
+    fn single_file_body_html_returns_iframe() {
+        let resp = serve_single_file_body(Path::new("/tmp/whatever/foo.html"));
+        assert_eq!(resp.status(), 200);
+        let body = String::from_utf8_lossy(resp.body());
+        assert!(body.contains(r#"class="html-frame""#), "{body}");
+        assert!(body.contains(r#"src="/foo.html""#), "{body}");
     }
 }
