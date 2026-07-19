@@ -277,6 +277,11 @@ blockquote.markdown-alert-caution {
        クロスオリジンで中身を読めない時のフォールバック。Canvas は color-scheme に追従。 */
     color-scheme: light dark;
     background: Canvas;
+    /* 読み込み中の地色フラッシュ（Canvas→中身の背景の切り替わり等）を隠す。読み込み完了時に
+       common.js の syncFrameBackground が地色を確定させて opacity:1 で表示する。保険で
+       wireHtmlFrames が一定時間後に必ず表示するので、永久非表示にはならない。 */
+    opacity: 0;
+    transition: opacity 0.12s ease;
 }
 
 .source-view {
