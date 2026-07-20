@@ -118,6 +118,7 @@
     close();
     var menu = document.createElement('div');
     menu.className = 'md-context-menu';
+    menu.id = 'md-context-menu'; // MdCommon.isOverlayOpen が O(1) で存在を見るため
     // メニュー上の mousedown で選択やフォーカスを奪わない。
     menu.addEventListener('mousedown', function(e) { e.preventDefault(); });
 

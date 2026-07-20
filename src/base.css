@@ -439,6 +439,29 @@ blockquote.markdown-alert-caution {
     display: block;
 }
 
+/* ── キーボードナビ（フォーカス/カーソルの可視化） ─────────────
+   tabindex=-1 への focus() は WebKit で focus ring が出ないため、見た目は自前で付ける。
+   テーマ別の .tree-item.active（背景色）と衝突しないよう、カーソルは inset の枠線で重ねる。
+   配色は help/context-menu と同じく system color(Highlight) を color-mix して theme 非依存に組む。 */
+#sidebar:focus,
+#preview-pane:focus {
+    outline: none;
+}
+
+/* ツリーにフォーカスがある間、サイドバー全体が主役であることを縁で常時明示する。 */
+body.folder-mode.nav-tree #sidebar {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, Highlight 45%, transparent);
+}
+
+/* カーソル行（j/k の選択位置）。非フォーカス時は淡く、フォーカス時ははっきり。 */
+.tree-item.cursor {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, Highlight 40%, transparent);
+}
+
+body.folder-mode.nav-tree .tree-item.cursor {
+    box-shadow: inset 0 0 0 2px Highlight;
+}
+
 /* ── Folder mode: body resets ───────────────────────────────── */
 body.folder-mode {
     padding: 0;
@@ -739,8 +762,8 @@ details[open] {
 }
 
 .md-help-panel {
-    min-width: 320px;
-    max-width: 440px;
+    width: min(680px, 100%);
+    max-width: 680px;
     max-height: 100%;
     overflow-y: auto;
     padding: 18px 22px 16px;
@@ -750,6 +773,24 @@ details[open] {
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
     font-size: 13px;
     line-height: 1.5;
+}
+
+/* ショートカット行は 2 段組みで上→下→次の列へ流す。縦に伸びてスクロールが要らないよう
+   横へ広げる。行は段の途中で割れないよう break-inside を禁止。狭い窓では 1 段に戻す。 */
+.md-help-rows {
+    column-count: 2;
+    column-gap: 28px;
+}
+
+.md-help-rows .md-help-row {
+    -webkit-column-break-inside: avoid;
+    break-inside: avoid;
+}
+
+@media (max-width: 600px) {
+    .md-help-rows {
+        column-count: 1;
+    }
 }
 
 .md-help-title {

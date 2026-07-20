@@ -31,6 +31,7 @@ pub const CONTEXT_JS: &str = include_str!("contextmenu.js");
 pub const DIFF_JS: &str = include_str!("diff.js");
 pub const RAW_JS: &str = include_str!("raw.js");
 pub const HELP_JS: &str = include_str!("help.js");
+pub const KEYSCROLL_JS: &str = include_str!("keyscroll.js");
 
 /// CSP の nonce を生成する。本文（untrusted な Markdown）に埋め込まれた inline
 /// script を実行させないため、自前の inline script だけにこの nonce を付ける。
@@ -194,6 +195,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <script nonce="{nonce}">{diff_js}</script>
 <script nonce="{nonce}">{raw_js}</script>
 <script nonce="{nonce}">{help_js}</script>
+<script nonce="{nonce}">{keyscroll_js}</script>
 {extra_head}"#,
         nonce = nonce,
         title = html_escape(title),
@@ -208,6 +210,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         diff_js = DIFF_JS,
         raw_js = RAW_JS,
         help_js = HELP_JS,
+        keyscroll_js = KEYSCROLL_JS,
         extra_head = extra_head,
     )
 }
@@ -331,9 +334,9 @@ pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial
 </head>
 <body class="folder-mode">
 <div class="folder-layout">
-  <div id="sidebar"></div>
+  <div id="sidebar" tabindex="-1"></div>
   <div id="resizer"></div>
-  <div id="preview-pane"><div class="markdown-body"></div></div>
+  <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
 </div>
 </body>
 </html>"#,

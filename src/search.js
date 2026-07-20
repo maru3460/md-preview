@@ -12,6 +12,7 @@
   function buildBar() {
     bar = document.createElement('div');
     bar.className = 'md-search-bar hidden';
+    bar.id = 'md-search-bar'; // MdCommon.isOverlayOpen が O(1) で開閉を見るため
     bar.innerHTML =
       '<input type="text" class="md-search-input" placeholder="Find" spellcheck="false" autocomplete="off">' +
       '<span class="md-search-counter">0/0</span>' +
@@ -226,6 +227,10 @@
         attachShortcut();
         initialized = true;
       }
+    },
+    open: function() {
+      // 素キー '/' 等から呼ばれる。init 前（container 無し）は何もしない。
+      if (container) open();
     },
     reset: function() {
       close();

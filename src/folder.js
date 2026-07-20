@@ -204,6 +204,9 @@
     var pane = document.getElementById('preview-pane');
     var savedScroll = preserveScroll ? pane.scrollTop : 0;
     currentFilePath = relPath;
+    // ファイル切替（ホットリロード以外）では本文ペインへフォーカスを戻し、直後から
+    // スクロール素キー(j/k 等)が効くようにする。ホットリロードは現在のフォーカスを保つ。
+    if (!preserveScroll) focusPreview();
     // ホットリロード(同一ファイルの再描画)ではツリーを動かさない。
     if (!preserveScroll) revealFile(relPath);
     if (window.MdMenu) window.MdMenu.setCurrentFile(relPath);
@@ -260,6 +263,187 @@
     if (window.MdDiff && window.MdDiff.isActive()) { window.MdDiff.refresh(); return; }
     loadPreview(currentFilePath, true);
   };
+
+  // ── キーボードナビ（folder モード限定） ──────────────────────────
+  // ・[ / ] : 表示中の描画可能ファイルを巡回して即プレビュー
+  // ・Tab   : 本文ペイン ⇄ ファイルツリー のフォーカス切替
+  // ・ツリーにフォーカス時: j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ
+  // keyscroll.js とは MdCommon.isSidebarFocused() で排他する（役割の二重発火を防ぐ）。
+  var cursorRow = null;
+
+  // 画面に見えている .tree-item（畳んだフォルダ内の隠れ行は offsetParent===null で除外）。
+  function visibleRows() {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('.tree-item'),
+      function(r) { return r.offsetParent !== null; }
+    );
+  }
+  // 見えている描画可能ファイル行（[ / ] の巡回対象）。
+  function visibleFileRows() {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('.tree-item.md-file'),
+      function(r) { return r.offsetParent !== null; }
+    );
+  }
+
+  function setCursor(row) {
+    if (cursorRow) cursorRow.classList.remove('cursor');
+    cursorRow = row || null;
+    if (cursorRow) {
+      cursorRow.classList.add('cursor');
+      cursorRow.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function focusPreview() {
+    var pane = document.getElementById('preview-pane');
+    // 検索入力などにフォーカス中は奪わない（本文ロード時は search.reset で閉じるので通常は安全）。
+    if (window.MdCommon && MdCommon.isFieldEl(document.activeElement)) {
+      document.body.classList.remove('nav-tree');
+      return;
+    }
+    if (pane) pane.focus({ preventScroll: true });
+    document.body.classList.remove('nav-tree');
+  }
+
+  function focusTree() {
+    var sb = document.getElementById('sidebar');
+    if (!sb) return;
+    sb.focus({ preventScroll: true });
+    document.body.classList.add('nav-tree');
+    // カーソルが未設定/不可視なら、開いているファイル→先頭可視行の順で置く。
+    if (!cursorRow || cursorRow.offsetParent === null) {
+      var active = document.querySelector('.tree-item.active');
+      var rows = visibleRows();
+      setCursor((active && active.offsetParent !== null) ? active : (rows[0] || null));
+    } else {
+      setCursor(cursorRow); // 見える位置へ再スクロール
+    }
+  }
+
+  function moveCursor(delta) {
+    var rows = visibleRows();
+    if (!rows.length) return;
+    var i = cursorRow ? rows.indexOf(cursorRow) : -1;
+    if (i === -1) { setCursor(rows[delta < 0 ? rows.length - 1 : 0]); return; }
+    setCursor(rows[Math.max(0, Math.min(rows.length - 1, i + delta))]);
+  }
+  function cursorEdge(toEnd) {
+    var rows = visibleRows();
+    if (rows.length) setCursor(rows[toEnd ? rows.length - 1 : 0]);
+  }
+
+  // カーソル行を含む .tree-children の直前にある親ディレクトリ行。無ければ null。
+  function parentDirRow(row) {
+    var container = row && row.parentNode;
+    if (container && container.classList && container.classList.contains('tree-children')) {
+      var prev = container.previousSibling;
+      if (prev && prev.classList && prev.classList.contains('tree-item')) return prev;
+    }
+    return null;
+  }
+
+  function openCursorFile() {
+    if (cursorRow && cursorRow.dataset.path) {
+      loadPreview(cursorRow.dataset.path); // loadPreview 内で focusPreview 済み
+    }
+  }
+
+  // l / → : dir=展開（開いていれば最初の子へ）/ file=開く
+  function expandOrOpen() {
+    if (!cursorRow) return;
+    if (cursorRow.dataset.kind === 'dir') {
+      if (!cursorRow.classList.contains('dir-open')) {
+        cursorRow.click(); // 既存ハンドラで展開（expandedDirs も同期される）
+      } else {
+        var children = cursorRow.nextSibling;
+        var first = (children && children.querySelector) ? children.querySelector('.tree-item') : null;
+        if (first && first.offsetParent !== null) setCursor(first);
+      }
+    } else {
+      openCursorFile();
+    }
+  }
+  // Enter : dir=開閉トグル / file=開く
+  function toggleOrOpen() {
+    if (!cursorRow) return;
+    if (cursorRow.dataset.kind === 'dir') cursorRow.click();
+    else openCursorFile();
+  }
+  // h / ← : 開いた dir=畳む（カーソルはその dir に残る）/ それ以外=親 dir へ
+  function collapseOrParent() {
+    if (!cursorRow) return;
+    if (cursorRow.dataset.kind === 'dir' && cursorRow.classList.contains('dir-open')) {
+      cursorRow.click();
+    } else {
+      var parent = parentDirRow(cursorRow);
+      if (parent) setCursor(parent);
+    }
+  }
+
+  // [ / ] : 表示中の描画可能ファイルを DOM 順に巡回。端ではクランプ（wrap しない）。
+  function gotoAdjacentFile(delta) {
+    var files = visibleFileRows();
+    if (!files.length) return;
+    var cur = document.querySelector('.tree-item.active');
+    var i = (cur && cur.offsetParent !== null) ? files.indexOf(cur) : -1;
+    var ni;
+    if (i === -1) {
+      // 現在ファイルが一覧に無い（相対リンク先など）→ 端から入る。
+      ni = delta < 0 ? files.length - 1 : 0;
+    } else {
+      ni = i + delta;
+      if (ni < 0 || ni >= files.length) return; // 端で無反応（誤爆時の被害を抑える）
+    }
+    var row = files[ni];
+    if (!row || !row.dataset.path) return;
+    // ツリーで巡回中に [ / ] を押した時はツリーに留まりカーソルを新ファイルへ追従させる
+    // （[ / ] は「開いて本文へ移動」ではなく「巡回」なので、フォーカス文脈を保つ）。
+    var wasTree = !!(window.MdCommon && MdCommon.isSidebarFocused());
+    loadPreview(row.dataset.path); // 内部で focusPreview（本文へ移動）
+    if (wasTree) { setCursor(row); focusTree(); }
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;           // ⌘系はここでは扱わない
+    if (window.MdCommon && MdCommon.isOverlayOpen()) return;   // 検索/ヘルプ/右クリメニュー中は休止
+    var inTree = !!(window.MdCommon && MdCommon.isSidebarFocused());
+
+    // Tab / [ / ] はツリー内外どちらでも効くアプリ全体のナビ。
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (inTree) focusPreview(); else focusTree();
+      return;
+    }
+    if (e.key === '[') { e.preventDefault(); gotoAdjacentFile(-1); return; }
+    if (e.key === ']') { e.preventDefault(); gotoAdjacentFile(1); return; }
+
+    // 以降はツリーにフォーカスがある時だけ。
+    if (!inTree) return;
+    switch (e.key) {
+      case 'j': case 'ArrowDown':  e.preventDefault(); moveCursor(1); break;
+      case 'k': case 'ArrowUp':    e.preventDefault(); moveCursor(-1); break;
+      case 'g':                    e.preventDefault(); cursorEdge(false); break;
+      case 'G':                    e.preventDefault(); cursorEdge(true); break;
+      case 'l': case 'ArrowRight': e.preventDefault(); expandOrOpen(); break;
+      case 'h': case 'ArrowLeft':  e.preventDefault(); collapseOrParent(); break;
+      case 'Enter':                e.preventDefault(); toggleOrOpen(); break;
+      // ツリーにフォーカスがある間は keyscroll.js が休止するので、'/' はここで拾う
+      // （⌘F / ? と揃えて、どのフォーカスでも検索を開けるようにする）。
+      case '/':                    e.preventDefault(); if (window.MdSearch && MdSearch.open) MdSearch.open(); break;
+      default: break;
+    }
+  });
+
+  // フォーカスがサイドバー外へ出たら、サイドバーのアクティブ枠(nav-tree)を畳む。
+  // 本文クリックやトグル操作でツリーから抜けた時に、枠が残って主役表示が嘘になるのを防ぐ。
+  document.addEventListener('focusout', function() {
+    setTimeout(function() {
+      if (window.MdCommon && !MdCommon.isSidebarFocused()) {
+        document.body.classList.remove('nav-tree');
+      }
+    }, 0);
+  });
 
   document.addEventListener('DOMContentLoaded', function() {
     var resizer = document.getElementById('resizer');
@@ -321,7 +505,10 @@
       .then(function(items) {
         renderItems(items, sidebar, 0);
         if (typeof INITIAL_FILE === 'string' && INITIAL_FILE) {
-          loadPreview(INITIAL_FILE);
+          loadPreview(INITIAL_FILE); // 内部で focusPreview 済み
+        } else {
+          // ファイル未指定でも本文ペインにフォーカスを置き、スクロール素キーの初期ターゲットにする。
+          focusPreview();
         }
         setTimeout(function() {
           window.ipc.postMessage('ready');

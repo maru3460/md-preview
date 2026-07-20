@@ -7,23 +7,38 @@
 (function() {
   var overlay = null;
 
-  // [キー, 説明, stdin でも出すか]。表示順そのまま。
-  // stdin モードはファイルもサイドバーも git も無いので一部を伏せる。
+  // [キー, 説明, 表示範囲]。表示順そのまま。表示範囲は:
+  //   'all'     … 全モード（stdin / single / folder）
+  //   'nostdin' … stdin 以外（ファイル/git がある single・folder）
+  //   'folder'  … folder モードのみ（サイドバーとファイル移動がある時）
   var SHORTCUTS = [
-    ['⌘F', '検索', true],
-    ['⌘T', 'アウトライン（見出しナビ）を開閉', true],
-    ['⌘D', 'git 差分表示を切り替え', false],
-    ['⌘R', 'raw（ソース）表示を切り替え', false],
-    ['⌘A', '本文を全選択', true],
-    ['⌘W', 'ウィンドウを閉じる', true],
-    ['⌘Q', '終了', true],
-    ['右クリック', 'コンテキストメニュー', true],
-    ['?', 'このヘルプを開閉', true],
-    ['Esc', '検索 / メニュー / ヘルプを閉じる', true]
+    ['j / k', '1 行スクロール 下 / 上', 'all'],
+    ['d / u', '半ページ 下 / 上', 'all'],
+    ['Space', '1 ページ送り（Shift+Space で戻る）', 'all'],
+    ['g / G', '冒頭 / 末尾へ', 'all'],
+    ['/', '検索（⌘F と同じ）', 'all'],
+    ['⌘F', '検索', 'all'],
+    ['⌘T', 'アウトライン（見出しナビ）を開閉', 'all'],
+    ['⌘D', 'git 差分表示を切り替え', 'nostdin'],
+    ['⌘R', 'raw（ソース）表示を切り替え', 'nostdin'],
+    ['] / [', '次 / 前のファイルへ（表示中のファイルを巡回）', 'folder'],
+    ['Tab', '本文 ⇄ ファイルツリー のフォーカス切替', 'folder'],
+    ['ツリー内', 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ', 'folder'],
+    ['⌘A', '本文を全選択', 'all'],
+    ['⌘W', 'ウィンドウを閉じる', 'all'],
+    ['⌘Q', '終了', 'all'],
+    ['右クリック', 'コンテキストメニュー', 'all'],
+    ['?', 'このヘルプを開閉', 'all'],
+    ['Esc', '検索 / メニュー / ヘルプを閉じる', 'all']
   ];
 
-  function isStdin() {
-    return window.MD_MENU_MODE === 'stdin';
+  // 現在のモードでこの行を表示するか。
+  function showFor(scope) {
+    var mode = window.MD_MENU_MODE;
+    if (scope === 'all') return true;
+    if (scope === 'nostdin') return mode !== 'stdin';
+    if (scope === 'folder') return mode === 'folder';
+    return true;
   }
 
   function build(welcome) {
@@ -31,6 +46,7 @@
     markOnboarded();
     overlay = document.createElement('div');
     overlay.className = 'md-help-backdrop';
+    overlay.id = 'md-help-backdrop'; // MdCommon.isOverlayOpen が O(1) で存在を見るため
 
     var panel = document.createElement('div');
     panel.className = 'md-help-panel';
@@ -48,9 +64,12 @@
       panel.appendChild(intro);
     }
 
-    var stdin = isStdin();
+    // 行は専用ラッパへ入れ、CSS の段組み(column-count)で上→下→次の列と流す。
+    // 列単位で流れるのでスクロール系などのまとまりが崩れず、縦の高さも半分に収まる。
+    var rows = document.createElement('div');
+    rows.className = 'md-help-rows';
     SHORTCUTS.forEach(function(sc) {
-      if (!sc[2] && stdin) return;
+      if (!showFor(sc[2])) return;
       var row = document.createElement('div');
       row.className = 'md-help-row';
       var key = document.createElement('kbd');
@@ -61,8 +80,9 @@
       desc.textContent = sc[1];
       row.appendChild(key);
       row.appendChild(desc);
-      panel.appendChild(row);
+      rows.appendChild(row);
     });
+    panel.appendChild(rows);
 
     var hint = document.createElement('div');
     hint.className = 'md-help-hint';

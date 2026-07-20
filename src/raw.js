@@ -20,7 +20,9 @@
     btn.setAttribute('aria-pressed', 'false');
     btn.title = 'Toggle raw source (Cmd/Ctrl+R)';
     btn.appendChild(document.createTextNode('Raw'));
-    btn.addEventListener('click', function() { toggle(); });
+    // toggle 後はボタンからフォーカスを外す。残るとスクロール素キーが不発になり、
+    // Space でボタンが再トグルされてしまうため（本文側へフォーカスを返す）。
+    btn.addEventListener('click', function() { toggle(); btn.blur(); });
     document.body.appendChild(btn);
   }
 
