@@ -24,7 +24,9 @@
     countEl = document.createElement('span');
     countEl.className = 'md-diff-count';
     btn.appendChild(countEl);
-    btn.addEventListener('click', function() { toggle(); });
+    // toggle 後はボタンからフォーカスを外す。残るとスクロール素キーが不発になり、
+    // Space でボタンが再トグルされてしまうため（本文側へフォーカスを返す）。
+    btn.addEventListener('click', function() { toggle(); btn.blur(); });
     document.body.appendChild(btn);
   }
 

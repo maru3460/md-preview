@@ -231,9 +231,17 @@
       // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / w=close)だけ親へ委譲する。
       // ⌘A(全選択)・⌘F(検索)・⌘C 等は iframe のネイティブ動作に任せる。特に検索は親 DOM しか
       // 走査せず iframe 内テキストに当たらないため、転送すると 0/0 の空振りバーが出てしまう。
-      if (!(e.metaKey || e.ctrlKey)) return;
       var k = (e.key || '').toLowerCase();
-      if (k !== 'r' && k !== 'd' && k !== 't' && k !== 'w') return;
+      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'w');
+      // ファイル移動([/])・ペインフォーカス(Tab)はアプリ全体のナビなので、iframe にフォーカスが
+      // ある時でも親へ委譲する（html 表示中でも移動が死なない）。ただし:
+      //  ・iframe 内の入力欄では素キーを奪わない（文字入力・フォーム内 Tab 移動を保つ）
+      //  ・検索(/)は親 DOM しか走査せず iframe 内テキストに当たらない(⌘F と同理由)ので転送しない
+      //  ・縦スクロール素キー(j/k 等)は iframe 内のネイティブ・スクロールに任せ、転送しない
+      var inField = isFieldEl(e.target);
+      var isNav = !e.metaKey && !e.ctrlKey && !e.altKey && !inField
+        && (k === '[' || k === ']' || e.key === 'Tab');
+      if (!isCmd && !isNav) return;
       var ev = new KeyboardEvent('keydown', {
         key: e.key, code: e.code,
         metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
@@ -292,6 +300,49 @@
     });
   }
 
+  // ── キーボードナビ用の共有述語（keyscroll.js と folder.js が同じ判定を使う） ──
+  // 別実装にするとフォーカス判定がズレて二重発火/無反応が出るため、必ずここに一本化する。
+
+  // スクロール主体。folder モードは #preview-pane、単一ファイル/stdin は document。
+  function getScroller() {
+    return document.querySelector('#preview-pane')
+      || document.scrollingElement
+      || document.documentElement;
+  }
+
+  // ファイルツリー（サイドバー）にフォーカスがあるか。folder モードのツリー操作の起点判定。
+  function isSidebarFocused() {
+    var s = document.getElementById('sidebar');
+    return !!(s && s.contains(document.activeElement));
+  }
+
+  // 検索バー / ヘルプ / 右クリックメニューのいずれかが開いているか。開いている間は素キーを止める。
+  // この判定は毎 keydown（巨大ファイルの j/k 連打を含む）で走るため、getElementById による O(1)
+  // 参照だけで済ませる。querySelector('.md-search-bar:not(.hidden)') は document 全走査になり、
+  // オーバーレイが閉じている通常時ほど重くなるので使わない（各オーバーレイに安定 id を振ってある）。
+  function isOverlayOpen() {
+    if (document.getElementById('md-help-backdrop')) return true;   // 開いている間だけ存在
+    if (document.getElementById('md-context-menu')) return true;    // 開いている間だけ存在
+    var sb = document.getElementById('md-search-bar');              // 常在。hidden で開閉を表す
+    return !!(sb && !sb.classList.contains('hidden'));
+  }
+
+  // フォーカスが文字入力欄（素キーを横取りしてはいけない要素）に乗っているか。
+  // iframe 転送・スクロール素キー・フォーカス移譲の各所で同じ判定を使うため一本化する。
+  function isFieldEl(el) {
+    return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+  }
+
+  // フォーカスが入力・操作系（Space/Enter で反応する要素）に乗っているか。素キーはそちらへ委ねる。
+  function isInteractiveFocus() {
+    var el = document.activeElement;
+    if (!el) return false;
+    if (isFieldEl(el)) return true;
+    if (el.tagName === 'BUTTON') return true;
+    if (el.tagName === 'A' && el.hasAttribute('href')) return true;
+    return false;
+  }
+
   window.MdCommon = {
     loadLib: loadLib,
     slugify: slugify,
@@ -301,6 +352,11 @@
     addLineNumbers: addLineNumbers,
     runMermaid: runMermaid,
     runDrawio: runDrawio,
-    wireHtmlFrames: wireHtmlFrames
+    wireHtmlFrames: wireHtmlFrames,
+    getScroller: getScroller,
+    isSidebarFocused: isSidebarFocused,
+    isOverlayOpen: isOverlayOpen,
+    isInteractiveFocus: isInteractiveFocus,
+    isFieldEl: isFieldEl
   };
 })();
