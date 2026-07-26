@@ -1,4 +1,56 @@
 use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use std::ops::Range;
+
+/// Markdown 中の改行位置を先にインデックス化し、バイトオフセットから 1 始まりの
+/// 行番号を O(log n) で引く。コメント機能の `data-src-line`（file:line 解決の肝）で使う。
+/// 末尾空白のトリム（`li` レンジは末尾の空行を含むため）に元ソースも保持する。
+struct LineIndex<'a> {
+    src: &'a str,
+    starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    fn new(s: &'a str) -> Self {
+        let mut starts = vec![0usize];
+        for (i, b) in s.bytes().enumerate() {
+            if b == b'\n' {
+                starts.push(i + 1);
+            }
+        }
+        Self { src: s, starts }
+    }
+
+    /// バイトオフセットを含む行の 1 始まり行番号。
+    fn line(&self, offset: usize) -> usize {
+        match self.starts.binary_search(&offset) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        }
+    }
+}
+
+/// ソース範囲から `data-src-line`（＋複数行なら `data-src-end-line`）属性文字列を作る。
+/// 開きタグに差し込むと、JS が `closest('[data-src-line]')` で最寄りの行番号を読める。
+/// 終了行はレンジ末尾の空白を除いた「最後の非空白バイト」で算出する。pulldown の
+/// `Item`（リスト項目）レンジは末尾の空行を含み、素直に `end-1` を使うと end-line が
+/// 1 行過剰になるため。段落・見出し等は末尾空白を含まないので影響しない。
+fn src_attrs(idx: &LineIndex, range: &Range<usize>) -> String {
+    let start = idx.line(range.start);
+    let slice_end = range.end.min(idx.src.len());
+    let slice = idx.src.get(range.start..slice_end).unwrap_or("");
+    let trimmed = slice.trim_end();
+    let end_off = if trimmed.is_empty() {
+        range.start
+    } else {
+        range.start + trimmed.len() - 1
+    };
+    let end = idx.line(end_off);
+    if end > start {
+        format!(" data-src-line=\"{}\" data-src-end-line=\"{}\"", start, end)
+    } else {
+        format!(" data-src-line=\"{}\"", start)
+    }
+}
 
 pub fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -10,6 +62,11 @@ pub fn json_string(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            // `<` を潰しておくと、inline <script> に値を埋めても `</script>` を形成できない。
+            // U+2028/U+2029 は pre-ES2019 で行終端子扱いになり構文を壊すため合わせて潰す。
+            '<' => out.push_str("\\u003c"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
@@ -32,6 +89,7 @@ pub const DIFF_JS: &str = include_str!("diff.js");
 pub const RAW_JS: &str = include_str!("raw.js");
 pub const HELP_JS: &str = include_str!("help.js");
 pub const KEYSCROLL_JS: &str = include_str!("keyscroll.js");
+pub const COMMENT_JS: &str = include_str!("comment.js");
 
 /// CSP の nonce を生成する。本文（untrusted な Markdown）に埋め込まれた inline
 /// script を実行させないため、自前の inline script だけにこの nonce を付ける。
@@ -72,8 +130,9 @@ fn alert_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
 }
 
 pub fn render_body(markdown: &str) -> String {
-    let parser = Parser::new_ext(markdown, MD_OPTIONS);
-    let events = transform_events(parser);
+    let idx = LineIndex::new(markdown);
+    let parser = Parser::new_ext(markdown, MD_OPTIONS).into_offset_iter();
+    let events = transform_events(parser, &idx);
     let mut body = String::new();
     html::push_html(&mut body, events.into_iter());
     body
@@ -81,11 +140,11 @@ pub fn render_body(markdown: &str) -> String {
 
 /// fence 直後の Text イベントを CodeBlock の End まで集めて生テキストを返す。
 /// mermaid / drawio / filename 付きコードブロックで共通して使う。
-fn collect_code_text<'a, I: Iterator<Item = Event<'a>>>(
+fn collect_code_text<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
     iter: &mut std::iter::Peekable<I>,
 ) -> String {
     let mut content = String::new();
-    for next in iter.by_ref() {
+    for (next, _) in iter.by_ref() {
         match next {
             Event::Text(t) => content.push_str(&t),
             Event::End(TagEnd::CodeBlock) => break,
@@ -95,29 +154,125 @@ fn collect_code_text<'a, I: Iterator<Item = Event<'a>>>(
     content
 }
 
-fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'a>> {
+/// 生 HTML ブロック（`<details>` / `<summary>` など）の開きタグに data-src-line を差し込む。
+/// pulldown はインライン HTML を Event::Html で素通しするため、アコーディオンのトグルは
+/// そのままだとコメント対象にならない。チャンク内の各開きタグの位置から行番号を算出して注入する。
+fn inject_html_src_line(html: &str, base: usize, idx: &LineIndex<'_>) -> String {
+    let mut out = String::with_capacity(html.len() + 32);
+    let mut rest = html;
+    let mut consumed = 0usize; // 元 html から消費したバイト数（行番号算出の起点）
+    loop {
+        let d = rest.find("<details");
+        let s = rest.find("<summary");
+        let next = match (d, s) {
+            (None, None) => None,
+            (Some(a), None) => Some((a, "<details".len())),
+            (None, Some(b)) => Some((b, "<summary".len())),
+            (Some(a), Some(b)) => {
+                if a <= b {
+                    Some((a, "<details".len()))
+                } else {
+                    Some((b, "<summary".len()))
+                }
+            }
+        };
+        match next {
+            None => {
+                out.push_str(rest);
+                break;
+            }
+            Some((pos, taglen)) => {
+                let after_tag = pos + taglen;
+                // 開きタグと確定できる場合（次が区切り文字）だけ注入する。
+                let delim_ok = rest[after_tag..]
+                    .chars()
+                    .next()
+                    .map_or(false, |c| matches!(c, ' ' | '>' | '\t' | '\n' | '\r' | '/'));
+                out.push_str(&rest[..after_tag]);
+                if delim_ok {
+                    let line = idx.line(base + consumed + pos);
+                    out.push_str(&format!(" data-src-line=\"{}\"", line));
+                }
+                consumed += after_tag;
+                rest = &rest[after_tag..];
+            }
+        }
+    }
+    out
+}
+
+/// alert 引用の class 名。pulldown の既定出力（`class="markdown-alert-note"` 等）に合わせる。
+fn alert_class(kind: BlockQuoteKind) -> &'static str {
+    match kind {
+        BlockQuoteKind::Note => "markdown-alert-note",
+        BlockQuoteKind::Tip => "markdown-alert-tip",
+        BlockQuoteKind::Important => "markdown-alert-important",
+        BlockQuoteKind::Warning => "markdown-alert-warning",
+        BlockQuoteKind::Caution => "markdown-alert-caution",
+    }
+}
+
+fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
+    parser: I,
+    idx: &LineIndex<'_>,
+) -> Vec<Event<'a>> {
     let mut out: Vec<Event<'a>> = Vec::new();
     let mut iter = parser.peekable();
-    while let Some(ev) = iter.next() {
+    // 開いたコードブロックを code-wrapper div で包んだかどうか。End(CodeBlock) で
+    // 閉じ div を出すべきか判定する（mermaid/drawio/filename は End を自前で消費するので
+    // ここには来ない。来るのは素の fenced / indented ブロックだけ）。
+    let mut code_wrap_open = false;
+    while let Some((ev, range)) = iter.next() {
         match ev {
-            Event::Start(Tag::BlockQuote(Some(kind))) => {
-                out.push(Event::Start(Tag::BlockQuote(Some(kind))));
-                let (label, icon) = alert_meta(kind);
-                let title = format!(
-                    "<div class=\"markdown-alert-title\">{}<span>{}</span></div>",
-                    icon, label
-                );
-                out.push(Event::Html(title.into()));
+            // 各ユニットの開きタグを自前生成し、コメント用の data-src-line を注入する。
+            // 中身のインラインイベントと End はそのまま流れ、push_html が閉じタグを出す。
+            // 注: 見出しの id/classes/attrs は破棄している。現状 MD_OPTIONS に
+            // ENABLE_HEADING_ATTRIBUTES が無く pulldown も id を出さないので実害は無いが、
+            // その拡張を有効化する場合は `{#id .class}` やアンカー id がここで落ちる点に注意。
+            Event::Start(Tag::Heading { level, .. }) => {
+                out.push(Event::Html(format!("<{}{}>", level, src_attrs(idx, &range)).into()));
+            }
+            Event::Start(Tag::Paragraph) => {
+                out.push(Event::Html(format!("<p{}>", src_attrs(idx, &range)).into()));
+            }
+            Event::Start(Tag::Item) => {
+                out.push(Event::Html(format!("<li{}>", src_attrs(idx, &range)).into()));
+            }
+            Event::Start(Tag::BlockQuote(kind)) => {
+                let attrs = src_attrs(idx, &range);
+                match kind {
+                    Some(k) => {
+                        out.push(Event::Html(
+                            format!("<blockquote class=\"{}\"{}>\n", alert_class(k), attrs).into(),
+                        ));
+                        let (label, icon) = alert_meta(k);
+                        out.push(Event::Html(
+                            format!(
+                                "<div class=\"markdown-alert-title\">{}<span>{}</span></div>",
+                                icon, label
+                            )
+                            .into(),
+                        ));
+                    }
+                    None => {
+                        out.push(Event::Html(format!("<blockquote{}>\n", attrs).into()));
+                    }
+                }
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
                 let info_str = info.to_string();
                 let mut parts = info_str.splitn(2, ':');
                 let lang = parts.next().unwrap_or("").trim().to_string();
                 let filename = parts.next().map(|s| s.trim().to_string());
+                let attrs = src_attrs(idx, &range);
 
                 if lang == "mermaid" {
                     let content = collect_code_text(&mut iter);
-                    let html = format!("<pre class=\"mermaid\">{}</pre>", html_escape(&content));
+                    let html = format!(
+                        "<pre class=\"mermaid\"{}>{}</pre>",
+                        attrs,
+                        html_escape(&content)
+                    );
                     out.push(Event::Html(html.into()));
                     continue;
                 }
@@ -129,7 +284,8 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
                         json_string(content.trim())
                     );
                     let html = format!(
-                        "<div class=\"drawio-wrap\"><div class=\"mxgraph\" data-mxgraph=\"{}\"></div></div>",
+                        "<div class=\"drawio-wrap\"{}><div class=\"mxgraph\" data-mxgraph=\"{}\"></div></div>",
+                        attrs,
                         attr_escape(&config)
                     );
                     out.push(Event::Html(html.into()));
@@ -141,10 +297,12 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
                     let lang_class = if lang.is_empty() {
                         String::new()
                     } else {
-                        format!(" class=\"language-{}\"", html_escape(&lang))
+                        // 属性値なので attr_escape（" もエスケープ）を使う。
+                        format!(" class=\"language-{}\"", attr_escape(&lang))
                     };
                     let html = format!(
-                        "<div class=\"code-wrapper has-filename\"><div class=\"code-filename\">{}</div><pre><code{}>{}</code></pre></div>",
+                        "<div class=\"code-wrapper has-filename\"{}><div class=\"code-filename\">{}</div><pre><code{}>{}</code></pre></div>",
+                        attrs,
                         html_escape(&fname),
                         lang_class,
                         html_escape(&content)
@@ -153,18 +311,55 @@ fn transform_events<'a, I: Iterator<Item = Event<'a>>>(parser: I) -> Vec<Event<'
                     continue;
                 }
 
+                // 素の fenced ブロック: pulldown の <pre><code> を code-wrapper で包み、
+                // ブロック単位でコメントできるよう外枠に data-src-line を振る。
+                out.push(Event::Html(
+                    format!("<div class=\"code-wrapper\"{}>", attrs).into(),
+                ));
                 out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))));
+                code_wrap_open = true;
+            }
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)) => {
+                out.push(Event::Html(
+                    format!("<div class=\"code-wrapper\"{}>", src_attrs(idx, &range)).into(),
+                ));
+                out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)));
+                code_wrap_open = true;
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                out.push(Event::End(TagEnd::CodeBlock));
+                if code_wrap_open {
+                    out.push(Event::Html("</div>".into()));
+                    code_wrap_open = false;
+                }
             }
             // テーブルは読み幅(720px)を飛び出して広く使えるよう、スクロール用の
             // ラッパー div で囲む。長い file:line などがはみ出しても本文ごとでは
             // なく表の中だけ横スクロールになる。
+            //
+            // 行番号(data-src-line)はラッパー div に付け、テーブル全体を 1 ユニットとして
+            // コメント対象にする（コードブロックと同じブロック単位の割り切り）。
+            // `Start(TableHead)`/`Start(TableRow)` を自前 HTML に置換すると push_html の
+            // テーブル状態機械（table_state / table_cell_index）が更新されず、本文セルの
+            // アライメント消失・2 つ目以降のテーブルでヘッダが <td> 化する回帰が出るため、
+            // 行/セルの Start は一切いじらず pulldown にそのまま描かせる。
             Event::Start(Tag::Table(align)) => {
-                out.push(Event::Html("<div class=\"table-wrap\">".into()));
+                out.push(Event::Html(
+                    format!("<div class=\"table-wrap\"{}>", src_attrs(idx, &range)).into(),
+                ));
                 out.push(Event::Start(Tag::Table(align)));
             }
             Event::End(TagEnd::Table) => {
                 out.push(Event::End(TagEnd::Table));
                 out.push(Event::Html("</div>".into()));
+            }
+            // 生 HTML ブロック。details / summary が含まれていればトグルをコメント可能にする。
+            Event::Html(html) => {
+                if html.contains("<details") || html.contains("<summary") {
+                    out.push(Event::Html(inject_html_src_line(&html, range.start, idx).into()));
+                } else {
+                    out.push(Event::Html(html));
+                }
             }
             other => out.push(other),
         }
@@ -196,6 +391,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <script nonce="{nonce}">{raw_js}</script>
 <script nonce="{nonce}">{help_js}</script>
 <script nonce="{nonce}">{keyscroll_js}</script>
+<script nonce="{nonce}">{comment_js}</script>
 {extra_head}"#,
         nonce = nonce,
         title = html_escape(title),
@@ -211,6 +407,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         raw_js = RAW_JS,
         help_js = HELP_JS,
         keyscroll_js = KEYSCROLL_JS,
+        comment_js = COMMENT_JS,
         extra_head = extra_head,
     )
 }
@@ -354,8 +551,11 @@ mod tests {
         let body = render_body(md);
         assert!(body.contains("class=\"mxgraph\""), "missing mxgraph class: {body}");
         assert!(body.contains("data-mxgraph=\""), "missing data attr: {body}");
-        // JSON 設定内の山括弧・引用符は属性としてエスケープされていなければならない
-        assert!(body.contains("&lt;mxGraphModel&gt;"), "xml not escaped: {body}");
+        // `<` は json_string が `<` に、`>` は attr_escape が `&gt;` にする。どちらも
+        // ブラウザの JSON パースで `<`/`>` に戻るので drawio には正しく渡り、かつ属性を
+        // 生の山括弧で抜け出さない（`</script>` や属性破りを防ぐ）。
+        assert!(body.contains("\\u003cmxGraphModel&gt;"), "xml not escaped: {body}");
+        assert!(!body.contains("<mxGraphModel>"), "raw angle brackets leaked: {body}");
         assert!(body.contains("&quot;xml&quot;"), "json quotes not escaped: {body}");
         // 属性から抜け出すような、エスケープされていない生の二重引用符が無いこと
         assert!(!body.contains("data-mxgraph=\"{\"highlight"), "attr not escaped: {body}");
@@ -373,5 +573,89 @@ mod tests {
         let page = build_html("<p>hi</p>", "t", "", "", "");
         assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
         assert!(page.contains("<p>hi</p>"));
+    }
+
+    // ── コメント機能: data-src-line 注入 ─────────────────────────
+
+    #[test]
+    fn src_line_on_common_units() {
+        // 1:見出し 3:段落 5,6:リスト 8〜:コードブロック
+        let md = "# H\n\npara\n\n- a\n- b\n\n```\ncode\n```\n";
+        let body = render_body(md);
+        assert!(body.contains("<h1 data-src-line=\"1\">"), "heading: {body}");
+        assert!(body.contains("<p data-src-line=\"3\">"), "paragraph: {body}");
+        assert!(body.contains("<li data-src-line=\"5\">"), "li a: {body}");
+        assert!(body.contains("<li data-src-line=\"6\">"), "li b: {body}");
+        assert!(body.contains("class=\"code-wrapper\" data-src-line=\"8\""), "code: {body}");
+    }
+
+    #[test]
+    fn src_end_line_multiline_paragraph() {
+        // 複数行にまたがる段落は data-src-end-line を持つ。
+        let md = "line one\nline two\nline three\n";
+        let body = render_body(md);
+        assert!(
+            body.contains("<p data-src-line=\"1\" data-src-end-line=\"3\">"),
+            "multiline paragraph end-line: {body}"
+        );
+    }
+
+    #[test]
+    fn src_line_li_not_off_by_one() {
+        // loose list（項目間に空行）でも li の end-line が末尾空行を含まないこと。
+        let md = "- a\n\n- b\n";
+        let body = render_body(md);
+        // 項目 a は 1 行だけ。:1-2 のように空行を巻き込んではならない。
+        assert!(body.contains("<li data-src-line=\"1\">"), "li a should be single-line: {body}");
+        assert!(!body.contains("data-src-end-line=\"2\""), "li a must not include blank line: {body}");
+    }
+
+    // ── コメント機能: テーブルの非回帰（push_html 状態機械を壊さない） ──
+
+    #[test]
+    fn table_alignment_preserved_in_body() {
+        // アライメント付きテーブルは body セルにも text-align が残る。
+        let md = "| A | B |\n|:--|--:|\n| 1 | 2 |\n";
+        let body = render_body(md);
+        assert!(body.contains("<td style=\"text-align: left\">"), "body left align lost: {body}");
+        assert!(body.contains("<td style=\"text-align: right\">"), "body right align lost: {body}");
+        // テーブル全体がブロック単位のコメント対象になる。
+        assert!(body.contains("class=\"table-wrap\" data-src-line=\"1\""), "table-wrap src-line: {body}");
+    }
+
+    #[test]
+    fn second_table_header_is_th() {
+        // 2 つ目のテーブルでもヘッダが <th> のまま（<td> に化けない）。
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\npara\n\n| C | D |\n|---|---|\n| 3 | 4 |\n";
+        let body = render_body(md);
+        // ヘッダセルの <td> 化が起きていないこと。
+        assert!(!body.contains("<thead><tr><td"), "2nd table header became <td>: {body}");
+        assert_eq!(body.matches("<th>").count(), 4, "expected 4 header cells: {body}");
+    }
+
+    #[test]
+    fn details_summary_get_src_line() {
+        let md = "<details>\n<summary>x</summary>\n\nbody\n\n</details>\n";
+        let body = render_body(md);
+        assert!(body.contains("<details data-src-line=\"1\">"), "details: {body}");
+        assert!(body.contains("<summary data-src-line=\"2\">"), "summary: {body}");
+        // 閉じタグを誤爆していないこと。
+        assert!(body.contains("</details>"), "closing details missing: {body}");
+        assert!(!body.contains("</details data-src-line"), "closing tag wrongly injected: {body}");
+    }
+
+    #[test]
+    fn crlf_line_numbers() {
+        let md = "# H\r\n\r\npara\r\n";
+        let body = render_body(md);
+        assert!(body.contains("<h1 data-src-line=\"1\">"), "crlf heading: {body}");
+        assert!(body.contains("<p data-src-line=\"3\">"), "crlf paragraph: {body}");
+    }
+
+    #[test]
+    fn empty_and_multibyte_no_panic() {
+        // 空・マルチバイトでパニックしないこと（境界安全性）。
+        let _ = render_body("");
+        let _ = render_body("# 日本語の見出し\n\nマルチバイト段落なのだ。\n");
     }
 }

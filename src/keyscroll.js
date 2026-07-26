@@ -27,6 +27,9 @@
       // 入力欄・ボタン・リンクにフォーカス中は素キーをそちらへ委ねる。
       if (MdCommon.isInteractiveFocus()) return;
     }
+    // コメントモード中の j/k はユニット・カーソル移動（comment.js）に譲る。
+    // d/u/Space/g/G のページ送りはモード中もそのまま効かせる。
+    if (window.MdComment && MdComment.isMode && MdComment.isMode() && (e.key === 'j' || e.key === 'k')) return;
 
     switch (e.key) {
       case 'j': by(LINE); break;
