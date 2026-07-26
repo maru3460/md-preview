@@ -251,6 +251,8 @@
         if (window.MdToc) window.MdToc.refresh();
         // html 表示（iframe）なら、ショートカット転送＋相対リンクの親側ルーティングを配線する。
         if (MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(pane, { onLinkClick: frameLinkClick });
+        // ファイル切替/ホットリロードで本文が入れ替わるので、現在ファイルのマーカーを貼り直す。
+        if (window.MdComment) window.MdComment.reanchor();
       })
       .catch(function() { showLoadError(pane, relPath); });
   }
@@ -497,6 +499,15 @@
         getScroller: function() { return document.getElementById('preview-pane'); },
         getRawUrl: function() { return currentFilePath ? '/?raw=' + encodeURIComponent(currentFilePath) : null; },
         reloadNormal: function() { if (currentFilePath) loadPreview(currentFilePath, true); }
+      });
+    }
+    if (window.MdComment) {
+      // 対象は #preview-pane。file 部は現在プレビュー中ファイルの root 相対パス。
+      // openFile はパネル項目クリックで別ファイルのコメント先へ飛ぶために使う。
+      window.MdComment.init({
+        getContainer: function() { return document.getElementById('preview-pane'); },
+        getFile: function() { return currentFilePath || ''; },
+        openFile: function(rel) { loadPreview(rel); }
       });
     }
 

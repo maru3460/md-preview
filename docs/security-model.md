@@ -127,6 +127,7 @@ CSP だけに頼らず、メニュー側も**攻撃の手数を最小化**して
 |---|---|---|
 | 選択テキストをコピー | JS（`navigator.clipboard`） | クリップボードに書くだけ。Rustに送る必要なし |
 | 相対パスをコピー | JS（`navigator.clipboard`） | 同上。文字列をコピーするだけ |
+| コメントの「全部コピー」 | JS（`navigator.clipboard`／`execCommand` フォールバック） | プレビューに付けたコメントを畳んでコピーするだけ。IPC 不要。コメント本文・引用は `textContent` 経由でしか DOM に入らず、`data-src-line` は数値のみで XSS 余地なし（`src/comment.js`） |
 | **絶対パスをコピー** | Rust（IPC） | 絶対パスは root の場所を知る Rust 側でないと作れない |
 | **Finderで表示** | Rust（IPC） | ファイル操作なので Rust |
 | **デフォルトアプリで開く** | Rust（IPC） | 同上 |

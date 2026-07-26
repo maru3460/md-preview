@@ -37,6 +37,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // html 表示（iframe）なら、フォーカスが iframe 内でもショートカットが効くよう配線する。
     // 単一ファイルモードは onLinkClick を渡さない＝iframe 内の相対遷移はそのまま許す。
     if (window.MdCommon && MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(document);
+    // コメント機能: 本文と現在ファイルの相対パスを渡して初期化する。stdin はファイルが
+    // 無いので file 部は空（file:line を付けずファイル名だけで出す挙動になる）。
+    if (window.MdComment) {
+        window.MdComment.init({
+            getContainer: function() { return document.querySelector('.markdown-body'); },
+            getFile: function() { return window.MD_FILE_REL || ''; }
+        });
+    }
     setTimeout(function() { window.ipc.postMessage('ready'); }, 0);
 });
 
@@ -63,6 +71,8 @@ function loadNormalBody() {
             if (window.MdToc) window.MdToc.refresh();
             if (window.MdDiff) window.MdDiff.refreshStat();
             if (window.MdCommon && MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(article);
+            // 本文差し替えでインラインのマーカーは消えるので、配列から貼り直す。
+            if (window.MdComment) window.MdComment.reanchor();
             scroller.scrollTop = savedScroll;
         })
         .catch(function() {});

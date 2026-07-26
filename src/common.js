@@ -323,6 +323,7 @@
   function isOverlayOpen() {
     if (document.getElementById('md-help-backdrop')) return true;   // 開いている間だけ存在
     if (document.getElementById('md-context-menu')) return true;    // 開いている間だけ存在
+    if (document.getElementById('md-cmt-popover')) return true;     // コメント入力中だけ存在
     var sb = document.getElementById('md-search-bar');              // 常在。hidden で開閉を表す
     return !!(sb && !sb.classList.contains('hidden'));
   }
@@ -331,6 +332,19 @@
   // iframe 転送・スクロール素キー・フォーカス移譲の各所で同じ判定を使うため一本化する。
   function isFieldEl(el) {
     return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable));
+  }
+
+  // 右下フロートの共有スタック。diff / raw トグルとコメントパネル/ピルを 1 つの
+  // flex コンテナに入れ、どれが在っても下から詰めて並ぶ（片方だけの時に隙間が出ない）。
+  // 並び順は各要素の CSS `order` で決める（DOM 追加順に依存しない）。
+  function cornerStack() {
+    var el = document.getElementById('md-corner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'md-corner';
+      document.body.appendChild(el);
+    }
+    return el;
   }
 
   // フォーカスが入力・操作系（Space/Enter で反応する要素）に乗っているか。素キーはそちらへ委ねる。
@@ -357,6 +371,7 @@
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
     isInteractiveFocus: isInteractiveFocus,
-    isFieldEl: isFieldEl
+    isFieldEl: isFieldEl,
+    cornerStack: cornerStack
   };
 })();

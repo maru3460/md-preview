@@ -33,6 +33,9 @@ struct AppConfig {
     watch_enabled: bool,
     /// 右クリックメニューの出し分けに使う実行モード。"folder" | "single" | "stdin"。
     menu_mode: &'static str,
+    /// 単一ファイルモードで、コメントの file:line に使う相対パス（cwd 外なので basename）。
+    /// folder / cwd モードは JS 側が現在ファイルの相対パスを持つので None。
+    file_rel: Option<String>,
 }
 
 /// stdin から読んだ markdown を単一ページとして表示する設定。監視は行わない。
@@ -55,6 +58,7 @@ fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<Pa
         single_file_path: None,
         watch_enabled: false,
         menu_mode: "stdin",
+        file_rel: None,
     }
 }
 
@@ -91,6 +95,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             single_file_path: None,
             watch_enabled: true,
             menu_mode: "folder",
+            file_rel: None,
         }
     } else if file_in_cwd {
         // cwd 配下のファイル: cwd を root にした folder モードで開き、その1枚を初期表示。
@@ -115,6 +120,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             single_file_path: None,
             watch_enabled: true,
             menu_mode: "folder",
+            file_rel: None,
         }
     } else {
         // cwd 外の単一ファイル: 単一ページ表示。親ディレクトリを root にして監視する。
@@ -167,6 +173,11 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             }
         };
         let base_dir = path.parent().unwrap_or(&path).to_path_buf();
+        // cwd 外の単一ファイルなので、コメントの file:line には basename を使う。
+        let file_rel = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
         AppConfig {
             title,
             init_script: INIT_JS,
@@ -177,6 +188,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             single_file_path: Some(path),
             watch_enabled: true,
             menu_mode: "single",
+            file_rel,
         }
     }
 }
@@ -264,6 +276,7 @@ fn main() {
         single_file_path,
         watch_enabled,
         menu_mode,
+        file_rel,
     } = if stdin_mode {
         build_stdin_config(&theme_css, &custom_css, &current_dir)
     } else {
@@ -295,10 +308,17 @@ fn main() {
     // スクリプト（WKUserScript）経由で注入する。これはページのスクリプトより先に
     // 走り、ページの CSP の対象外なので、本文の inline script が禁止されていても
     // コンテキストメニューはこれらを読める。
+    // コメントの file:line に使う単一ファイルの相対パス。folder / stdin は None なので
+    // JS 側は空（folder は currentFilePath を使う / stdin はファイル無し）。
+    let file_rel_js = match &file_rel {
+        Some(s) => json_string(s),
+        None => "''".to_string(),
+    };
     let init_script = format!(
-        "window.MD_APPEARANCE = '{}'; window.MD_MENU_MODE = '{}';\n{}",
+        "window.MD_APPEARANCE = '{}'; window.MD_MENU_MODE = '{}'; window.MD_FILE_REL = {};\n{}",
         appearance.as_str(),
         menu_mode,
+        file_rel_js,
         init_script
     );
 

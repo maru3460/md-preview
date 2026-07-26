@@ -23,7 +23,9 @@
     // toggle 後はボタンからフォーカスを外す。残るとスクロール素キーが不発になり、
     // Space でボタンが再トグルされてしまうため（本文側へフォーカスを返す）。
     btn.addEventListener('click', function() { toggle(); btn.blur(); });
-    document.body.appendChild(btn);
+    // 右下の共有スタックへ（diff/コメントと下から詰めて並ぶ）。
+    var stack = (window.MdCommon && MdCommon.cornerStack) ? MdCommon.cornerStack() : document.body;
+    stack.appendChild(btn);
   }
 
   function updateButton() {
