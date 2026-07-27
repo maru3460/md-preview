@@ -1,4 +1,8 @@
+use std::path::Path;
+
 use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+
+use crate::embed;
 use std::ops::Range;
 
 /// Markdown 中の改行位置を先にインデックス化し、バイトオフセットから 1 始まりの
@@ -130,9 +134,15 @@ fn alert_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
 }
 
 pub fn render_body(markdown: &str) -> String {
+    render_body_in(markdown, None)
+}
+
+/// `base_dir` は単独行ファイルリンクをコード埋め込みに展開するときの相対パス解決の
+/// 基準ディレクトリ（通常は描画中の md ファイルがある場所）。None なら展開しない。
+pub fn render_body_in(markdown: &str, base_dir: Option<&Path>) -> String {
     let idx = LineIndex::new(markdown);
     let parser = Parser::new_ext(markdown, MD_OPTIONS).into_offset_iter();
-    let events = transform_events(parser, &idx);
+    let events = transform_events(parser, &idx, base_dir);
     let mut body = String::new();
     html::push_html(&mut body, events.into_iter());
     body
@@ -215,6 +225,7 @@ fn alert_class(kind: BlockQuoteKind) -> &'static str {
 fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
     parser: I,
     idx: &LineIndex<'_>,
+    base_dir: Option<&Path>,
 ) -> Vec<Event<'a>> {
     let mut out: Vec<Event<'a>> = Vec::new();
     let mut iter = parser.peekable();
@@ -232,8 +243,29 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
             Event::Start(Tag::Heading { level, .. }) => {
                 out.push(Event::Html(format!("<{}{}>", level, src_attrs(idx, &range)).into()));
             }
+            // 段落は End までいったんバッファする。中身が「単独のファイルリンク」
+            // だけなら、そのファイルの中身を展開したコード埋め込みに置き換える
+            // （GitHub のパーマリンク埋め込みのローカル版）。段落は入れ子にならない
+            // ので、次に来る End(Paragraph) が対になる。
             Event::Start(Tag::Paragraph) => {
-                out.push(Event::Html(format!("<p{}>", src_attrs(idx, &range)).into()));
+                let mut buf: Vec<Event<'a>> = Vec::new();
+                for (next, _) in iter.by_ref() {
+                    if matches!(next, Event::End(TagEnd::Paragraph)) {
+                        break;
+                    }
+                    buf.push(next);
+                }
+                let attrs = src_attrs(idx, &range);
+                // 折りたたみ id 用の一意な番号として段落の開始行を使う（1 行に 2 つの段落は無い）。
+                let uid = idx.line(range.start);
+                match base_dir.and_then(|dir| embed::try_embed(dir, &buf, &attrs, uid)) {
+                    Some(html) => out.push(Event::Html(html.into())),
+                    None => {
+                        out.push(Event::Html(format!("<p{}>", attrs).into()));
+                        out.extend(buf);
+                        out.push(Event::End(TagEnd::Paragraph));
+                    }
+                }
             }
             Event::Start(Tag::Item) => {
                 out.push(Event::Html(format!("<li{}>", src_attrs(idx, &range)).into()));
@@ -414,10 +446,23 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 
 /// markdown 文字列を frontmatter 込みで完全な HTML ページに変換する。
 /// stdin / 単一ファイル / アセット直開きの本文生成を 1 本にまとめた共通パス。
-pub fn render_full_document(markdown: &str, title: &str, theme_css: &str, custom_css: &str) -> String {
+/// `base_dir` は単独行ファイルリンクの展開に使う基準ディレクトリ（None なら展開しない）。
+pub fn render_full_document(
+    markdown: &str,
+    title: &str,
+    theme_css: &str,
+    custom_css: &str,
+    base_dir: Option<&Path>,
+) -> String {
     let (fm_pairs, body) = parse_frontmatter(markdown);
     let fm_html = render_frontmatter_html(&fm_pairs);
-    build_html(&format!("{}{}", fm_html, render_body(body)), title, theme_css, custom_css, "")
+    build_html(
+        &format!("{}{}", fm_html, render_body_in(body, base_dir)),
+        title,
+        theme_css,
+        custom_css,
+        "",
+    )
 }
 
 /// `body_class` は `.markdown-body` に足す追加クラス（空文字なら無し）。
@@ -657,5 +702,48 @@ mod tests {
         // 空・マルチバイトでパニックしないこと（境界安全性）。
         let _ = render_body("");
         let _ = render_body("# 日本語の見出し\n\nマルチバイト段落なのだ。\n");
+    }
+
+    // ── 単独行ファイルリンクのコード埋め込み ──
+
+    /// 一時ディレクトリに 3 行のファイルを置き、その中で markdown を描画する。
+    fn render_in_tempdir(md: &str, name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("md-html-embed-{}", name));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("f.txt"), "one\ntwo\nthree\n").unwrap();
+        render_body_in(md, Some(&dir))
+    }
+
+    #[test]
+    fn standalone_file_link_becomes_code_embed() {
+        let body = render_in_tempdir("[f](./f.txt#L2)\n", "standalone");
+        assert!(body.contains("class=\"code-wrapper has-filename code-embed\""), "{body}");
+        // 段落ではなくコード埋め込みになり、リンクは残らない。
+        assert!(!body.contains("<a href"), "link should be replaced: {body}");
+        assert!(body.contains(">two</code>"), "wrong line embedded: {body}");
+        // コードブロックや表と同じくブロック単位でコメントできる。
+        assert!(body.contains("code-embed\" data-src-line=\"1\""), "src-line missing: {body}");
+    }
+
+    #[test]
+    fn inline_file_link_stays_a_link() {
+        let body = render_in_tempdir("見て [f](./f.txt#L2) なのだ。\n", "inline");
+        assert!(body.contains("<a href=\"./f.txt#L2\">"), "{body}");
+        assert!(!body.contains("code-embed"), "should not embed inline link: {body}");
+    }
+
+    #[test]
+    fn embedding_is_off_without_base_dir() {
+        // base_dir が無ければ（fuzz や単体テストの render_body 経路）展開しない。
+        let body = render_body("[f](./f.txt#L2)\n");
+        assert!(body.contains("<a href=\"./f.txt#L2\">"), "{body}");
+        assert!(!body.contains("code-embed"), "{body}");
+    }
+
+    #[test]
+    fn paragraph_with_two_links_is_not_embedded() {
+        let body = render_in_tempdir("[a](./f.txt#L1)[b](./f.txt#L2)\n", "twolinks");
+        assert!(!body.contains("code-embed"), "{body}");
+        assert_eq!(body.matches("<a href").count(), 2, "{body}");
     }
 }
