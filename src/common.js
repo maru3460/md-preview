@@ -233,15 +233,26 @@
       // 走査せず iframe 内テキストに当たらないため、転送すると 0/0 の空振りバーが出てしまう。
       var k = (e.key || '').toLowerCase();
       var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'w');
-      // ファイル移動([/])・ペインフォーカス(Tab)はアプリ全体のナビなので、iframe にフォーカスが
-      // ある時でも親へ委譲する（html 表示中でも移動が死なない）。ただし:
+      var inField = isFieldEl(e.target);
+      var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
+      var overlay = isOverlayOpen();
+
+      // 縦スクロール素キー(j/k/d/u/Space/g/G)は「親へ転送」では効かない。スクロールするのは
+      // iframe 内の文書で、親は html-frame が丁度 1 画面ぶんなので動かないからである。
+      // ここで中身の scroller を直接動かして、md 表示と同じ操作感にする。
+      // Space/矢印はネイティブでも動くが、j/k 等はネイティブに無いので自前で賄う。
+      if (bare && !overlay && applyScrollKey(e, doc.scrollingElement || doc.documentElement)) return;
+
+      // ファイル移動([/])・ペインフォーカス(Tab)・ヘルプ(?)はアプリ全体の操作なので、iframe に
+      // フォーカスがある時でも親へ委譲する（html 表示中でも移動とヘルプが死なない）。ただし:
       //  ・iframe 内の入力欄では素キーを奪わない（文字入力・フォーム内 Tab 移動を保つ）
       //  ・検索(/)は親 DOM しか走査せず iframe 内テキストに当たらない(⌘F と同理由)ので転送しない
-      //  ・縦スクロール素キー(j/k 等)は iframe 内のネイティブ・スクロールに任せ、転送しない
-      var inField = isFieldEl(e.target);
-      var isNav = !e.metaKey && !e.ctrlKey && !e.altKey && !inField
-        && (k === '[' || k === ']' || e.key === 'Tab');
-      if (!isCmd && !isNav) return;
+      var isNav = bare && (k === '[' || k === ']' || e.key === 'Tab' || k === '?');
+      // Escape は親のオーバーレイ（? で開いたヘルプ等）が開いている時だけ転送する。
+      // ? は iframe にフォーカスを残したまま開くので、これが無いと Esc で閉じられない。
+      // 開いていない時は転送せず、iframe 内のページ自身の Esc 処理を邪魔しない。
+      var isEsc = e.key === 'Escape' && overlay;
+      if (!isCmd && !isNav && !isEsc) return;
       var ev = new KeyboardEvent('keydown', {
         key: e.key, code: e.code,
         metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
@@ -347,6 +358,31 @@
     return el;
   }
 
+  // 本文スクロールの素キー（vim/less 流）を、渡された scroller 1 つに適用する。
+  // 親 document（keyscroll.js）と html iframe の中身（bindFrame）の両方から呼ぶ。
+  // 別実装にすると同じキーで挙動がズレるので、必ずここに一本化する。
+  // 処理したら preventDefault して true、未対応キーなら何もせず false を返す。
+  function applyScrollKey(e, sc) {
+    if (!sc) return false;
+    // ⌘/Ctrl/Alt 併用は既存ショートカット等に委ねる（Shift は Space/G で使うので許可）。
+    if (e.metaKey || e.ctrlKey || e.altKey) return false;
+    var LINE = 40; // 1 行ぶんのスクロール量(px)
+    var page = sc.clientHeight || 600;
+    switch (e.key) {
+      case 'j': sc.scrollTop += LINE; break;
+      case 'k': sc.scrollTop -= LINE; break;
+      case 'd': sc.scrollTop += page / 2; break;
+      case 'u': sc.scrollTop -= page / 2; break;
+      // 1 ページ送りは 0.9 ページぶん。1 割を残して直前の文脈を画面に留め、読み位置を見失わせない。
+      case ' ': sc.scrollTop += (e.shiftKey ? -1 : 1) * page * 0.9; break;
+      case 'g': sc.scrollTop = 0; break;
+      case 'G': sc.scrollTop = sc.scrollHeight; break; // 末尾へ（clampで下端に収まる）
+      default: return false;
+    }
+    e.preventDefault();
+    return true;
+  }
+
   // フォーカスが入力・操作系（Space/Enter で反応する要素）に乗っているか。素キーはそちらへ委ねる。
   function isInteractiveFocus() {
     var el = document.activeElement;
@@ -372,6 +408,7 @@
     isOverlayOpen: isOverlayOpen,
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
+    applyScrollKey: applyScrollKey,
     cornerStack: cornerStack
   };
 })();
