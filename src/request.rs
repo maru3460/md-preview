@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::html::{attr_escape, html_escape, json_string, parse_frontmatter, render_body, render_frontmatter_html, render_full_document, DRAWIO_JS, MERMAID_JS};
+use crate::html::{attr_escape, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, render_full_document, DRAWIO_JS, MERMAID_JS};
 
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -80,7 +80,12 @@ pub fn guess_mime(path: &Path) -> &'static str {
 }
 
 pub fn extension_to_hljs_lang(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
+    // guess_mime と揃えて拡張子は case-insensitive に見る（`.RS` でも rust 扱い）。
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
         Some("md" | "markdown") => "markdown",
         Some("rs") => "rust",
         Some("js" | "mjs" | "cjs") => "javascript",
@@ -225,7 +230,11 @@ pub fn render_html_iframe(rel: &str) -> String {
 fn render_md_file(file_path: &Path) -> Option<(String, String)> {
     let content = std::fs::read_to_string(file_path).ok()?;
     let (fm_pairs, body) = parse_frontmatter(&content);
-    Some((render_frontmatter_html(&fm_pairs), render_body(body)))
+    // 単独行ファイルリンクの相対パスは、その md ファイルがある場所を基準に解決する。
+    Some((
+        render_frontmatter_html(&fm_pairs),
+        render_body_in(body, file_path.parent()),
+    ))
 }
 
 // フォルダモードのプレビュー枠用フラグメント。本文だけ `.markdown-body` で包む。
@@ -369,7 +378,7 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
         let Ok(content) = std::fs::read_to_string(&file_path) else { return not_found_response() };
         let file_title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
         // render_full_document を通すことで frontmatter も本来のページと同様に描画する。
-        let rendered = render_full_document(&content, file_title, theme_css, custom_css);
+        let rendered = render_full_document(&content, file_title, theme_css, custom_css, file_path.parent());
         ok_response("text/html; charset=utf-8", rendered.into_bytes())
     } else if is_html(&file_path) {
         // iframe に配信する html は、head 内 CSS が JS より先に適用されるよう
@@ -692,6 +701,23 @@ mod tests {
         assert_eq!(find_ci_ascii(b"ab", b"abc"), None);      // needle > hay（アンダーフロー防止）
         assert_eq!(find_ci_ascii(b"abc", b""), None);        // needle 空
         assert_eq!(find_ci_ascii(b"aXaX", b"ax"), Some(0));  // 最初の一致・大小無視
+    }
+
+    #[test]
+    fn md_fragment_embeds_file_link_relative_to_the_md_file() {
+        // フォルダモードの ?file= 経路でも、単独行ファイルリンクが
+        // 「その md ファイルがある場所」基準で展開されること。
+        let dir = std::env::temp_dir().join("md-req-embed-test/sub");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("code.txt"), "one\ntwo\nthree\n").unwrap();
+        let md = dir.join("doc.md");
+        std::fs::write(&md, "[code](./code.txt#L2)\n").unwrap();
+
+        let resp = serve_md_fragment(&md);
+        assert_eq!(resp.status(), 200);
+        let body = String::from_utf8_lossy(resp.body());
+        assert!(body.contains("code-embed"), "not embedded: {body}");
+        assert!(body.contains(">two</code>"), "wrong line: {body}");
     }
 
     #[test]

@@ -46,8 +46,9 @@ fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<Pa
         std::process::exit(1);
     }
     let title = "stdin".to_string();
-    let html = render_full_document(&markdown, &title, theme_css, custom_css);
     let root = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    // stdin にはファイルの居場所が無いので、単独行ファイルリンクは cwd 基準で解決する。
+    let html = render_full_document(&markdown, &title, theme_css, custom_css, Some(&root));
     AppConfig {
         title,
         init_script: INIT_JS,
@@ -154,7 +155,7 @@ fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: 
             build_html(&render_html_iframe(name), &title, theme_css, custom_css, "html-page")
         } else {
             match String::from_utf8(bytes) {
-                Ok(text) if is_markdown => render_full_document(&text, &title, theme_css, custom_css),
+                Ok(text) if is_markdown => render_full_document(&text, &title, theme_css, custom_css, path.parent()),
                 Ok(text) => {
                     build_html(&source_view_html(&path, &text), &title, theme_css, custom_css, "source-page")
                 }
@@ -621,7 +622,7 @@ fn run_html_dump(arg: &str, theme_override: Option<&str>) {
         Some("md") | Some("markdown")
     );
     let html = match String::from_utf8(bytes) {
-        Ok(text) if is_markdown => render_full_document(&text, &title, &theme_css, &custom_css),
+        Ok(text) if is_markdown => render_full_document(&text, &title, &theme_css, &custom_css, path.parent()),
         Ok(text) => {
             build_html(&source_view_html(path, &text), &title, &theme_css, &custom_css, "source-page")
         }

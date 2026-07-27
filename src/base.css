@@ -218,6 +218,98 @@ blockquote.markdown-alert-caution {
     border-bottom: 1px solid;
 }
 
+/* ── 単独行ファイルリンクを展開したコード埋め込み ──
+   ヘッダはファイル名つきコードブロックと同じ .code-filename を使うので、
+   13 テーマ分の色定義（色・背景・下線）がそのまま乗る。左にパス、右に行範囲を置く。
+   右端は Copy ボタン（hover で出る）の分だけ空けて、行範囲と重ならないようにする。 */
+.code-embed .code-filename {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-right: 78px;
+}
+
+/* 長いパスはヘッダ内で省略し、行範囲は縮めず常に読めるようにする。 */
+.code-embed-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.code-embed-lines {
+    flex: none;
+    opacity: 0.8;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 長い埋め込みは畳んでおき、下端のバーで開閉する。チェックボックス + label の
+   CSS だけで動くので JS 初期化が要らず、`md --html` のダンプでも開閉できる。
+   チェックボックス自体は見せないが、キーボードで到達できるよう display:none にはしない。 */
+.code-embed-fold {
+    position: absolute;
+    width: 0;
+    height: 0;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* 畳んだときに見せる高さ。embed.rs の COLLAPSE_LINES（畳むかどうかの閾値 100 行）とは
+   別の数字で、閾値ぶん見せても大して短くならないため、プレビューはぐっと短くする。
+   変えるときは片方だけ動かさないよう注意。 */
+.code-embed.is-foldable > pre {
+    /* lh 非対応時のフォールバック（行送り 1.5 前提の概算） */
+    max-height: 60em;
+    /* テーマごとに違う実際の行送りで、ちょうど 40 行ぶんに畳む */
+    max-height: 40lh;
+    /* 縦だけ切り、長い行の横スクロールは残す */
+    overflow-y: hidden;
+    /* 下に開閉バーが続くので下側の角は落とす */
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.code-embed-fold:checked ~ pre {
+    max-height: none;
+    overflow-y: auto;
+}
+
+/* 開閉バー。テーマ 13 種に色定義を足さずに済むよう、地の文の色から作る。 */
+.code-embed-expand {
+    display: block;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    padding: 7px 12px;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+    background-color: color-mix(in srgb, currentColor 7%, transparent);
+    border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.code-embed-expand:hover {
+    background-color: color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.code-embed-fold:focus-visible ~ .code-embed-expand {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+}
+
+.code-embed-expand .on-expanded {
+    display: none;
+}
+
+.code-embed-fold:checked ~ .code-embed-expand .on-collapsed {
+    display: none;
+}
+
+.code-embed-fold:checked ~ .code-embed-expand .on-expanded {
+    display: inline;
+}
+
 .copy-btn {
     position: absolute;
     top: 6px;
