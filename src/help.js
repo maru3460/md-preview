@@ -2,47 +2,13 @@
 // window.MdHelp を公開する。`?`（Shift+/）で開閉、Esc / 背景クリックで閉じる。
 // 右クリックメニューの「ショートカット一覧」からも MdHelp.open() で開ける。
 //
+// 表示する内容（キー・説明・表示範囲）は keymap.js の MdKeymap が単一の定義元。
+// ここは描画だけを持つ。ショートカットの追加・変更は keymap.js 側で行う。
+//
 // 配色は context-menu / diff-toggle と同じくシステムカラー（Canvas/CanvasText/…）と
 // color-mix で theme-agnostic に組む。themes/*.css への追記は不要。
 (function() {
   var overlay = null;
-
-  // [キー, 説明, 表示範囲]。表示順そのまま。表示範囲は:
-  //   'all'     … 全モード（stdin / single / folder）
-  //   'nostdin' … stdin 以外（ファイル/git がある single・folder）
-  //   'folder'  … folder モードのみ（サイドバーとファイル移動がある時）
-  var SHORTCUTS = [
-    ['j / k', '1 行スクロール 下 / 上', 'all'],
-    ['d / u', '半ページ 下 / 上', 'all'],
-    ['Space', '1 ページ送り（Shift+Space で戻る）', 'all'],
-    ['g / G', '冒頭 / 末尾へ', 'all'],
-    ['/', '検索（⌘F と同じ）', 'all'],
-    ['⌘F', '検索', 'all'],
-    ['⌘T', 'アウトライン（見出しナビ）を開閉', 'all'],
-    ['⌘D', 'git 差分表示を切り替え', 'nostdin'],
-    ['⌘R', 'raw（ソース）表示を切り替え', 'nostdin'],
-    ['c', 'コメントモード開始/終了', 'all'],
-    ['j / k / Enter', 'コメント中: 移動（Shift+j/k でレンジ）/ Enter で付与', 'all'],
-    ['n / p / e / x / y', 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全部コピー', 'all'],
-    ['] / [', '次 / 前のファイルへ（表示中のファイルを巡回）', 'folder'],
-    ['Tab', '本文 ⇄ ファイルツリー のフォーカス切替', 'folder'],
-    ['ツリー内', 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ', 'folder'],
-    ['⌘A', '本文を全選択', 'all'],
-    ['⌘W', 'ウィンドウを閉じる', 'all'],
-    ['⌘Q', '終了', 'all'],
-    ['右クリック', 'コンテキストメニュー', 'all'],
-    ['?', 'このヘルプを開閉', 'all'],
-    ['Esc', '検索 / メニュー / ヘルプ / コメントを閉じる', 'all']
-  ];
-
-  // 現在のモードでこの行を表示するか。
-  function showFor(scope) {
-    var mode = window.MD_MENU_MODE;
-    if (scope === 'all') return true;
-    if (scope === 'nostdin') return mode !== 'stdin';
-    if (scope === 'folder') return mode === 'folder';
-    return true;
-  }
 
   function build(welcome) {
     // パネルを一度でも開いたら、初回の自動表示はもう出さない。
@@ -69,18 +35,18 @@
 
     // 行は専用ラッパへ入れ、CSS の段組み(column-count)で上→下→次の列と流す。
     // 列単位で流れるのでスクロール系などのまとまりが崩れず、縦の高さも半分に収まる。
+    // 並び順は MdKeymap の定義順（＝カテゴリ順）そのまま。見出しは出さず平坦に流す。
     var rows = document.createElement('div');
     rows.className = 'md-help-rows';
-    SHORTCUTS.forEach(function(sc) {
-      if (!showFor(sc[2])) return;
+    window.MdKeymap.visible().forEach(function(b) {
       var row = document.createElement('div');
       row.className = 'md-help-row';
       var key = document.createElement('kbd');
       key.className = 'md-help-key';
-      key.textContent = sc[0];
+      key.textContent = b.keys;
       var desc = document.createElement('span');
       desc.className = 'md-help-desc';
-      desc.textContent = sc[1];
+      desc.textContent = b.desc;
       row.appendChild(key);
       row.appendChild(desc);
       rows.appendChild(row);
