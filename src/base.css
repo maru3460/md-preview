@@ -9,6 +9,16 @@
     color-scheme: light dark;
     /* 見出しナビ(TOC)サイドバーの幅。開いている間は右ガターをこの幅ぶん空ける。 */
     --md-toc-w: 260px;
+    /* コマンドパネル(⌘/)サイドバーの幅。窓が低くて全コマンドが 1 段で入らない時は
+       2 段組みに切り替え、幅を wide 側に広げる（cmdpanel.js が測って決める）。 */
+    --md-cmdpanel-w: 300px;
+    --md-cmdpanel-wide-w: 520px;
+    /* いま右端に在るレール(TOC / コマンドパネル)の幅。本文のガターと、
+       fixed な chrome UI(検索バー・右下トグル)の退避量はこれ 1 つだけを見る。 */
+    --md-rail-w: 0px;
+    /* 本文とレールの間に空ける余白。既定は本文の外周余白(48px)と対称。
+       レールを広げて本文が狭くなった時だけ詰めて、本文に幅を回す。 */
+    --md-rail-gap: 48px;
 }
 
 body {
@@ -564,7 +574,8 @@ body.folder-mode {
 .md-search-bar {
     position: fixed;
     top: 12px;
-    right: 16px;
+    /* 右レール(TOC / コマンドパネル)が開いている間はその左へ退避する。 */
+    right: calc(var(--md-rail-w) + 16px);
     z-index: 1000;
     display: inline-flex;
     align-items: center;
@@ -688,29 +699,51 @@ mark.md-search-hit {
 .md-toc-list .lvl-5 > a,
 .md-toc-list .lvl-6 > a { padding-left: 64px; font-size: 12px; }
 
-/* ── TOC を常設サイドバーとして開いている間のレイアウト ───────────────
-   パネルは fixed なので本文に被る。開いている間だけ右ガターを --md-toc-w ぶん
-   空け、中央寄せ本文(または preview-pane の本文)をその左へ収める。Zen/Qiita 風に
-   「本文＋目次」を一塊に見せる。左パディング(48px)と対称になるよう +48px する。
-   狭い画面では JS(toc.js)側が自動でパネルを閉じ、このクラスも外れる。 */
+/* ── 右レール（TOC / コマンドパネル）を開いている間のレイアウト ──────────
+   どちらも fixed なので本文に被る。開いている間だけ右ガターをレール幅ぶん空け、
+   中央寄せ本文(または preview-pane の本文)をその左へ収める。Zen/Qiita 風に
+   「本文＋サイドバー」を一塊に見せる。左パディングと対称になるよう --md-rail-gap を足す。
+   狭い画面では TOC は自動で閉じる。コマンドパネルは閉じずに本文の幅を譲ってもらう
+   （覚えるために出しているものを画面幅で勝手に消したり本文の上に重ねたりはしない）。
+
+   レール幅は --md-rail-w に一本化する。TOC とコマンドパネルは相互排他（toc.js の
+   autoEvaluate がパネル使用中は退避する）なので、退避側は「いま在るレールの幅」1 つだけを
+   見ればよい。個別に分岐を足すと chrome UI の right 計算が三すくみになるため、必ずここを通す。 */
 body.md-toc-open {
-    padding-right: calc(var(--md-toc-w) + 48px);
+    --md-rail-w: var(--md-toc-w);
+}
+body.md-cmdpanel-open {
+    --md-rail-w: var(--md-cmdpanel-w);
+}
+/* 2 段組みに広げている間はガターもそのぶん広く取る。 */
+body.md-cmdpanel-open.md-cmdpanel-wide {
+    --md-rail-w: var(--md-cmdpanel-wide-w);
+}
+/* 本文に回せる幅が足りなくなったら、飾りの余白を削って本文に回す。 */
+body.md-cmdpanel-tight {
+    --md-rail-gap: 16px;
+}
+
+body.md-toc-open,
+body.md-cmdpanel-open {
+    padding-right: calc(var(--md-rail-w) + var(--md-rail-gap));
+}
+body.md-cmdpanel-tight {
+    padding-left: var(--md-rail-gap);
 }
 
 /* folder モードは body 余白を持たず preview-pane 側で本文を描くので、
    ガターは preview-pane に確保する（body 側の padding は打ち消す）。 */
-body.folder-mode.md-toc-open {
+body.folder-mode.md-toc-open,
+body.folder-mode.md-cmdpanel-open {
     padding-right: 0;
 }
-body.folder-mode.md-toc-open #preview-pane {
-    padding-right: calc(var(--md-toc-w) + 48px);
+body.folder-mode.md-toc-open #preview-pane,
+body.folder-mode.md-cmdpanel-open #preview-pane {
+    padding-right: calc(var(--md-rail-w) + var(--md-rail-gap));
 }
-
-/* chrome UI（⌘F 検索バー・⌘D diff / ⌘R raw ボタン）は fixed で右端に出るため、
-   TOC を開くとパネルに隠れる。開いている間は TOC の左へ退避させて生かす。 */
-body.md-toc-open .md-search-bar,
-body.md-toc-open #md-corner {
-    right: calc(var(--md-toc-w) + 16px);
+body.folder-mode.md-cmdpanel-tight #preview-pane {
+    padding-left: var(--md-rail-gap);
 }
 
 /* ── Mermaid ────────────────────────────────────────────────── */
@@ -852,11 +885,16 @@ details[open] {
     background: color-mix(in srgb, CanvasText 32%, transparent);
 }
 
+/* コマンドパネルと同じ理由でスクロールさせない。ここも操作はキーボード前提で、
+   一覧にフォーカスは無い（スクロールできない）。入り切らない時は help.js が
+   段数を増やす → 密度を詰める、の順で必ず収める。段数と幅は 1 組で動くので変数にする。 */
 .md-help-panel {
-    width: min(680px, 100%);
-    max-width: 680px;
+    --md-help-w: 680px;
+    --md-help-cols: 2;
+    width: min(var(--md-help-w), 100%);
+    max-width: var(--md-help-w);
     max-height: 100%;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 18px 22px 16px;
     border-radius: 12px;
     background: Canvas;
@@ -866,21 +904,50 @@ details[open] {
     line-height: 1.5;
 }
 
-/* ショートカット行は 2 段組みで上→下→次の列へ流す。縦に伸びてスクロールが要らないよう
-   横へ広げる。行は段の途中で割れないよう break-inside を禁止。狭い窓では 1 段に戻す。 */
+/* 段階 1: 横は余っているので、まず段を増やして縦を縮める（可読性を落とさない）。 */
+.md-help-panel.cols-3 { --md-help-w: 960px;  --md-help-cols: 3; }
+.md-help-panel.cols-4 { --md-help-w: 1200px; --md-help-cols: 4; }
+
+/* 段階 2: 行間・文字・余白を詰める。 */
+.md-help-panel.is-compact { font-size: 12px; line-height: 1.4; }
+.md-help-panel.is-compact .md-help-title { margin-bottom: 8px; }
+.md-help-panel.is-compact .md-help-welcome { margin-bottom: 8px; padding: 7px 9px; }
+.md-help-panel.is-compact .md-help-rows .md-help-group { margin-bottom: 6px; }
+.md-help-panel.is-compact .md-help-cat { padding: 3px 0 1px; }
+.md-help-panel.is-compact .md-help-row { padding: 2px 0; }
+.md-help-panel.is-compact .md-help-key { min-width: 68px; font-size: 11px; padding: 1px 6px; }
+.md-help-panel.is-compact .md-help-hint { margin-top: 8px; padding-top: 8px; }
+
+/* 段階 3（最後の手段）: 段階を上げても収まらない極端に小さい窓だけスクロールを許す。 */
+.md-help-panel.is-scroll { overflow-y: auto; }
+
+/* ショートカット行は段組みで上→下→次の列へ流す。縦に伸びてスクロールが要らないよう
+   横へ広げる。狭い窓では 1 段に戻す。
+   カテゴリの箱ごと break-inside を禁止して、見出しだけが列末に取り残されるのを防ぐ。 */
 .md-help-rows {
-    column-count: 2;
+    column-count: var(--md-help-cols);
     column-gap: 28px;
 }
 
-.md-help-rows .md-help-row {
+.md-help-rows .md-help-group {
     -webkit-column-break-inside: avoid;
     break-inside: avoid;
+    margin-bottom: 10px;
 }
 
-@media (max-width: 600px) {
-    .md-help-rows {
-        column-count: 1;
+.md-help-cat {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: GrayText;
+    padding: 4px 0 2px;
+}
+
+/* ここまで狭いと 2 段でも 1 段が細すぎるので 1 段に戻す。戻すと縦に伸びるが、
+   その時は help.js が密度を詰め、それでも駄目ならスクロールを許す。 */
+@media (max-width: 480px) {
+    .md-help-panel {
+        --md-help-cols: 1;
     }
 }
 
@@ -923,6 +990,158 @@ details[open] {
     text-align: center;
 }
 
+/* ── コマンドパネル（⌘/）─────────────────────────────────────────
+   「覚えるまで出しっぱなしにする」ための右サイドバー。? の一覧（辞書）とは
+   役割が別で、こちらは非モーダル＝開いている間も全てのキーが効き続ける。
+   配色は help / context-menu と同じくシステムカラー + color-mix で組むため、
+   themes/*.css への追記は不要。 */
+.md-cmdpanel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: var(--md-cmdpanel-w);
+    height: 100vh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    /* TOC(999) / 検索バー・右下トグル(1000) より下、help backdrop(1200) より下。
+       相互排他なので重なりはしないが、万一そうなった時に本文側の UI を隠さない。 */
+    z-index: 998;
+    border-left: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+    background: Canvas;
+    color: CanvasText;
+    font-size: 12.5px;
+    line-height: 1.45;
+    transform: translateX(0);
+    transition: transform 0.18s ease;
+}
+
+.md-cmdpanel.hidden {
+    transform: translateX(100%);
+    pointer-events: none;
+}
+
+/* 復元表示（前回 ON のまま開き直した時）はスライドインさせない。 */
+.md-cmdpanel.no-anim {
+    transition: none;
+}
+
+
+.md-cmdpanel-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+.md-cmdpanel-title {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.md-cmdpanel-hint {
+    color: GrayText;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+/* パネルにはフォーカスが無く、キーボードでスクロールできない。見えない行は
+   存在しないのと同じなので、既定ではスクロールさせない（cmdpanel.js が
+   密度→段組みの順に段階を上げて高さに収める）。 */
+.md-cmdpanel-body {
+    flex: 1 1 auto;
+    overflow: hidden;
+    padding: 6px 0 16px;
+}
+
+/* 段階 3（最後の手段）: 段階を上げても収まらない極端に低い窓だけスクロールを許す。 */
+body.md-cmdpanel-scroll .md-cmdpanel-body {
+    overflow-y: auto;
+}
+
+/* 段階 1: 行間・文字・余白を詰める。レイアウトの形は変えないので副作用が小さい。 */
+body.md-cmdpanel-compact .md-cmdpanel {
+    font-size: 11.5px;
+    line-height: 1.35;
+}
+body.md-cmdpanel-compact .md-cmdpanel-head { padding: 9px 12px 8px; }
+body.md-cmdpanel-compact .md-cmdpanel-body { padding: 3px 0 8px; }
+body.md-cmdpanel-compact .md-cmdpanel-cat { padding: 6px 12px 2px; }
+body.md-cmdpanel-compact .md-cmdpanel-row { padding: 1px 12px; }
+body.md-cmdpanel-compact .md-cmdpanel-key { min-width: 68px; font-size: 10.5px; }
+
+/* 段階 2: パネルを広げて 2 段組みにする（高さがおよそ半分になる）。
+   カテゴリの箱は段の途中で割らせない（見出しだけが段末に取り残されるのを防ぐ）。 */
+body.md-cmdpanel-wide .md-cmdpanel {
+    width: var(--md-cmdpanel-wide-w);
+}
+body.md-cmdpanel-wide .md-cmdpanel-body {
+    column-count: 2;
+    column-gap: 10px;
+}
+body.md-cmdpanel-wide .md-cmdpanel-group {
+    -webkit-column-break-inside: avoid;
+    break-inside: avoid;
+}
+
+.md-cmdpanel-group {
+    padding-bottom: 4px;
+}
+
+.md-cmdpanel-cat {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: GrayText;
+    padding: 9px 14px 3px;
+}
+
+.md-cmdpanel-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 2px 14px;
+    border-radius: 4px;
+    /* 使える／使えないの切り替わりを滑らかにする（モード切替のたびに点滅させない）。 */
+    transition: opacity 0.12s linear;
+}
+
+/* 今の状態では効かないコマンドは薄くする（消さない）。
+   消すと行が動いて位置で覚えられなくなり、なぜ無いのかも分からなくなる。 */
+.md-cmdpanel-row.is-disabled {
+    opacity: 0.32;
+}
+
+/* モード専用カテゴリ（コメント / ファイルツリー）が休止中は、見出しだけを薄くして
+   「この塊はいま眠っている」ことを示す。行の濃淡は行ごとの is-disabled に任せる。
+   セクションまるごと薄くすると、そのモードに入るためのキー（コメントの c）まで
+   使えないように見えてしまう。c はどのモードでも押せるので、そこは濃く残す。 */
+.md-cmdpanel-group.is-inactive .md-cmdpanel-cat {
+    opacity: 0.5;
+}
+
+
+.md-cmdpanel-key {
+    flex: 0 0 auto;
+    min-width: 74px;
+    text-align: center;
+    padding: 1px 6px;
+    border-radius: 5px;
+    border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+    background: color-mix(in srgb, CanvasText 7%, transparent);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.md-cmdpanel-desc {
+    flex: 1 1 auto;
+    color: color-mix(in srgb, CanvasText 78%, transparent);
+}
+
 /* 初回オンボーディングでだけタイトル直下に出す一言。使い方の導入なので
    本文と同じ落ち着いたトーンで、キー行より前に置く。 */
 .md-help-welcome {
@@ -947,7 +1166,8 @@ details[open] {
    下端固定で上へ伸びる。並び順は各要素の order で制御する。 */
 #md-corner {
     position: fixed;
-    right: 16px;
+    /* 右レール(TOC / コマンドパネル)が開いている間はその左へ退避する。 */
+    right: calc(var(--md-rail-w) + 16px);
     bottom: 16px;
     z-index: 1000;
     display: flex;

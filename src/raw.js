@@ -152,6 +152,8 @@
     isActive: function() { return active; },
     // 現在ファイルが .md かどうかで raw の有効/無効を切り替える（呼び出し側から）。
     setAvailable: setAvailable,
+    // ⌘R が今のファイルで効くか。コマンドパネルのグレーアウト判定が参照する。
+    isAvailable: function() { return available; },
     // diff 表示など、他モードへ切り替える際に状態だけ畳む（通常表示には戻さない）。
     deactivate: deactivate,
     // raw 表示中に（現在ファイルに対して）再取得する。ファイル切替・監視リロード・

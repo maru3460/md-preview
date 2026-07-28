@@ -93,6 +93,7 @@ pub const DIFF_JS: &str = include_str!("diff.js");
 pub const RAW_JS: &str = include_str!("raw.js");
 pub const KEYMAP_JS: &str = include_str!("keymap.js");
 pub const HELP_JS: &str = include_str!("help.js");
+pub const CMDPANEL_JS: &str = include_str!("cmdpanel.js");
 pub const KEYSCROLL_JS: &str = include_str!("keyscroll.js");
 pub const COMMENT_JS: &str = include_str!("comment.js");
 
@@ -425,6 +426,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <script nonce="{nonce}">{raw_js}</script>
 <script nonce="{nonce}">{keymap_js}</script>
 <script nonce="{nonce}">{help_js}</script>
+<script nonce="{nonce}">{cmdpanel_js}</script>
 <script nonce="{nonce}">{keyscroll_js}</script>
 <script nonce="{nonce}">{comment_js}</script>
 {extra_head}"#,
@@ -442,6 +444,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         raw_js = RAW_JS,
         keymap_js = KEYMAP_JS,
         help_js = HELP_JS,
+        cmdpanel_js = CMDPANEL_JS,
         keyscroll_js = KEYSCROLL_JS,
         comment_js = COMMENT_JS,
         extra_head = extra_head,

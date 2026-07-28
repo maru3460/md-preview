@@ -117,13 +117,17 @@
   }
 
   // 現在ページで自動表示すべきか判定して開閉する。
-  // ・幅不足/見出し不足 → 開いていれば退避（userClosed は変えない＝広くなれば戻る）
-  // ・条件を満たす      → ユーザーが閉じていなければ開く
+  // ・幅不足/見出し不足/レール使用中 → 開いていれば退避（userClosed は変えない＝条件が戻れば復帰）
+  // ・条件を満たす                   → ユーザーが閉じていなければ開く
+  //
+  // コマンドパネル(⌘/)は同じ右レールを使うので、開いている間は「収まらない」扱いにして
+  // 相互排他にする。userClosed を触らずに退避するので、パネルを閉じればここで自然に戻る。
   function autoEvaluate() {
     if (!initialized) return;
     var enough = headingCount() >= MIN_HEADINGS;
     var fits = availWidth() >= MIN_WIDTH;
-    if (!enough || !fits) {
+    var railTaken = !!(window.MdCmdPanel && MdCmdPanel.isOpen());
+    if (!enough || !fits || railTaken) {
       hide();
     } else if (!open && !userClosed) {
       show(autoFirstPending);
@@ -136,18 +140,18 @@
     return scroller.querySelectorAll('h1,h2,h3,h4,h5,h6').length;
   }
 
-  // 本文＋TOC が収まるか判定するための利用可能幅。
-  // 単一ファイルは viewport 幅、folder モードは preview-pane の幅を見る。
+  // 本文＋TOC が収まるか判定するための利用可能幅。実装は MdCommon.availWidth に
+  // 一本化してある（コマンドパネルが同じ閾値判定を使うため）。
   function availWidth() {
-    if (scrollTarget === window || !scroller) {
-      return document.documentElement.clientWidth || window.innerWidth || 0;
-    }
-    return scroller.clientWidth || 0;
+    return window.MdCommon ? MdCommon.availWidth() : (window.innerWidth || 0);
   }
 
   // ユーザー操作の入口。手動で開けば userClosed を解除、閉じれば設定する。
   function openPanel() {
     userClosed = false;
+    // コマンドパネル(⌘/)と同じ右レールを使うので、ユーザーが明示的に TOC を開いたら
+    // そちらに譲ってもらう（相互排他。閉じた側が reevaluate を呼ぶのでここで開く）。
+    if (window.MdCmdPanel && MdCmdPanel.isOpen()) MdCmdPanel.close();
     show(false);
   }
 
