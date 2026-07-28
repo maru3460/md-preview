@@ -796,6 +796,9 @@
       initKbCursor();
     }
     renderPanel();
+    // モードで使えるキーが入れ替わるので、コマンドパネルの表示を追従させる
+    // （モード切替はキー以外＝右クリックメニューからも起きるため、専用に通知する）。
+    if (was !== mode && window.MdCmdPanel && MdCmdPanel.sync) MdCmdPanel.sync();
   }
 
   // ── イベント配線 ──────────────────────────────────────────────

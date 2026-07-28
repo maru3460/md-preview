@@ -77,6 +77,9 @@
       case 'help':
         if (window.MdHelp) window.MdHelp.open();
         break;
+      case 'cmdpanel':
+        if (window.MdCmdPanel) window.MdCmdPanel.toggle();
+        break;
     }
   }
 
@@ -111,6 +114,13 @@
     items.push({ label: '再読み込み', action: 'reload', enabled: true });
     items.push({ sep: true });
     items.push({ label: 'ショートカット一覧 (?)', action: 'help', enabled: true });
+    // 常時表示のコマンドパネル。開いている時は「閉じる」と出して状態が分かるようにする。
+    var panelOpen = !!(window.MdCmdPanel && MdCmdPanel.isOpen());
+    items.push({
+      label: (panelOpen ? 'コマンドパネルを閉じる' : 'コマンドパネルを表示') + ' (⌘/)',
+      action: 'cmdpanel',
+      enabled: true
+    });
     return trimSeparators(items);
   }
 
