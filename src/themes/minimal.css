@@ -3,7 +3,12 @@
    見出し罫線を消し、彩度を抑えた静かな読み物向け。固定ライト。
    ────────────────────────────────────────────────────────────── */
 
-:root { color-scheme: light; }
+:root {
+    color-scheme: light;
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #2e7cd6;
+}
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;

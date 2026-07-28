@@ -3,7 +3,12 @@
    角丸を潰し、罫線を太い黒線にし、アラートはモノクロ。固定ライト。
    ────────────────────────────────────────────────────────────── */
 
-:root { color-scheme: light; }
+:root {
+    color-scheme: light;
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #000000;
+}
 
 body {
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;

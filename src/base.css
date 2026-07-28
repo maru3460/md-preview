@@ -534,7 +534,10 @@ blockquote.markdown-alert-caution {
 /* ── キーボードナビ（フォーカス/カーソルの可視化） ─────────────
    tabindex=-1 への focus() は WebKit で focus ring が出ないため、見た目は自前で付ける。
    テーマ別の .tree-item.active（背景色）と衝突しないよう、カーソルは inset の枠線で重ねる。
-   配色は help/context-menu と同じく system color(Highlight) を color-mix して theme 非依存に組む。 */
+   配色は --md-accent（テーマが「選択中」に使う色）で組む。system color(Highlight) を使うと、
+   同じサイドバーの中で「開いているファイル＝テーマのアクセント色」と「カーソル＝OS の青」が
+   並んで別物に見えてしまうためである（mono だと赤の隣に青が出る）。
+   選択とカーソルの区別は色ではなく形で付ける（帯＋塗り＝選択 / 囲み枠＝カーソル）。 */
 #sidebar:focus,
 #preview-pane:focus {
     outline: none;
@@ -542,16 +545,23 @@ blockquote.markdown-alert-caution {
 
 /* ツリーにフォーカスがある間、サイドバー全体が主役であることを縁で常時明示する。 */
 body.folder-mode.nav-tree #sidebar {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, Highlight 45%, transparent);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 45%, transparent);
 }
 
 /* カーソル行（j/k の選択位置）。非フォーカス時は淡く、フォーカス時ははっきり。 */
 .tree-item.cursor {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, Highlight 40%, transparent);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 40%, transparent);
 }
 
 body.folder-mode.nav-tree .tree-item.cursor {
-    box-shadow: inset 0 0 0 2px Highlight;
+    box-shadow: inset 0 0 0 2px var(--md-accent, Highlight);
+}
+
+/* 開いているファイルの上にカーソルが来た時。ink のように .tree-item.active の背景色が
+   アクセント色そのものになるテーマだと枠が地に溶けるので、そのテーマが「選択背景の上で
+   可読」と決めた前景色（.tree-item.active の color = currentColor）で枠を描く。 */
+body.folder-mode.nav-tree .tree-item.active.cursor {
+    box-shadow: inset 0 0 0 2px currentColor;
 }
 
 /* ── Folder mode: body resets ───────────────────────────────── */
@@ -1082,9 +1092,14 @@ details[open] {
 
 /* ── プレビューにコメント（c キー）─────────────────────────────
    difit 風に、レンダリング済み本文の行/要素へその場でコメントを付け、まとめて
-   コピーして Claude Code へ貼る。マーカー/バッジは本文（currentColor）に馴染む
-   半透明ティントで、パネル/ポップオーバー/ハンドルは chrome UI なのでシステム
-   カラー（Canvas/CanvasText/Highlight）で color-scheme に追従させる。
+   コピーして Claude Code へ貼る。
+   ★ 配色の原則: 本文やサイドバーなど「テーマが自前で背景色を塗っている面」の上に
+     色を乗せる時は、システムカラーではなく --md-accent（themes/*.css が定義）から作る。
+     Canvas / Highlight はその場の実際の地色と無関係なので、透過して混ぜると
+     暗いテーマで消える。逆にパネル/ポップオーバー/ハンドルは Canvas 地の上に浮く
+     chrome なので、システムカラー（Canvas/CanvasText/Highlight）のままでよい。
+   ★ 塗りは --md-accent の混色、線はソリッド。ソリッドな線は地色と合成されないので
+     どのテーマでも見える（16% 混色の枠が消えていたのがこれを踏んだ形）。
    ────────────────────────────────────────────────────────────── */
 
 /* コメントモード中は本文のテキスト選択を止め、ドラッグをユニット選択に使う。
@@ -1101,20 +1116,29 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
    （負オフセットの外側帯は祖先の overflow:hidden で切られることがあるため使わない）。 */
 .markdown-body .md-cmt-marked {
     position: relative;
-    box-shadow: inset 4px 0 0 color-mix(in srgb, Highlight 75%, transparent);
-    background: color-mix(in srgb, Highlight 12%, transparent);
+    box-shadow: inset 4px 0 0 var(--md-accent, Highlight);
+    background: color-mix(in srgb, var(--md-accent, Highlight) 12%, transparent);
     border-radius: 2px;
 }
 
-/* ドラッグ選択中のユニット。 */
+/* 選択中のユニット（ドラッグ / Shift+j-k の範囲全体）。塗りで「どこまで掴んでいるか」を示す。 */
 .markdown-body .md-cmt-selecting {
-    background: color-mix(in srgb, Highlight 16%, transparent);
+    background: color-mix(in srgb, var(--md-accent, Highlight) 24%, transparent);
     border-radius: 2px;
 }
 
-/* キーボード操作のユニット・カーソル（マウス無しでコメントする時の現在位置）。 */
+/* キーボード操作のユニット・カーソル（マウス無しでコメントする時の現在位置）。
+   動かしている側の端なのでソリッドな枠。 */
 .markdown-body .md-cmt-kbcursor {
-    outline: 2px solid color-mix(in srgb, Highlight 70%, transparent);
+    outline: 2px solid var(--md-accent, Highlight);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+/* レンジ選択の起点（掴んだ側の端）。動かしている側（ソリッド枠）と対にして、
+   範囲の両端がどこなのかを読めるようにする。複数ユニットに広がっている時だけ付く。 */
+.markdown-body .md-cmt-anchor {
+    outline: 2px dashed var(--md-accent, Highlight);
     outline-offset: 2px;
     border-radius: 2px;
 }
@@ -1148,7 +1172,7 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
 
 /* パネル項目ホバー時に本文側を一瞬強調する。 */
 .markdown-body .md-cmt-flash {
-    outline: 2px solid color-mix(in srgb, Highlight 60%, transparent);
+    outline: 2px solid var(--md-accent, Highlight);
     outline-offset: 2px;
     border-radius: 2px;
 }
@@ -1163,7 +1187,7 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
     line-height: 1;
     padding: 2px 5px;
     border-radius: 8px;
-    background: color-mix(in srgb, Canvas 78%, Highlight 22%);
+    background: color-mix(in srgb, Canvas 78%, var(--md-accent, Highlight) 22%);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
     cursor: pointer;
     user-select: none;

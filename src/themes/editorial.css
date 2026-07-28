@@ -4,7 +4,12 @@
    見出しスケールと罫線太さは base を上書きして強い階層を作る。
    ────────────────────────────────────────────────────────────── */
 
-:root { color-scheme: light; }
+:root {
+    color-scheme: light;
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #8a1c1c;
+}
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;

@@ -8,7 +8,16 @@
    ★ 固定ダーク/ライトのテーマを作る場合は、末尾の
      @media (prefers-color-scheme: dark) を使わず、無条件に配色を指定し
      :root に color-scheme: dark|light を宣言すること。
+   ★ :root の --md-accent は必須。base.css が「選択中」を示す配色
+     （ツリーのカーソル枠・コメントモードの選択と枠）をこの色から作る。
+     .tree-item.active の帯と同じ色にしておけば全体が揃う。
    ────────────────────────────────────────────────────────────── */
+
+:root {
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #3b82f6;
+}
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
@@ -277,6 +286,10 @@ mark.md-search-hit-current {
 }
 
 @media (prefers-color-scheme: dark) {
+    :root {
+        --md-accent: #60a5fa;
+    }
+
     .md-search-bar {
         background-color: #21262d;
         border-color: #30363d;

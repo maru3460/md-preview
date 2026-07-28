@@ -4,7 +4,12 @@
    意図的に外す）。長文の読み物向け。固定ライト。
    ────────────────────────────────────────────────────────────── */
 
-:root { color-scheme: light; }
+:root {
+    color-scheme: light;
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #1f6f6b;
+}
 
 body {
     font-family: Georgia, "Iowan Old Style", "Palatino", "Hiragino Mincho ProN", serif;

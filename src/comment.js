@@ -681,15 +681,30 @@
   // ── レンジ選択のハイライト ────────────────────────────────────
   function clearSelecting() {
     var host = hostEl();
-    if (host) host.querySelectorAll('.md-cmt-selecting').forEach(function(u) { u.classList.remove('md-cmt-selecting'); });
+    if (!host) return;
+    host.querySelectorAll('.md-cmt-selecting, .md-cmt-anchor').forEach(function(u) {
+      u.classList.remove('md-cmt-selecting');
+      u.classList.remove('md-cmt-anchor');
+    });
+  }
+  // 範囲全体を塗り、掴んだ側の端（anchor）に印を付ける。動かしている端（moving）には
+  // 別途カーソル枠が付くので、両端が同じユニットの時は印を出さない（同じ要素に
+  // .md-cmt-anchor と .md-cmt-kbcursor が乗ると後勝ちで枠が破線に化ける）。
+  function paintRange(units, anchor, moving, s, e) {
+    unitsInRange(units, s, e).forEach(function(u) { u.classList.add('md-cmt-selecting'); });
+    if (anchor && anchor !== moving) anchor.classList.add('md-cmt-anchor');
   }
   function setSelecting(u1, u2) {
+    // ドラッグでも「動かしている端」に枠を出し、キーボードのレンジと同じ見え方にする。
+    // landKbCursor は clearSelecting を含むので、塗る前に呼ぶ。reviewId を落とすのは
+    // kbMove / ホバーと同じ理由（掴み直したら e/x の対象もそこへ移す）。
+    if (u2 !== kbCursor) { reviewId = null; landKbCursor(u2); }
     clearSelecting();
     var s = Math.min(unitStart(u1), unitStart(u2));
     var e = Math.max(unitEnd(u1), unitEnd(u2));
     // ドラッグ中は開始時スナップショット(dragUnits)を使い、mousemove ごとの全走査を避ける。
     var units = dragUnits || allUnits(hostEl());
-    unitsInRange(units, s, e).forEach(function(u) { u.classList.add('md-cmt-selecting'); });
+    paintRange(units, u1, u2, s, e);
   }
 
   // ── キーボード操作（マウス無しでコメント） ───────────────────
@@ -725,11 +740,10 @@
     u.classList.add('md-cmt-kbcursor');
     u.scrollIntoView({ block: 'nearest' });
     if (extend) {
-      var units = kbUnits();
       var s = Math.min(unitStart(kbAnchor), unitStart(u));
       var e = Math.max(unitEnd(kbAnchor), unitEnd(u));
       clearSelecting();
-      unitsInRange(units, s, e).forEach(function(x) { x.classList.add('md-cmt-selecting'); });
+      paintRange(kbUnits(), kbAnchor, u, s, e);
     }
   }
 
@@ -842,8 +856,18 @@
       if (handle && handle.contains(e.target)) return;
       // ハンドル追従（ポップオーバー/パネル上では出さない）。
       if (e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-panel')) { hideHandle(); return; }
+      // Shift+j/k で掴んでいるレンジは、マウスの微動で消さない。この間は代わりに「+」を
+      // 出さないことで、指し示すものをレンジの枠だけに保つ。
+      if (kbCursor && kbAnchor && kbAnchor !== kbCursor) { hideHandle(); return; }
       var host = hostEl();
       var hu = (host && host.contains(e.target)) ? e.target.closest('[data-src-line]') : null;
+      // マウスに持ち替えたらキーボード・カーソルもホバー先へ寄せ、「+」と枠が別の行を
+      // 指したまま並ぶのを防ぐ（j/k を再開する時もそこから続く）。setKbCursor ではなく
+      // landKbCursor を使うのは、scrollIntoView でマウス移動中にビューが揺れないため。
+      // reviewId を落とすのは kbMove と同じ理由（カーソルを手で動かしたら e/x の対象は
+      // n/p の巡回対象ではなくカーソル位置にする）。landKbCursor 側では落とせない
+      // ——n/p 自身が reviewId を立てた直後に scrollToLine 経由で呼ぶため。
+      if (hu && hu !== kbCursor) { reviewId = null; landKbCursor(hu); }
       moveHandle(hu);
     });
 
@@ -901,6 +925,9 @@
       // モード中のキーボード操作（マウス無しでコメント）。
       if (mode) {
         var k = e.key;
+        // キーに持ち替えた合図。ホバーの「+」を畳んで、指し示すものをカーソルの枠 1 つに保つ
+        // （次にマウスを動かせば mousemove 側で戻る）。
+        hideHandle();
         if (k === 'j' || k === 'J' || k === 'ArrowDown') { e.preventDefault(); kbMove(1, e.shiftKey); return; }
         if (k === 'k' || k === 'K' || k === 'ArrowUp') { e.preventDefault(); kbMove(-1, e.shiftKey); return; }
         if (k === 'Enter') { e.preventDefault(); kbCommit(); return; }

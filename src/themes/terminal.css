@@ -3,7 +3,12 @@
    固定ダーク。signature: phosphor glow（text-shadow）+ オール等幅。
    ────────────────────────────────────────────────────────────── */
 
-:root { color-scheme: dark; }
+:root {
+    color-scheme: dark;
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #6ee787;
+}
 
 body {
     font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;

@@ -3,7 +3,12 @@
    palette: draculatheme.com
    ────────────────────────────────────────────────────────────── */
 
-:root { color-scheme: dark; }
+:root {
+    color-scheme: dark;
+    /* 「選択中」を示すアクセント色（.tree-item.active の帯と同じ）。
+       base.css がカーソル枠・コメント選択の配色に使う。 */
+    --md-accent: #bd93f9;
+}
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
