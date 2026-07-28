@@ -228,11 +228,13 @@
     syncFrameBackground(frame);
 
     doc.addEventListener('keydown', function(e) {
-      // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / w=close)だけ親へ委譲する。
+      // アプリ自身の ⌘/Ctrl ショートカット(r=raw, d=diff, t=toc, w=close, スラッシュ=コマンドパネル)
+      // だけ親へ委譲する。
       // ⌘A(全選択)・⌘F(検索)・⌘C 等は iframe のネイティブ動作に任せる。特に検索は親 DOM しか
       // 走査せず iframe 内テキストに当たらないため、転送すると 0/0 の空振りバーが出てしまう。
       var k = (e.key || '').toLowerCase();
-      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'w');
+      var isCmd = (e.metaKey || e.ctrlKey)
+        && (k === 'r' || k === 'd' || k === 't' || k === 'w' || k === '/');
       var inField = isFieldEl(e.target);
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
@@ -321,6 +323,17 @@
       || document.documentElement;
   }
 
+  // 本文＋右レール（TOC / コマンドパネル）が収まるか判定するための利用可能幅。
+  // 単一ファイル/stdin は viewport 幅、folder モードは #preview-pane の幅を見る。
+  // toc.js と cmdpanel.js が同じ閾値判定に使うため、実装はここに一本化する。
+  function availWidth() {
+    var s = getScroller();
+    if (!s || s === document.scrollingElement || s === document.documentElement || s === document.body) {
+      return document.documentElement.clientWidth || window.innerWidth || 0;
+    }
+    return s.clientWidth || 0;
+  }
+
   // ファイルツリー（サイドバー）にフォーカスがあるか。folder モードのツリー操作の起点判定。
   function isSidebarFocused() {
     var s = document.getElementById('sidebar');
@@ -404,6 +417,7 @@
     runDrawio: runDrawio,
     wireHtmlFrames: wireHtmlFrames,
     getScroller: getScroller,
+    availWidth: availWidth,
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
     isInteractiveFocus: isInteractiveFocus,

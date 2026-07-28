@@ -9,6 +9,8 @@
 // color-mix で theme-agnostic に組む。themes/*.css への追記は不要。
 (function() {
   var overlay = null;
+  var onResize = null;    // 開いている間だけ張る resize ハンドラ
+  var resizeTick = false;
 
   function build(welcome) {
     // パネルを一度でも開いたら、初回の自動表示はもう出さない。
@@ -29,27 +31,39 @@
     if (welcome) {
       var intro = document.createElement('div');
       intro.className = 'md-help-welcome';
-      intro.textContent = 'md へようこそ。使えるショートカットの一覧です。この一覧は「?」でいつでも開けます。';
+      intro.textContent = 'md へようこそ。使えるショートカットの一覧です。この一覧は「?」でいつでも開けます。'
+        + '覚えるまでは「⌘/」で画面の右端に出しっぱなしにできます。';
       panel.appendChild(intro);
     }
 
     // 行は専用ラッパへ入れ、CSS の段組み(column-count)で上→下→次の列と流す。
-    // 列単位で流れるのでスクロール系などのまとまりが崩れず、縦の高さも半分に収まる。
-    // 並び順は MdKeymap の定義順（＝カテゴリ順）そのまま。見出しは出さず平坦に流す。
+    // 列単位で流れるのでカテゴリのまとまりが崩れず、縦の高さも半分に収まる。
+    // カテゴリ見出しごと 1 つの箱に入れ、見出しだけが列末に取り残されないようにする。
     var rows = document.createElement('div');
     rows.className = 'md-help-rows';
-    window.MdKeymap.visible().forEach(function(b) {
-      var row = document.createElement('div');
-      row.className = 'md-help-row';
-      var key = document.createElement('kbd');
-      key.className = 'md-help-key';
-      key.textContent = b.keys;
-      var desc = document.createElement('span');
-      desc.className = 'md-help-desc';
-      desc.textContent = b.desc;
-      row.appendChild(key);
-      row.appendChild(desc);
-      rows.appendChild(row);
+    window.MdKeymap.groups().forEach(function(g) {
+      var group = document.createElement('div');
+      group.className = 'md-help-group';
+
+      var head = document.createElement('div');
+      head.className = 'md-help-cat';
+      head.textContent = g.cat.label;
+      group.appendChild(head);
+
+      g.binds.forEach(function(b) {
+        var row = document.createElement('div');
+        row.className = 'md-help-row';
+        var key = document.createElement('kbd');
+        key.className = 'md-help-key';
+        key.textContent = b.keys;
+        var desc = document.createElement('span');
+        desc.className = 'md-help-desc';
+        desc.textContent = b.desc;
+        row.appendChild(key);
+        row.appendChild(desc);
+        group.appendChild(row);
+      });
+      rows.appendChild(group);
     });
     panel.appendChild(rows);
 
@@ -64,6 +78,50 @@
       if (e.target === overlay) close();
     });
     document.body.appendChild(overlay);
+    fit(panel);
+    // 開いている間に窓が変わったら測り直す（閉じる時に外す）。
+    onResize = function() {
+      if (resizeTick) return;
+      resizeTick = true;
+      requestAnimationFrame(function() { resizeTick = false; if (overlay) fit(panel); });
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+  }
+
+  // ── 高さに収める ──────────────────────────────────────────────
+  // この一覧にもフォーカスは無く、キーボードでスクロールできない。見えない行は
+  // 存在しないのと同じなので、スクロールさせずに収める（コマンドパネルと同じ方針）。
+  // 段組みのモーダルは横に伸ばせるぶん有利なので、まず段数を増やす。
+  //   1. そのまま(2段) → 2. 3段 → 3. 4段 → 4. 密度を詰める → 5. 最後の手段でスクロール
+  // 段数を増やしても本文の可読性は落ちないので、密度を詰めるより先に試す。
+
+  // [クラス, その段数にしてよい最小の窓幅]。狭い窓で段だけ増やすと 1 段が細くなりすぎる。
+  // ただし「1 段が窮屈」より「行が見えない」ほうが悪いので、閾値は攻めに倒す
+  // （幅 700 の 3 段 = 1 段あたり約 210px。説明文はよく折り返すが読める）。
+  var COL_STEPS = [['cols-3', 700], ['cols-4', 1150]];
+
+  function overflowing(panel) {
+    return panel.scrollHeight > panel.clientHeight + 1;
+  }
+
+  function fit(panel) {
+    // 開いたまま窓の大きさが変わることがあるので、毎回まっさらから測り直す。
+    // overflow:hidden なので、収め損ねると（スクロールバーが出るのではなく）行が消える。
+    panel.classList.remove('cols-3', 'cols-4', 'is-compact', 'is-scroll');
+    if (!overflowing(panel)) return;
+
+    var vw = document.documentElement.clientWidth || window.innerWidth || 0;
+    for (var i = 0; i < COL_STEPS.length; i++) {
+      if (vw < COL_STEPS[i][1]) break;
+      if (i > 0) panel.classList.remove(COL_STEPS[i - 1][0]);
+      panel.classList.add(COL_STEPS[i][0]);
+      if (!overflowing(panel)) return;
+    }
+
+    panel.classList.add('is-compact');
+    if (!overflowing(panel)) return;
+
+    panel.classList.add('is-scroll');
   }
 
   function open(welcome) {
@@ -73,6 +131,7 @@
 
   function close() {
     if (!overlay) return;
+    if (onResize) { window.removeEventListener('resize', onResize); onResize = null; }
     overlay.remove();
     overlay = null;
   }
