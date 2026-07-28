@@ -91,6 +91,7 @@ pub const COMMON_JS: &str = include_str!("common.js");
 pub const CONTEXT_JS: &str = include_str!("contextmenu.js");
 pub const DIFF_JS: &str = include_str!("diff.js");
 pub const RAW_JS: &str = include_str!("raw.js");
+pub const KEYMAP_JS: &str = include_str!("keymap.js");
 pub const HELP_JS: &str = include_str!("help.js");
 pub const KEYSCROLL_JS: &str = include_str!("keyscroll.js");
 pub const COMMENT_JS: &str = include_str!("comment.js");
@@ -401,6 +402,7 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
 
 /// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、
 /// common.js（init/folder より前に評価させたい共有ヘルパ）・hljs・search・toc を inline する。
+/// keymap.js はショートカット定義の単一定義元なので、それを読む help.js より前に置く。
 /// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILE 等）を末尾に差し込む。
 fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce: &str) -> String {
     // CSP: script は nonce 付きの自前 script と同一オリジン（mdpreview://localhost、
@@ -421,6 +423,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <script nonce="{nonce}">{context_js}</script>
 <script nonce="{nonce}">{diff_js}</script>
 <script nonce="{nonce}">{raw_js}</script>
+<script nonce="{nonce}">{keymap_js}</script>
 <script nonce="{nonce}">{help_js}</script>
 <script nonce="{nonce}">{keyscroll_js}</script>
 <script nonce="{nonce}">{comment_js}</script>
@@ -437,6 +440,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         context_js = CONTEXT_JS,
         diff_js = DIFF_JS,
         raw_js = RAW_JS,
+        keymap_js = KEYMAP_JS,
         help_js = HELP_JS,
         keyscroll_js = KEYSCROLL_JS,
         comment_js = COMMENT_JS,
