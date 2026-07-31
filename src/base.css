@@ -945,6 +945,124 @@ details[open] {
     line-height: 1.5;
 }
 
+/* ── ファイル検索パレット（⌘P）────────────────────────────────────
+   ショートカット一覧（md-help）と同じ theme-agnostic 方針。システムカラーと
+   color-mix だけで組むので themes/*.css への追記は不要。選択行のアクセントは
+   ツリー等と揃えて --md-accent から作る（system の Highlight は地色と混ざると
+   読めなくなるので直接は使わない）。 */
+.md-pal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 10vh 24px 24px;
+    background: color-mix(in srgb, CanvasText 32%, transparent);
+}
+
+.md-pal-panel {
+    width: min(620px, 100%);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 12px;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+    font-size: 13px;
+}
+
+.md-pal-input {
+    flex: 0 0 auto;
+    padding: 12px 14px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+    outline: none;
+    background: transparent;
+    color: CanvasText;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+/* 探索を打ち切った時だけ出す警告。「一覧に無いファイルがある」ことを伝える帯なので
+   入力欄の直下（結果より前）に置く。アラート系の色は themes に散らさない方針なので、
+   注意色は使わず左のアクセント帯と ⚠ で区別する。 */
+.md-pal-warn {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+    box-shadow: inset 3px 0 0 var(--md-accent, Highlight);
+    background: color-mix(in srgb, CanvasText 5%, transparent);
+    color: color-mix(in srgb, CanvasText 78%, transparent);
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.md-pal-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px 0;
+}
+
+.md-pal-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.md-pal-row.active {
+    background: color-mix(in srgb, var(--md-accent, Highlight) 18%, transparent);
+    box-shadow: inset 3px 0 0 var(--md-accent, Highlight);
+}
+
+.md-pal-row:hover:not(.active) {
+    background: color-mix(in srgb, CanvasText 6%, transparent);
+}
+
+/* ファイル名を主役に、ディレクトリは添え物にする。あふれる時はまずディレクトリを
+   畳み、それでも足りなければファイル名も省略する（縮む順を flex-shrink で決める）。 */
+.md-pal-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.md-pal-dir {
+    flex: 1 100 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: GrayText;
+    font-size: 12px;
+}
+
+/* マッチした文字。塗りではなく太字＋アクセント色で示す（選択行の上でも沈まない）。 */
+.md-pal-hit {
+    color: var(--md-accent, Highlight);
+    font-weight: 600;
+}
+
+.md-pal-empty {
+    padding: 14px;
+    color: GrayText;
+}
+
+.md-pal-hint {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+    color: GrayText;
+    font-size: 11.5px;
+}
+
 /* ── git diff 表示（Cmd/Ctrl+D）/ raw ソース表示（Cmd/Ctrl+R）─────────
    追加=緑 / 削除=赤 は意味を持つ色なので、details / context-menu と同じく
    themes/*.css には分散させず、全テーマの前景色（currentColor）に重ねても

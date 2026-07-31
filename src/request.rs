@@ -165,6 +165,156 @@ pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
     format!("[{}]", items.join(",")).into_bytes()
 }
 
+/// ファイル検索（⌘P）へ渡す一覧の上限。巨大リポジトリで walk が返ってこなくなるのを
+/// 防ぐため、件数と深さの両方で切る。打ち切ったら `truncated:true` を添えて返し、
+/// クライアント側が「一部のみ」と明示できるようにする。
+const FILE_LIST_MAX: usize = 20_000;
+const FILE_LIST_MAX_DEPTH: usize = 16;
+const FILE_LIST_MAX_DIRS: usize = 50_000;
+
+/// 再帰探索から外すディレクトリ名。「読む対象ではないのに数万ファイルある」ものだけを
+/// 挙げる（VCS の内部・依存物・ビルド生成物）。ここで外してもサイドバーのツリーは
+/// 従来どおり全部見せるので、到達できなくなるファイルは無い。
+/// 逆に `.github` `.vscode` のような設定系は読みたい対象なので、隠しディレクトリを
+/// 一律で外すことはしない。
+fn is_skipped_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".hg"
+            | ".svn"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".nuxt"
+            | ".svelte-kit"
+            | ".turbo"
+            | ".parcel-cache"
+            | ".cache"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | ".gradle"
+            | ".idea"
+            | ".terraform"
+            | "Pods"
+    )
+}
+
+/// 探索を打ち切った理由。どの上限に当たったかで警告の文面が変わるので、
+/// `bool` に畳まず理由まで持ち帰る（「20,000 件で打ち切り」と出したのに実際は
+/// 深さで切れていた、という嘘を防ぐため）。
+#[derive(Debug, PartialEq, Eq)]
+enum Truncation {
+    /// ファイル件数の上限に当たって探索自体を止めた。
+    Files,
+    /// 読んだディレクトリ数の上限に当たって探索自体を止めた。
+    Dirs,
+    /// 深すぎる枝を刈った。探索自体は最後まで回っている。
+    Depth,
+}
+
+/// root 以下のファイルを root 相対パスで `out` に集める。打ち切ったら理由を返す。
+///
+/// **幅優先で辿る**。深さ優先だと、上限に当たったときに「名前順で最初の枝だけ全部」という
+/// 偏り方をする。例えば `md /` では `/Applications` の `.app` の中身で 20,000 件を使い切り、
+/// `/Users` に一度も到達しない。幅優先なら上限は「深い階層」を削るだけなので、どこを
+/// ルートにしても浅い階層は必ず一覧に入る（クエリ未入力の一覧も浅い順になる）。
+///
+/// 各階層は「ファイル（名前順）→ サブディレクトリ（名前順）」の順に処理する。
+/// シンボリックリンクのディレクトリは辿らない（`file_type()` はリンクを追わないので
+/// `is_dir()` が false になる）。循環でハングするのを構造的に防ぐため。
+fn collect_files(root: &Path, out: &mut Vec<String>) -> Option<Truncation> {
+    // (ディレクトリ, 深さ)。pop_front / push_back で階層順に処理する。
+    let mut queue: std::collections::VecDeque<(PathBuf, usize)> = std::collections::VecDeque::new();
+    queue.push_back((root.to_path_buf(), 0));
+    let mut visited_dirs = 0usize;
+    // 深さ上限で刈った枝があったか。刈っても探索は続くので、最後まで回ってから報告する。
+    let mut deep_skipped = false;
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        if out.len() >= FILE_LIST_MAX {
+            return Some(Truncation::Files);
+        }
+        // ファイルが少なくディレクトリだけが膨大な木で、キューと read_dir が
+        // 際限なく増えるのを防ぐ（ファイル件数の上限だけでは止まらないため）。
+        visited_dirs += 1;
+        if visited_dirs > FILE_LIST_MAX_DIRS {
+            return Some(Truncation::Dirs);
+        }
+
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let mut files: Vec<String> = Vec::new();
+        let mut subdirs: Vec<PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                // 除外リストは意図した除外なので報告しない。深さ上限は「見えていない
+                // ファイルがある」ことを伝えたいので区別して記録する。
+                if is_skipped_dir(&name) {
+                    continue;
+                }
+                if depth + 1 > FILE_LIST_MAX_DEPTH {
+                    deep_skipped = true;
+                    continue;
+                }
+                subdirs.push(entry.path());
+            } else {
+                files.push(name);
+            }
+        }
+        files.sort();
+        subdirs.sort();
+
+        let prefix = dir.strip_prefix(root).unwrap_or(Path::new("")).to_string_lossy().into_owned();
+        for name in files {
+            if out.len() >= FILE_LIST_MAX {
+                return Some(Truncation::Files);
+            }
+            out.push(if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) });
+        }
+        for sub in subdirs {
+            queue.push_back((sub, depth + 1));
+        }
+    }
+    if deep_skipped {
+        Some(Truncation::Depth)
+    } else {
+        None
+    }
+}
+
+/// ファイル検索（⌘P）用に、root 以下の全ファイルを root 相対パスの JSON で返す。
+///
+/// 打ち切った時は `reason` と、その理由に対応する上限値 `limit` を添える。上限の数値を
+/// JS 側に二重定義せず、警告文を必ず実際の上限と一致させるため（片方だけ直して文面が
+/// 嘘になるのを防ぐ）。
+fn handle_files(root_dir: &Path) -> Response {
+    let mut paths: Vec<String> = Vec::new();
+    let trunc = collect_files(root_dir, &mut paths);
+    let (reason, limit) = match trunc {
+        None => ("", 0),
+        Some(Truncation::Files) => ("files", FILE_LIST_MAX),
+        Some(Truncation::Dirs) => ("dirs", FILE_LIST_MAX_DIRS),
+        Some(Truncation::Depth) => ("depth", FILE_LIST_MAX_DEPTH),
+    };
+    let items: Vec<String> = paths.iter().map(|p| json_string(p)).collect();
+    let body = format!(
+        r#"{{"files":[{}],"truncated":{},"reason":"{}","limit":{}}}"#,
+        items.join(","),
+        trunc.is_some(),
+        reason,
+        limit
+    );
+    ok_response("application/json; charset=utf-8", body.into_bytes())
+}
+
 pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
     // 本物の親ディレクトリ参照（`..` パス要素）だけを拒否し、単に `..` を部分
     // 文字列として含むだけのファイル名（例: `my..file.md`）は拒否しない。
@@ -556,6 +706,11 @@ pub fn handle_request(
     if let Some(rel_encoded) = query.strip_prefix("dir=") {
         return handle_dir(rel_encoded, root_dir);
     }
+    // ファイル検索（⌘P）の一覧。`file=` の strip_prefix とは前方一致しない
+    // （"files=1" は "file=" で始まらない）ので順序に依存しないが、dir= の隣に置く。
+    if query == "files=1" {
+        return handle_files(root_dir);
+    }
     if let Some(rel_encoded) = query.strip_prefix("file=") {
         return handle_file(rel_encoded, root_dir);
     }
@@ -718,6 +873,100 @@ mod tests {
         let body = String::from_utf8_lossy(resp.body());
         assert!(body.contains("code-embed"), "not embedded: {body}");
         assert!(body.contains(">two</code>"), "wrong line: {body}");
+    }
+
+    #[test]
+    fn file_list_is_recursive_shallow_first_and_skips_heavy_dirs() {
+        let root = std::env::temp_dir().join("md-filelist-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(root.join(".git/objects")).unwrap();
+        std::fs::create_dir_all(root.join(".github")).unwrap();
+        std::fs::write(root.join("b.md"), "x").unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+        std::fs::write(root.join("sub/c.txt"), "x").unwrap();
+        std::fs::write(root.join("sub/deep/d.md"), "x").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::write(root.join(".git/objects/blob"), "x").unwrap();
+        std::fs::write(root.join(".github/ci.yml"), "x").unwrap();
+
+        let mut out = Vec::new();
+        assert_eq!(collect_files(&root, &mut out), None);
+
+        // 幅優先なので浅い階層が必ず先。各階層は名前順。
+        assert_eq!(out[0], "a.md");
+        assert_eq!(out[1], "b.md");
+        // 深さ 1 のファイルは、深さ 2 のファイルより必ず前に来る。
+        let i_shallow = out.iter().position(|p| p == "sub/c.txt").unwrap();
+        let i_deep = out.iter().position(|p| p == "sub/deep/d.md").unwrap();
+        assert!(i_shallow < i_deep, "{out:?}");
+        // 依存物・VCS 内部は除外、設定系の隠しディレクトリは残す。
+        assert!(!out.iter().any(|p| p.starts_with("node_modules/")), "{out:?}");
+        assert!(!out.iter().any(|p| p.starts_with(".git/")), "{out:?}");
+        assert!(out.contains(&".github/ci.yml".to_string()), "{out:?}");
+        // 入れ子も root 相対パスで拾う。
+        assert!(out.contains(&"sub/c.txt".to_string()), "{out:?}");
+        assert!(out.contains(&"sub/deep/d.md".to_string()), "{out:?}");
+
+        // レスポンスは {"files":[...],"truncated":false}。
+        let resp = handle_files(&root);
+        assert_eq!(resp.status(), 200);
+        let body = String::from_utf8_lossy(resp.body()).into_owned();
+        assert!(body.starts_with(r#"{"files":["#), "{body}");
+        assert!(body.contains(r#""truncated":false"#), "{body}");
+        assert!(body.contains(r#""sub/deep/d.md""#), "{body}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_list_reports_depth_truncation_with_matching_limit() {
+        // 深さ上限より深い枝を刈ったら、黙って落とさず Depth として報告すること。
+        // 警告文の数値は JSON の limit を使うので、理由と上限が対応していることも見る。
+        let root = std::env::temp_dir().join("md-filelist-depth-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut deep = root.clone();
+        for i in 0..(FILE_LIST_MAX_DEPTH + 2) {
+            deep = deep.join(format!("d{i}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("buried.md"), "x").unwrap();
+        std::fs::write(root.join("top.md"), "x").unwrap();
+
+        let mut out = Vec::new();
+        assert_eq!(collect_files(&root, &mut out), Some(Truncation::Depth));
+        assert!(out.contains(&"top.md".to_string()), "{out:?}");
+        assert!(!out.iter().any(|p| p.ends_with("buried.md")), "{out:?}");
+
+        let body = String::from_utf8_lossy(handle_files(&root).body()).into_owned();
+        assert!(body.contains(r#""truncated":true"#), "{body}");
+        assert!(body.contains(r#""reason":"depth""#), "{body}");
+        assert!(body.contains(&format!(r#""limit":{}"#, FILE_LIST_MAX_DEPTH)), "{body}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_list_does_not_report_denylisted_dirs_as_truncation() {
+        // 除外リストは意図した除外なので、警告（打ち切り）扱いにしないこと。
+        let root = std::env::temp_dir().join("md-filelist-deny-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+
+        let mut out = Vec::new();
+        assert_eq!(collect_files(&root, &mut out), None);
+        assert_eq!(out, vec!["a.md".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_list_query_is_not_shadowed_by_file_prefix() {
+        // "files=1" が `file=` の前方一致に吸われないこと（吸われると一覧が404になる）。
+        assert!("files=1".strip_prefix("file=").is_none());
     }
 
     #[test]

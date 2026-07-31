@@ -228,11 +228,12 @@
     syncFrameBackground(frame);
 
     doc.addEventListener('keydown', function(e) {
-      // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / w=close)だけ親へ委譲する。
+      // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 / w=close)
+      // だけ親へ委譲する。
       // ⌘A(全選択)・⌘F(検索)・⌘C 等は iframe のネイティブ動作に任せる。特に検索は親 DOM しか
       // 走査せず iframe 内テキストに当たらないため、転送すると 0/0 の空振りバーが出てしまう。
       var k = (e.key || '').toLowerCase();
-      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'w');
+      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'w');
       var inField = isFieldEl(e.target);
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
@@ -333,6 +334,7 @@
   // オーバーレイが閉じている通常時ほど重くなるので使わない（各オーバーレイに安定 id を振ってある）。
   function isOverlayOpen() {
     if (document.getElementById('md-help-backdrop')) return true;   // 開いている間だけ存在
+    if (document.getElementById('md-pal-backdrop')) return true;    // ファイル検索(⌘P)。開いている間だけ存在
     if (document.getElementById('md-context-menu')) return true;    // 開いている間だけ存在
     if (document.getElementById('md-cmt-popover')) return true;     // コメント入力中だけ存在
     var sb = document.getElementById('md-search-bar');              // 常在。hidden で開閉を表す

@@ -74,6 +74,9 @@
       case 'reload':
         if (window.MdReload) window.MdReload();
         break;
+      case 'palette':
+        if (window.MdPalette) window.MdPalette.open();
+        break;
       case 'help':
         if (window.MdHelp) window.MdHelp.open();
         break;
@@ -106,6 +109,11 @@
       items.push({ sep: true });
       items.push({ label: 'Finderで表示', action: 'reveal', enabled: ctx.has });
       items.push({ label: 'デフォルトアプリで開く', action: 'open', enabled: ctx.has });
+      items.push({ sep: true });
+    }
+    // ファイル検索はフォルダモードだけの機能（別ファイルを開く入口があるのがそこだけ）。
+    if (mode === 'folder') {
+      items.push({ label: 'ファイル検索 (⌘P)', action: 'palette', enabled: true });
       items.push({ sep: true });
     }
     items.push({ label: '再読み込み', action: 'reload', enabled: true });

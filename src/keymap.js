@@ -9,6 +9,7 @@
 //   comment.js     c / コメントモード中の j k Enter n p e x y
 //   folder.js      ツリー内移動・] [ Tab・⌘W
 //   search.js ⌘F / toc.js ⌘T / diff.js ⌘D / raw.js ⌘R / common.js ⌘A / help.js ? Esc
+//   palette.js     ファイル検索（folder モードのみ。パレット内の ↑↓ Enter Esc も palette.js）
 // 排他は stopPropagation ではなく「フォーカスの所在」と「モードの有無」で取っている。
 // よって **キー自体を変える時はハンドラ側とこの表の両方を直す**必要がある。
 // （ハンドラをこの表から駆動する案は将来の課題。Esc の譲り合いやフォーカス排他を
@@ -41,6 +42,7 @@
     { cat: 'find',   keys: '/',       desc: '検索（⌘F と同じ）', scope: 'all' },
     { cat: 'find',   keys: '⌘F',      desc: '検索', scope: 'all' },
     { cat: 'find',   keys: '⌘T',      desc: 'アウトライン（見出しナビ）を開閉', scope: 'all' },
+    { cat: 'find',   keys: '⌘P',      desc: 'ファイル検索（ファイル名であいまい検索して開く）', scope: 'folder' },
 
     // ── 表示を切り替える（diff.js / raw.js） ──
     { cat: 'view',   keys: '⌘D',      desc: 'git 差分表示を切り替え', scope: 'nostdin' },

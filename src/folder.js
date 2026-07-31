@@ -484,6 +484,10 @@
     if (window.MdToc) {
       window.MdToc.init(document.getElementById('preview-pane'));
     }
+    if (window.MdPalette) {
+      // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。
+      window.MdPalette.init({ openFile: function(rel) { loadPreview(rel); } });
+    }
     if (window.MdDiff) {
       window.MdDiff.init({
         getContainer: function() { return document.getElementById('preview-pane'); },
@@ -526,6 +530,9 @@
           windowReady = true;
           mdCheckQueue.forEach(function(item) { doHasMdCheck(item.path, item.row); });
           mdCheckQueue = [];
+          // ファイル検索の一覧を先に温めておく（初回の ⌘P を待たせない）。
+          // 初期表示より後に投げるので、起動の体感速度は落とさない。
+          if (window.MdPalette) window.MdPalette.prefetch();
         }, 0);
       })
       .catch(function() {

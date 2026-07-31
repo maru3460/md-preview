@@ -86,6 +86,7 @@ pub const DRAWIO_JS: &str = include_str!("drawio-viewer.min.js");
 
 pub const INIT_JS: &str = include_str!("init.js");
 pub const SEARCH_JS: &str = include_str!("search.js");
+pub const PALETTE_JS: &str = include_str!("palette.js");
 pub const TOC_JS: &str = include_str!("toc.js");
 pub const COMMON_JS: &str = include_str!("common.js");
 pub const CONTEXT_JS: &str = include_str!("contextmenu.js");
@@ -401,7 +402,7 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
 }
 
 /// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、
-/// common.js（init/folder より前に評価させたい共有ヘルパ）・hljs・search・toc を inline する。
+/// common.js（init/folder より前に評価させたい共有ヘルパ）・hljs・search・palette・toc を inline する。
 /// keymap.js はショートカット定義の単一定義元なので、それを読む help.js より前に置く。
 /// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILE 等）を末尾に差し込む。
 fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce: &str) -> String {
@@ -419,6 +420,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <script nonce="{nonce}">{common_js}</script>
 <script nonce="{nonce}">{hljs_js}</script>
 <script nonce="{nonce}">{search_js}</script>
+<script nonce="{nonce}">{palette_js}</script>
 <script nonce="{nonce}">{toc_js}</script>
 <script nonce="{nonce}">{context_js}</script>
 <script nonce="{nonce}">{diff_js}</script>
@@ -436,6 +438,7 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         common_js = COMMON_JS,
         hljs_js = HLJS_JS,
         search_js = SEARCH_JS,
+        palette_js = PALETTE_JS,
         toc_js = TOC_JS,
         context_js = CONTEXT_JS,
         diff_js = DIFF_JS,
