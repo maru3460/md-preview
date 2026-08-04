@@ -42,7 +42,7 @@
     { cat: 'find',   keys: '/',       desc: '検索（⌘F と同じ）', scope: 'all' },
     { cat: 'find',   keys: '⌘F',      desc: '検索', scope: 'all' },
     { cat: 'find',   keys: '⌘T',      desc: 'アウトライン（見出しナビ）を開閉', scope: 'all' },
-    { cat: 'find',   keys: '⌘P',      desc: 'ファイル検索（ファイル名であいまい検索して開く）', scope: 'folder' },
+    { cat: 'find',   keys: '⌘P',      desc: 'ファイル検索（あいまい検索。未入力なら git 変更ファイルが先頭）', scope: 'folder' },
 
     // ── 表示を切り替える（diff.js / raw.js） ──
     { cat: 'view',   keys: '⌘D',      desc: 'git 差分表示を切り替え', scope: 'nostdin' },

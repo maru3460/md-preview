@@ -315,6 +315,20 @@ fn handle_files(root_dir: &Path) -> Response {
     ok_response("application/json; charset=utf-8", body.into_bytes())
 }
 
+/// 変更のあるファイルの一覧（⌘P が変更のあるファイルを先に出すために使う）。
+/// ファイル一覧（files=1）とは別エンドポイントにしてある。git を叩くので失敗しても
+/// ファイル一覧の取得を巻き込まない（その場合パレットは並べ替えなしで普通に動く）。
+fn handle_changed(root_dir: &Path) -> Response {
+    let items: Vec<String> = crate::diff::changed_files(root_dir)
+        .iter()
+        .map(|(path, add, del)| {
+            format!(r#"{{"path":{},"add":{},"del":{}}}"#, json_string(path), add, del)
+        })
+        .collect();
+    let body = format!(r#"{{"changed":[{}]}}"#, items.join(","));
+    ok_response("application/json; charset=utf-8", body.into_bytes())
+}
+
 pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
     // 本物の親ディレクトリ参照（`..` パス要素）だけを拒否し、単に `..` を部分
     // 文字列として含むだけのファイル名（例: `my..file.md`）は拒否しない。
@@ -711,6 +725,11 @@ pub fn handle_request(
     if query == "files=1" {
         return handle_files(root_dir);
     }
+    // ファイル検索（⌘P）の「変更のあるファイル」一覧。`file=` とも `diff=` とも
+    // 前方一致しないので順序に依存しないが、files=1 の隣に置く。
+    if query == "changed=1" {
+        return handle_changed(root_dir);
+    }
     if let Some(rel_encoded) = query.strip_prefix("file=") {
         return handle_file(rel_encoded, root_dir);
     }
@@ -967,6 +986,29 @@ mod tests {
     fn file_list_query_is_not_shadowed_by_file_prefix() {
         // "files=1" が `file=` の前方一致に吸われないこと（吸われると一覧が404になる）。
         assert!("files=1".strip_prefix("file=").is_none());
+    }
+
+    #[test]
+    fn changed_query_is_not_shadowed_by_other_prefixes() {
+        // "changed=1" が他のクエリの前方一致に吸われないこと（吸われると 404 になり、
+        // パレットは並べ替え無しで動いてしまう＝壊れたことに気付きにくい）。
+        assert!("changed=1".strip_prefix("file=").is_none());
+        assert!("changed=1".strip_prefix("diff=").is_none());
+        assert!("changed=1".strip_prefix("dir=").is_none());
+    }
+
+    #[test]
+    fn changed_json_is_empty_array_outside_repo() {
+        let root = std::env::temp_dir().join(format!("md-changed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+
+        let resp = handle_changed(&root);
+        assert_eq!(resp.status(), 200);
+        assert_eq!(String::from_utf8_lossy(resp.body()), r#"{"changed":[]}"#);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

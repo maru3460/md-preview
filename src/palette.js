@@ -9,6 +9,11 @@
 // ファイル一覧はサーバの `/?files=1`（root 以下を再帰的に走査。node_modules 等は除外）
 // から取る。一度取ったらメモリに持ち、次回以降は即描画してから裏で取り直す
 // （開いた瞬間に一覧が出ることを優先する。ファイルの増減は数百 ms 後に反映される）。
+//
+// あわせて `/?changed=1`（git の変更ファイル）も取り、**変更のあるファイルを優先する**。
+// 未入力なら先頭に並べ、検索中も少し加点し、`+N −M` のバッジを出す。「差分のある
+// ファイルへ飛ぶ」導線を新しいキーやボタンとして足さず、既にある ⌘P に寄せている
+// （⌘D で差分 ON にしたまま ⌘P で飛べば、そのファイルの差分がそのまま出る）。
 (function() {
   var overlay = null;
   var input = null;
@@ -18,8 +23,11 @@
   var opts = null;
   var initialized = false;
 
-  var files = [];        // root 相対パスの配列（サーバの走査順＝浅い階層が先）
+  var serverFiles = [];  // /?files=1 の生の一覧（サーバの走査順＝浅い階層が先）
+  var files = [];        // 検索対象。serverFiles ＋ 一覧に無い変更ファイル（rebuild で作る）
   var lowerFiles = [];   // files と同じ添字の小文字版（毎キー入力での再生成を避ける）
+  var stats = null;      // 変更のあるファイル: path -> { add, del }。無変更・未取得なら null
+  var changedPaths = []; // 変更のあるファイル（git の出力順）。未入力時はこの順で先頭に出す
   // サーバ側で探索を打ち切ったか。{ reason: 'files'|'dirs'|'depth', limit: n } または null。
   // 上限の数値はサーバから貰う（ここに書くと片方だけ直した時に文面が嘘になる）。
   var truncation = null;
@@ -31,6 +39,11 @@
 
   // 描画する最大件数。数千件を DOM に流すと入力ごとに固まるので、上位だけ出す。
   var MAX_ROWS = 80;
+
+  // 変更のあるファイルへの加点。語境界ヒット 1 つ（+8）より少し強く、連続ヒット
+  // （+10/文字）で決まる名前一致の優劣は覆さない程度に留める。「打った名前と違う
+  // ファイルが変更されているだけで上に来る」のは検索としては壊れているため。
+  var CHANGED_BONUS = 15;
 
   // ── あいまい検索 ────────────────────────────────────────────────
   // 「クエリがパスの部分列になっているか」で絞り、語境界・連続・先頭からの近さで
@@ -200,7 +213,35 @@
 
     row.appendChild(nameEl);
     if (dir) row.appendChild(dirEl);
+    var stat = statOf(path);
+    if (stat) row.appendChild(buildStat(stat));
     return row;
+  }
+
+  // 変更行数バッジ（+N −M）。0 の側は出さない。両方 0（バイナリや行数を数えなかった
+  // 巨大ファイル）でも「変更あり」であることは示す必要があるので ● を出す
+  // ── ここで何も出さないと、上に並んでいる理由が分からない行になる。
+  function buildStat(stat) {
+    var el = document.createElement('span');
+    el.className = 'md-pal-stat';
+    if (stat.add) {
+      var add = document.createElement('span');
+      add.className = 'md-pal-add';
+      add.textContent = '+' + stat.add;
+      el.appendChild(add);
+    }
+    if (stat.del) {
+      var del = document.createElement('span');
+      del.className = 'md-pal-del';
+      del.textContent = '−' + stat.del;
+      el.appendChild(del);
+    }
+    if (!stat.add && !stat.del) el.textContent = '●';
+    return el;
+  }
+
+  function statOf(path) {
+    return stats ? stats[path] || null : null;
   }
 
   function setCursor(idx) {
@@ -222,13 +263,23 @@
 
     var hits;
     if (!q) {
-      // 未入力: サーバの走査順（浅い階層が先）そのまま。
-      hits = files.slice(0, MAX_ROWS).map(function(p) { return { path: p, pos: null }; });
+      // 未入力: 変更のあるファイルを先に、続けてサーバの走査順（浅い階層が先）。
+      // 「⌘P → Enter で、いま触っているファイルへ飛ぶ」を成立させるための並びなのだ。
+      hits = [];
+      for (var c = 0; c < changedPaths.length && hits.length < MAX_ROWS; c++) {
+        hits.push({ path: changedPaths[c], pos: null });
+      }
+      for (var f = 0; f < files.length && hits.length < MAX_ROWS; f++) {
+        if (statOf(files[f])) continue; // 変更ありは上で出したので飛ばす
+        hits.push({ path: files[f], pos: null });
+      }
     } else {
       var scored = [];
       for (var i = 0; i < files.length; i++) {
         var m = matchPath(files[i], lowerFiles[i], q);
-        if (m) scored.push({ path: files[i], pos: m.pos, score: m.score });
+        if (!m) continue;
+        if (statOf(files[i])) m.score += CHANGED_BONUS;
+        scored.push({ path: files[i], pos: m.pos, score: m.score });
       }
       scored.sort(function(a, b) { return b.score - a.score; });
       hits = scored.slice(0, MAX_ROWS);
@@ -256,8 +307,13 @@
   function updateHint(q, shown) {
     var parts = [];
     if (fetched) {
-      if (!q) parts.push(files.length + ' ファイル');
-      else parts.push(shown >= MAX_ROWS ? '上位 ' + MAX_ROWS + ' 件' : shown + ' 件');
+      if (!q) {
+        // 変更が何件あるか（＝上から何行が変更ファイルか）を出す。0 件のときは触れない。
+        if (changedPaths.length) parts.push('変更 ' + changedPaths.length + ' 件');
+        parts.push(files.length + ' ファイル');
+      } else {
+        parts.push(shown >= MAX_ROWS ? '上位 ' + MAX_ROWS + ' 件' : shown + ' 件');
+      }
     }
     parts.push('↑↓ 移動 · Enter 開く · Esc 閉じる');
     hintEl.textContent = parts.join(' · ');
@@ -372,24 +428,62 @@
     if (overlay) close(); else open();
   }
 
-  // ファイル一覧を取得してキャッシュする。多重呼び出しは進行中の fetch を共有する。
+  // ファイル一覧と変更ファイルを取得してキャッシュする。多重呼び出しは進行中の
+  // fetch を共有する。片方が失敗しても、もう片方は活かす（変更一覧が取れなければ
+  // 並べ替えとバッジが無いだけの、以前と同じパレットになる）。
   function load() {
     if (fetching) return fetching;
-    fetching = fetch('/?files=1', { cache: 'no-store' })
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(data) {
-        if (data && Array.isArray(data.files)) {
-          files = data.files;
-          lowerFiles = files.map(function(p) { return p.toLowerCase(); });
-          truncation = data.truncated
-            ? { reason: data.reason || '', limit: data.limit || 0 }
-            : null;
-          fetched = true;
-        }
-      })
+    fetching = Promise.all([loadFiles(), loadChanged()])
+      .then(rebuild)
       .catch(function() {})
       .then(function() { fetching = null; });
     return fetching;
+  }
+
+  function loadFiles() {
+    return fetch('/?files=1', { cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data || !Array.isArray(data.files)) return;
+        serverFiles = data.files;
+        truncation = data.truncated
+          ? { reason: data.reason || '', limit: data.limit || 0 }
+          : null;
+        fetched = true;
+      })
+      .catch(function() {});
+  }
+
+  function loadChanged() {
+    return fetch('/?changed=1', { cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data || !Array.isArray(data.changed)) return;
+        // リポジトリ外なら空配列が返る。前回の結果を残さないよう毎回作り直す。
+        var map = Object.create(null); // パス由来のキーなので __proto__ 等を踏まない器にする
+        var paths = [];
+        data.changed.forEach(function(c) {
+          if (!c || typeof c.path !== 'string' || !c.path) return;
+          map[c.path] = { add: c.add || 0, del: c.del || 0 };
+          paths.push(c.path);
+        });
+        changedPaths = paths;
+        stats = paths.length ? map : null;
+      })
+      .catch(function() {});
+  }
+
+  // 検索対象を組み直す。/?files=1 の一覧に無い変更ファイル（除外ディレクトリの中や
+  // 探索打ち切りの向こう側にあるもの）も末尾に足す。変更のあるファイルは開きたい
+  // 対象そのものなので、一覧の都合で引けない方が困る。
+  function rebuild() {
+    files = serverFiles.slice();
+    var known = Object.create(null);
+    for (var i = 0; i < serverFiles.length; i++) known[serverFiles[i]] = true;
+    for (var c = 0; c < changedPaths.length; c++) {
+      if (!known[changedPaths[c]]) files.push(changedPaths[c]);
+    }
+    lowerFiles = files.map(function(p) { return p.toLowerCase(); });
   }
 
   window.MdPalette = {

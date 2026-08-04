@@ -1044,6 +1044,29 @@ details[open] {
     font-size: 12px;
 }
 
+/* git の変更行数バッジ（+N −M）。右端に寄せ、ファイル名やディレクトリより先に
+   縮まないようにする（数字が切れると意味が無いので flex-shrink: 0）。
+   追加=緑 / 削除=赤 は下の diff 表示と同じ半透明ティントの系統で、パネル地色
+   （Canvas）の上でも成立する不透明度にしている。 */
+.md-pal-stat {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding-left: 8px;
+    display: flex;
+    gap: 6px;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: GrayText;
+}
+
+.md-pal-add {
+    color: rgb(46, 160, 67);
+}
+
+.md-pal-del {
+    color: rgb(248, 81, 73);
+}
+
 /* マッチした文字。塗りではなく太字＋アクセント色で示す（選択行の上でも沈まない）。 */
 .md-pal-hit {
     color: var(--md-accent, Highlight);

@@ -95,7 +95,8 @@ pub fn diff_stat(file_path: &Path) -> (usize, usize) {
     let output = Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["diff", "--numstat", "HEAD", "--"])
+        // --no-ext-diff / --no-textconv の理由は changed_files のコメント参照。
+        .args(["diff", "--numstat", "--no-ext-diff", "--no-textconv", "HEAD", "--"])
         .arg(file_path)
         .output();
 
@@ -116,6 +117,95 @@ pub fn diff_stat(file_path: &Path) -> (usize, usize) {
         }
     }
     (0, 0)
+}
+
+/// 変更のあるファイルを列挙する上限。⌘P の並べ替えに使うだけなので、巨大な変更セット
+/// （生成物を大量にコミットし直した時など）で git 出力の走査に時間を使わないよう打ち切る。
+const CHANGED_MAX: usize = 500;
+
+/// `root` 以下の「変更のあるファイル」を、追加/削除行数つきで root 相対パスで列挙する。
+/// ファイル検索パレット（⌘P）が変更のあるファイルを先に出すために使う。
+/// リポジトリ外・git が無い場合は空。削除されたファイルは開けないので含めない。
+///
+/// セキュリティ: 他人のリポジトリを開く脅威モデルなので、`--no-ext-diff` / `--no-textconv`
+/// で .git/config・.gitattributes 由来の外部コマンド実行経路を封じる（diff_stat も同様）。
+pub fn changed_files(root: &Path) -> Vec<(String, usize, usize)> {
+    let mut out: Vec<(String, usize, usize)> = Vec::new();
+
+    // 追跡済みの変更。`--relative` で root 相対のパスにする（root がリポジトリの
+    // サブディレクトリでも正しい）。リネームは分解して出す（`old => new` を扱わない）。
+    if let Ok(o) = git_output(
+        root,
+        &[
+            "diff", "--numstat", "--relative", "--no-renames",
+            "--no-ext-diff", "--no-textconv", "HEAD", "--", ".",
+        ],
+    ) {
+        for line in o.lines() {
+            if out.len() >= CHANGED_MAX {
+                return out;
+            }
+            // 形式: "<added>\t<deleted>\t<path>"。バイナリは "-\t-\t..." で parse 失敗 → 0。
+            let mut fields = line.split('\t');
+            let add = fields.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let del = fields.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            if let Some(path) = fields.next() {
+                push_changed(&mut out, root, path, add, del);
+            }
+        }
+    }
+
+    // 未追跡ファイル（.gitignore は尊重する）。numstat には出ないので全行を追加として数える。
+    if let Ok(o) = git_output(root, &["ls-files", "--others", "--exclude-standard", "--", "."]) {
+        for path in o.lines() {
+            if out.len() >= CHANGED_MAX {
+                return out;
+            }
+            let add = untracked_added_lines(&root.join(path));
+            push_changed(&mut out, root, path, add, 0);
+        }
+    }
+
+    out
+}
+
+/// core.quotepath=false で git を実行し、成功時のみ stdout を返す。マルチバイトの
+/// ファイル名を `\346\227\245` 形式にされると root 相対パスとして使えないため。
+fn git_output(dir: &Path, args: &[&str]) -> Result<String, ()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "core.quotepath=false"])
+        .args(args)
+        .output()
+        .map_err(|_| ())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(())
+    }
+}
+
+/// 一覧に 1 件足す。開けないもの（削除済み・ディレクトリ）と、C 形式でクオートされた
+/// パスは捨てる。クオートは制御文字を含む名前だけで起きる（quotepath=false 済み）ので、
+/// アンクオートを実装するより落とす方が安全。
+fn push_changed(out: &mut Vec<(String, usize, usize)>, root: &Path, path: &str, add: usize, del: usize) {
+    if path.is_empty() || path.starts_with('"') {
+        return;
+    }
+    if !root.join(path).is_file() {
+        return;
+    }
+    out.push((path.to_string(), add, del));
+}
+
+/// 未追跡ファイルの追加行数。一覧では数百ファイルを数えうるので、巨大ファイルは
+/// 行数を諦めて 0 にする（バッジが空になるだけで、「変更あり」の扱いは変わらない）。
+fn untracked_added_lines(path: &Path) -> usize {
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() > 2 * 1024 * 1024 => 0,
+        _ => count_lines(path),
+    }
 }
 
 fn is_tracked(dir: &Path, file_path: &Path) -> bool {
@@ -486,6 +576,50 @@ mod tests {
         std::fs::write(&untracked, "x\ny\n").unwrap();
         assert_eq!(diff_stat(&untracked), (2, 0));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changed_files_lists_modified_and_untracked_but_not_deleted() {
+        let dir = temp_dir("changed");
+        git(&dir, &["init", "-q"]);
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("kept.md"), "a\nb\nc\n").unwrap();
+        std::fs::write(dir.join("sub/mod.md"), "a\nb\nc\n").unwrap();
+        std::fs::write(dir.join("gone.md"), "x\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+
+        std::fs::write(dir.join("sub/mod.md"), "a\nB\nc\n").unwrap();
+        std::fs::remove_file(dir.join("gone.md")).unwrap();
+        std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
+
+        let changed = changed_files(&dir);
+        let paths: Vec<&str> = changed.iter().map(|(p, _, _)| p.as_str()).collect();
+
+        // サブディレクトリのパスは root 相対（--relative）で返る。
+        assert!(paths.contains(&"sub/mod.md"), "変更ファイルが無い: {paths:?}");
+        // 未追跡は全行が追加。
+        assert!(paths.contains(&"new.txt"), "未追跡ファイルが無い: {paths:?}");
+        // 開けないものは出さない。無変更のファイルも当然出ない。
+        assert!(!paths.contains(&"gone.md"), "削除済みが混ざっている: {paths:?}");
+        assert!(!paths.contains(&"kept.md"), "無変更が混ざっている: {paths:?}");
+
+        let stat = |name: &str| {
+            changed.iter().find(|(p, _, _)| p == name).map(|(_, a, d)| (*a, *d)).unwrap()
+        };
+        assert_eq!(stat("sub/mod.md"), (1, 1));
+        assert_eq!(stat("new.txt"), (2, 0));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changed_files_is_empty_outside_repo() {
+        let dir = temp_dir("changed-norepo");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "x\n").unwrap();
+        assert!(changed_files(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
