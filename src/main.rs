@@ -1,5 +1,6 @@
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebouncedEventKind};
@@ -21,6 +22,14 @@ enum AppEvent {
     Reload(Option<String>),
 }
 
+/// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
+/// これが無いと、子がまた孫を起動して止まらない。
+const DETACHED_ENV: &str = "MD_DETACHED";
+
+/// 標準入力から読んだ内容を子へ渡すための一時ファイルのパス。
+/// 子は標準入力を持たないので、親が読んでファイル経由で渡す。
+const STDIN_FILE_ENV: &str = "MD_STDIN_FILE";
+
 /// ウィンドウ起動に必要な、入力モード（stdin / フォルダ / cwd内ファイル / 単一ファイル）
 /// ごとに決まる設定一式。各 `build_*_config` がこれを組み立てて返す。
 struct AppConfig {
@@ -38,13 +47,29 @@ struct AppConfig {
     file_rel: Option<String>,
 }
 
-/// stdin から読んだ markdown を単一ページとして表示する設定。監視は行わない。
-fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<PathBuf>) -> AppConfig {
+/// パイプで渡された markdown を取り出す。自己デタッチした場合は親が読み終えて
+/// 一時ファイルに置いているので、そちらから読んで後片付けする。
+fn read_stdin_source() -> String {
+    if let Some(path) = std::env::var_os(STDIN_FILE_ENV) {
+        let markdown = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            eprintln!("md: 標準入力の一時ファイルを読み込めませんでした: {}", e);
+            std::process::exit(1);
+        });
+        let _ = std::fs::remove_file(&path);
+        return markdown;
+    }
+
     let mut markdown = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut markdown) {
         eprintln!("md: 標準入力を読み込めませんでした: {}", e);
         std::process::exit(1);
     }
+    markdown
+}
+
+/// stdin から読んだ markdown を単一ページとして表示する設定。監視は行わない。
+fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<PathBuf>) -> AppConfig {
+    let markdown = read_stdin_source();
     let title = "stdin".to_string();
     let root = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
     // stdin にはファイルの居場所が無いので、単独行ファイルリンクは cwd 基準で解決する。
@@ -63,15 +88,20 @@ fn build_stdin_config(theme_css: &str, custom_css: &str, current_dir: &Option<Pa
     }
 }
 
+/// 引数のパスを絶対パスへ解決する。開けないパスはここで終わる。
+/// 自己デタッチの前にも通す。子は標準エラー出力を持たないので、
+/// 存在しないパスのエラーは親から呼び出し元へ返す必要がある。
+fn resolve_arg_path(arg: &str) -> PathBuf {
+    Path::new(arg).canonicalize().unwrap_or_else(|e| {
+        eprintln!("md: '{}' を開けませんでした: {}", arg, e);
+        std::process::exit(1);
+    })
+}
+
 /// 引数で渡されたパスを解決し、フォルダ / cwd 内ファイル / 単一ファイルの
 /// いずれかに応じた設定を組み立てる。
 fn build_path_config(arg: &str, theme_css: &str, custom_css: &str, current_dir: &Option<PathBuf>) -> AppConfig {
-    let path = Path::new(arg)
-        .canonicalize()
-        .unwrap_or_else(|e| {
-            eprintln!("md: '{}' を開けませんでした: {}", arg, e);
-            std::process::exit(1);
-        });
+    let path = resolve_arg_path(arg);
 
     let is_folder = path.is_dir();
     let file_in_cwd = !is_folder && current_dir.as_ref()
@@ -206,10 +236,76 @@ md - 高速Markdownプレビュー
   md theme [<name>]   テーマ一覧を表示、または <name> に切り替えます
   md --sample         サンプルのMarkdownを標準出力に出します
   md --help, -h       このヘルプを表示します
-  md --version, -V    バージョンを表示します";
+  md --version, -V    バージョンを表示します
+
+オプション:
+  --detach            ウィンドウを開いたら即座にコマンドを終了します
+  --no-detach         ウィンドウを閉じるまでコマンドを終了しません
+                      （既定: 端末から起動したときは --no-detach、
+                       それ以外は --detach）";
+
+/// 自分自身を別のプロセスグループで起動し直す。子の起動に成功したら true を返し、
+/// 親はそのまま終了する。自分の実行ファイルが辿れないなど切り離せない事情がある
+/// ときは false を返し、前景での表示に落とす（何も出ないより開いた方がよい）。
+fn detach_self(stdin_mode: bool, target: Option<&str>) -> bool {
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            eprintln!("md: 自分の実行ファイルが辿れないため前景で開きます: {}", e);
+            return false;
+        }
+    };
+
+    // 開けないパスのエラーは、標準エラー出力を持っている親のうちに出しておく。
+    if let Some(arg) = target {
+        let _ = resolve_arg_path(arg);
+    }
+
+    let mut cmd = Command::new(exe);
+    cmd.args(std::env::args().skip(1))
+        .env(DETACHED_ENV, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // パイプで渡された markdown は子の標準入力には届かないので、親が読んで渡す。
+    if stdin_mode {
+        let path = std::env::temp_dir().join(format!("md-stdin-{}.md", std::process::id()));
+        if let Err(e) = std::fs::write(&path, read_stdin_source()) {
+            eprintln!("md: 標準入力を一時ファイルへ書き出せませんでした: {}", e);
+            std::process::exit(1);
+        }
+        cmd.env(STDIN_FILE_ENV, &path);
+    }
+
+    // 端末のプロセスグループから外す。呼び出し元がグループごと畳んでも巻き込まれない。
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    match cmd.spawn() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("md: バックグラウンドで起動できませんでした: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    // デタッチ指定はどの位置に書いてもよいので、先に抜き取っておく。
+    // 以降の引数の数え方は従来どおりでよくなる。
+    let mut args: Vec<String> = Vec::new();
+    let mut detach_flag: Option<bool> = None;
+    for (i, arg) in std::env::args().enumerate() {
+        match arg.as_str() {
+            "--detach" if i > 0 => detach_flag = Some(true),
+            "--no-detach" if i > 0 => detach_flag = Some(false),
+            _ => args.push(arg),
+        }
+    }
 
     if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
         println!("{}", USAGE);
@@ -253,6 +349,18 @@ fn main() {
     if !stdin_mode && args.len() != 2 {
         eprintln!("{}", USAGE);
         std::process::exit(1);
+    }
+
+    // ここから先はウィンドウを開く経路。コマンドを終了せずに待たせると、
+    // 待ち時間に上限のある呼び出し元（エージェントのコマンド実行ツールなど）が
+    // 上限に達したときにプロセスグループごと畳み、ウィンドウまで消えてしまう。
+    // そこで自分自身を別のプロセスグループで起動し直し、親は即座に終了する。
+    // 端末から人が叩いたときは前景のままにして、Ctrl-C で閉じられる形を保つ。
+    if std::env::var_os(DETACHED_ENV).is_none() {
+        let detach = detach_flag.unwrap_or_else(|| !std::io::stdout().is_terminal());
+        if detach && detach_self(stdin_mode, args.get(1).map(String::as_str)) {
+            return;
+        }
     }
 
     let custom_css = std::env::var("HOME")
