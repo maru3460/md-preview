@@ -10,6 +10,8 @@
 //   folder.js      ツリー内移動・] [ Tab・⌘W
 //   search.js ⌘F / toc.js ⌘T / diff.js ⌘D / raw.js ⌘R / common.js ⌘A / help.js ? Esc
 //   palette.js     ファイル検索（folder モードのみ。パレット内の ↑↓ Enter Esc も palette.js）
+// JS を通らないものもある: ⌃⌘F（フルスクリーン）と ⌘Q ⌘Z ⌘X ⌘C ⌘V は macOS の
+// メニュー項目（platform.rs の setup_menu）が処理するので、keydown は WebView に届かない。
 // 排他は stopPropagation ではなく「フォーカスの所在」と「モードの有無」で取っている。
 // よって **キー自体を変える時はハンドラ側とこの表の両方を直す**必要がある。
 // （ハンドラをこの表から駆動する案は将来の課題。Esc の譲り合いやフォーカス排他を
@@ -39,8 +41,8 @@
     { cat: 'scroll', keys: 'g / G',   desc: '冒頭 / 末尾へ', scope: 'all' },
 
     // ── 探す・飛ぶ（search.js / toc.js） ──
-    { cat: 'find',   keys: '/',       desc: '検索（⌘F と同じ）', scope: 'all' },
-    { cat: 'find',   keys: '⌘F',      desc: '検索', scope: 'all' },
+    { cat: 'find',   keys: '/',       desc: '検索を開く（開くだけ。閉じるのは Esc / ⌘F）', scope: 'all' },
+    { cat: 'find',   keys: '⌘F',      desc: '検索を開閉', scope: 'all' },
     { cat: 'find',   keys: '⌘T',      desc: 'アウトライン（見出しナビ）を開閉', scope: 'all' },
     { cat: 'find',   keys: '⌘P',      desc: 'ファイル検索（あいまい検索。未入力なら git 変更ファイルが先頭）', scope: 'folder' },
 
@@ -62,6 +64,7 @@
 
     // ── ウィンドウ・ヘルプ（common.js / init.js / contextmenu.js / help.js） ──
     { cat: 'app',    keys: '⌘A',       desc: '本文を全選択', scope: 'all' },
+    { cat: 'app',    keys: '⌃⌘F',      desc: 'フルスクリーンを切り替え（緑ボタンと同じ）', scope: 'all' },
     { cat: 'app',    keys: '⌘W',       desc: 'ウィンドウを閉じる', scope: 'all' },
     { cat: 'app',    keys: '⌘Q',       desc: '終了', scope: 'all' },
     { cat: 'app',    keys: '右クリック', desc: 'コンテキストメニュー', scope: 'all' },

@@ -604,8 +604,19 @@
     document.addEventListener('keydown', function(e) {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === 'F')) {
         if (!container) return;
+        // ⌃⌘F は macOS 標準のフルスクリーン（platform.rs の View メニュー）なので譲る。
+        // WKWebView は performKeyEquivalent: で先に ⌘ 系を web 側へ流すため、ここで
+        // preventDefault するとイベントが消費され、メニュー項目まで届かなくなる。
+        if (e.metaKey && e.ctrlKey) return;
         e.preventDefault();
-        open();
+        // ⌘R / ⌘D / ⌘T と同じく「押したら畳む」トグルにする。開いている時は
+        // フォーカスの所在（入力欄 / 本文 / iframe）を問わず閉じる。
+        // 入力欄の keydown ハンドラは stopPropagation しないので、検索中の ⌘F も
+        // ここへ届く（raw.js / diff.js のような「入力欄なら見送る」ガードは、
+        // 自分の入力欄から閉じられなくなるので入れてはいけない）。
+        // input.value は close() で消さないため、閉じても再度 ⌘F で直前の語が残る。
+        if (bar && !bar.classList.contains('hidden')) close();
+        else open();
         return;
       }
       // Esc は入力欄にフォーカスがある間しか届かない。html 表示中に iframe をクリックすると

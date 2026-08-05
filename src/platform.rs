@@ -144,6 +144,25 @@ pub fn setup_menu() {
     edit_item.setSubmenu(Some(&edit_menu));
     menubar.addItem(&edit_item);
 
+    // 緑ボタンのフルスクリーンを ⌃⌘F（macOS 標準）でも切り替えられるようにする。
+    // AppKit は View メニューがあれば "Enter Full Screen" を自前で足してくれるが、
+    // setMainMenu でメニューバーを丸ごと差し替えているぶん、その項目も消えている。
+    // toggleFullScreen: は target=nil のままでよい（レスポンダ連鎖で NSWindow が受ける）。
+    let view_item = NSMenuItem::new(mtm);
+    let view_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), ns_string!("View"));
+    let full = make(
+        ns_string!("Enter Full Screen"),
+        sel!(toggleFullScreen:),
+        ns_string!("f"),
+    );
+    full.setKeyEquivalentModifierMask(
+        objc2_app_kit::NSEventModifierFlags::Command
+            | objc2_app_kit::NSEventModifierFlags::Control,
+    );
+    view_menu.addItem(&full);
+    view_item.setSubmenu(Some(&view_menu));
+    menubar.addItem(&view_item);
+
     let app = NSApplication::sharedApplication(mtm);
     app.setMainMenu(Some(&menubar));
 }
