@@ -228,12 +228,13 @@
     syncFrameBackground(frame);
 
     doc.addEventListener('keydown', function(e) {
-      // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 / w=close)
-      // だけ親へ委譲する。
-      // ⌘A(全選択)・⌘F(検索)・⌘C 等は iframe のネイティブ動作に任せる。特に検索は親 DOM しか
-      // 走査せず iframe 内テキストに当たらないため、転送すると 0/0 の空振りバーが出てしまう。
+      // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 /
+      // w=close / f=検索)だけ親へ委譲する。
+      // ⌘A(全選択)・⌘C 等は iframe のネイティブ動作に任せる。
+      // ⌘F は MdSearch が iframe の document も走査するようになったので転送する
+      // （WKWebView 自体は検索 UI を持たないので、転送しないと無反応になる）。
       var k = (e.key || '').toLowerCase();
-      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'w');
+      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'w' || k === 'f');
       var inField = isFieldEl(e.target);
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
@@ -247,7 +248,10 @@
       // ファイル移動([/])・ペインフォーカス(Tab)・ヘルプ(?)はアプリ全体の操作なので、iframe に
       // フォーカスがある時でも親へ委譲する（html 表示中でも移動とヘルプが死なない）。ただし:
       //  ・iframe 内の入力欄では素キーを奪わない（文字入力・フォーム内 Tab 移動を保つ）
-      //  ・検索(/)は親 DOM しか走査せず iframe 内テキストに当たらない(⌘F と同理由)ので転送しない
+      //  ・素キーの `/` は転送しない。rustdoc / MkDocs / Docusaurus など `/` を自前の検索
+      //    ショートカットに使う生成 html は多く、ページ側のハンドラは先に登録されていて
+      //    止められないので、転送すると「ページの検索 UI と親の検索バーが両方開く」二重
+      //    状態になる。iframe 内から検索を開くのは ⌘F（ページ側と衝突しにくい）に絞る。
       var isNav = bare && (k === '[' || k === ']' || e.key === 'Tab' || k === '?');
       // Escape は親のオーバーレイ（? で開いたヘルプ等）が開いている時だけ転送する。
       // ? は iframe にフォーカスを残したまま開くので、これが無いと Esc で閉じられない。
@@ -332,11 +336,15 @@
   // この判定は毎 keydown（巨大ファイルの j/k 連打を含む）で走るため、getElementById による O(1)
   // 参照だけで済ませる。querySelector('.md-search-bar:not(.hidden)') は document 全走査になり、
   // オーバーレイが閉じている通常時ほど重くなるので使わない（各オーバーレイに安定 id を振ってある）。
-  function isOverlayOpen() {
-    if (document.getElementById('md-help-backdrop')) return true;   // 開いている間だけ存在
-    if (document.getElementById('md-pal-backdrop')) return true;    // ファイル検索(⌘P)。開いている間だけ存在
-    if (document.getElementById('md-context-menu')) return true;    // 開いている間だけ存在
-    if (document.getElementById('md-cmt-popover')) return true;     // コメント入力中だけ存在
+  // exceptId を渡すと、その id のオーバーレイだけ数えない。「自分以外が開いているか」を
+  // 知りたい側（Esc を自分が処理してよいかの判定）が使う。判定を各所で書き写すと
+  // ズレるので、一覧はここだけに置く。
+  function isOverlayOpen(exceptId) {
+    if (exceptId !== 'md-help-backdrop' && document.getElementById('md-help-backdrop')) return true;   // 開いている間だけ存在
+    if (exceptId !== 'md-pal-backdrop' && document.getElementById('md-pal-backdrop')) return true;     // ファイル検索(⌘P)。開いている間だけ存在
+    if (exceptId !== 'md-context-menu' && document.getElementById('md-context-menu')) return true;     // 開いている間だけ存在
+    if (exceptId !== 'md-cmt-popover' && document.getElementById('md-cmt-popover')) return true;       // コメント入力中だけ存在
+    if (exceptId === 'md-search-bar') return false;
     var sb = document.getElementById('md-search-bar');              // 常在。hidden で開閉を表す
     return !!(sb && !sb.classList.contains('hidden'));
   }
