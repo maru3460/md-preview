@@ -206,16 +206,11 @@ fn strip_l(s: &str) -> Option<&str> {
     s.strip_prefix('L').or_else(|| s.strip_prefix('l'))
 }
 
-/// md-preview が「ページとして描画する」拡張子か（folder.js の isRenderablePath と同じ線引き）。
-/// これらへのリンクはプレビューペイン内遷移に使われるため、埋め込み判定で特別扱いする。
+/// md-preview が「ページとして描画する」拡張子か。これらへのリンクはプレビュー
+/// ペイン内遷移に使われるため、埋め込み判定で特別扱いする。判定は
+/// `request::is_renderable`（`RENDERABLE_EXT`）に委ねる。
 fn is_navigable_page(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some("md" | "markdown" | "html" | "htm")
-    )
+    crate::request::is_renderable(path)
 }
 
 /// `https:` や `mailto:` のようなスキーム付き URL か。ローカルパスと区別するために使う。

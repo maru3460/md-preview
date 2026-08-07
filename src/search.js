@@ -56,9 +56,6 @@
         if (searchTimer) performSearch();
         if (e.shiftKey) jumpTo(currentIndex - 1);
         else jumpTo(currentIndex + 1);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        close();
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         jumpTo(currentIndex + 1);
@@ -601,37 +598,20 @@
   }
 
   function attachShortcut() {
-    document.addEventListener('keydown', function(e) {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === 'F')) {
-        if (!container) return;
-        // ⌃⌘F は macOS 標準のフルスクリーン（platform.rs の View メニュー）なので譲る。
-        // WKWebView は performKeyEquivalent: で先に ⌘ 系を web 側へ流すため、ここで
-        // preventDefault するとイベントが消費され、メニュー項目まで届かなくなる。
-        if (e.metaKey && e.ctrlKey) return;
-        e.preventDefault();
-        // ⌘R / ⌘D / ⌘T と同じく「押したら畳む」トグルにする。開いている時は
-        // フォーカスの所在（入力欄 / 本文 / iframe）を問わず閉じる。
-        // 入力欄の keydown ハンドラは stopPropagation しないので、検索中の ⌘F も
-        // ここへ届く（raw.js / diff.js のような「入力欄なら見送る」ガードは、
-        // 自分の入力欄から閉じられなくなるので入れてはいけない）。
-        // input.value は close() で消さないため、閉じても再度 ⌘F で直前の語が残る。
-        if (bar && !bar.classList.contains('hidden')) close();
-        else open();
-        return;
-      }
-      // Esc は入力欄にフォーカスがある間しか届かない。html 表示中に iframe をクリックすると
-      // フォーカスが移り、そこからの Esc は common.js が親へ転送してくるが、受け手が
-      // 入力欄側にしか無いと誰も閉じられない。しかも検索バーが開いている間は
-      // isOverlayOpen が true でスクロール素キーも止まるので、× をマウスで押すまで
-      // キーボード操作が全部死ぬ。ここで document 側の逃げ道を用意する。
-      if (e.key === 'Escape' && bar && !bar.classList.contains('hidden')) {
-        // 他のオーバーレイ（ヘルプ・⌘P・右クリメニュー・コメント）が開いているときは
-        // そちらの Esc なので譲る。一覧は MdCommon 側に一本化してある。
-        if (window.MdCommon && MdCommon.isOverlayOpen && MdCommon.isOverlayOpen('md-search-bar')) return;
-        e.preventDefault();
-        close();
-      }
+    // ⌘R / ⌘D / ⌘T と同じく「押したら畳む」トグル。開いている時はフォーカスの所在
+    // （入力欄 / 本文 / iframe）を問わず閉じる。keymap.js の `cmd` 述語は入力欄で
+    // 見送るが、検索バーの入力欄は……という例外が要るので、ここで自分で開閉を決める。
+    // input.value は close() で消さないため、閉じても再度 ⌘F で直前の語が残る。
+    if (!window.MdKeymap) return;
+    MdKeymap.on('search-toggle', function() {
+      if (!container) return;
+      if (isOpen()) close();
+      else open();
     });
+  }
+
+  function isOpen() {
+    return !!(bar && !bar.classList.contains('hidden'));
   }
 
   window.MdSearch = {
@@ -640,6 +620,11 @@
       if (!initialized) {
         buildBar();
         attachShortcut();
+        // Esc の受け手は MdCommon が一括で持つ。iframe にフォーカスがある状態からの
+        // Esc（common.js が親へ転送してくる）も、これで閉じられる。
+        if (window.MdCommon && MdCommon.registerOverlay) {
+          MdCommon.registerOverlay({ id: 'md-search-bar', isOpen: isOpen, close: close, priority: 20 });
+        }
         initialized = true;
       }
     },

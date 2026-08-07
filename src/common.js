@@ -5,6 +5,8 @@
 (function() {
   // 遅延ロードした <script> を URL 単位でメモ化する。mermaid/drawio の巨大ライブラリを
   // 必要になった時に 1 度だけ読み込むためのもの。
+  // URL はスキームを書かずオリジン相対にする（CSP の 'self' に収まるうえ、
+  // examples/serve.rs 越しに http で開いた時もそのまま動く）。
   var cache = {};
   function loadLib(url) {
     if (cache[url]) return cache[url];
@@ -108,12 +110,52 @@
     });
   }
 
+  // scope 内のコードブロックを構文ハイライトする。hljs.highlightAll() は毎回
+  // document 全体を舐めるので、差し替えた範囲だけに絞る。二重適用は hljs が付ける
+  // data-highlighted で防ぐ（再適用は警告が出るうえ無駄）。
+  function highlightIn(scope) {
+    if (!window.hljs) return;
+    var root = scope || document;
+    root.querySelectorAll('pre code').forEach(function(code) {
+      if (code.dataset && code.dataset.highlighted) return;
+      try { hljs.highlightElement(code); } catch (e) {}
+    });
+  }
+
+  // 本文（またはプレビュー枠）を差し替えた直後の後処理をまとめて行う。
+  //
+  // 差し替えの経路は 初回描画 / ホットリロード / ファイル切替 / raw / diff の 5 つ
+  // あり、以前はそれぞれが同じ並びを書き写していた（しかも微妙に食い違っていた）。
+  // 後処理を 1 つ足すときに 5 箇所を思い出す必要があったので、ここに集約する。
+  //
+  // 中身の種類（md / ソース / 差分）で分岐しないのは、各処理が「対象が無ければ
+  // 何もしない」ように書けているため。差分に mermaid は無いし、ソースビューに見出しは
+  // 無い。分岐を増やすより、無いものを黙って飛ばす方が経路ごとの差を生まない。
+  //
+  // opts.onLinkClick … iframe 内の相対リンクを親のプレビュー遷移へ回す（folder のみ）
+  function hydrate(scope, opts) {
+    var o = opts || {};
+    var root = scope || document;
+    ensureHeadingIds(root);
+    highlightIn(root);
+    addCopyButtons(root);
+    addLineNumbers(root);
+    runMermaid(root);
+    runDrawio(root);
+    wireHtmlFrames(root, o);
+    // 差し替えで消えた/変わったものを、それぞれの持ち主に作り直させる。
+    if (window.MdSearch) { MdSearch.reset(); MdSearch.init(root); }
+    if (window.MdToc) MdToc.refresh();
+    // コメントの真実は JS 配列側にあるので、マーカーを貼り直す。
+    if (window.MdComment) MdComment.reanchor();
+  }
+
   // scope 内に mermaid 図があれば lib を遅延ロードして描画する。
   function runMermaid(scope) {
     var root = scope || document;
     var nodes = root.querySelectorAll('pre.mermaid');
     if (!nodes.length) return;
-    loadLib('mdpreview://localhost/__lib/mermaid.min.js').then(function() {
+    loadLib('/__lib/mermaid.min.js').then(function() {
       if (typeof mermaid === 'undefined') return;
       if (!mermaid.__mdInit) {
         var ap = window.MD_APPEARANCE || 'auto';
@@ -131,22 +173,18 @@
     var root = scope || document;
     var nodes = root.querySelectorAll('.mxgraph');
     if (!nodes.length) return;
-    loadLib('mdpreview://localhost/__lib/drawio-viewer.min.js').then(function() {
+    loadLib('/__lib/drawio-viewer.min.js').then(function() {
       if (typeof GraphViewer === 'undefined') return;
       try { GraphViewer.processElements(); } catch (e) {}
     }).catch(function() {});
   }
 
-  // Cmd/Ctrl+A で本文（.markdown-body）だけを全選択する。ページ全体（サイドバーや
+  // ⌘A で本文（.markdown-body）だけを全選択する。ページ全体（サイドバーや
   // フロントマター外の UI）を巻き込まないようにするためのもの。
-  // 入力欄や編集可能要素にフォーカスがある時は通常の全選択に任せる。
-  function selectBody(e) {
-    if (!(e.metaKey || e.ctrlKey) || e.key !== 'a') return;
-    var t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  // キーの割り当てと「入力欄では譲る」判定は keymap.js 側が持つ。
+  function selectBody() {
     var body = document.querySelector('.markdown-body');
     if (!body) return;
-    e.preventDefault();
     var sel = window.getSelection();
     if (!sel) return;
     var range = document.createRange();
@@ -154,7 +192,22 @@
     sel.removeAllRanges();
     sel.addRange(range);
   }
-  document.addEventListener('keydown', selectBody);
+
+  // ウィンドウを閉じる（⌘W）。Rust 側が IPC を受けて CloseRequested に流す。
+  function closeWindow() {
+    if (window.ipc) window.ipc.postMessage('close');
+  }
+
+  // `#id` 形式のリンクをページ内スクロールに変える。該当する形なら true を返し、
+  // イベントを渡していれば preventDefault する。init.js / folder.js が同じ処理を
+  // 書き写していたのでここへ寄せた。
+  function scrollToAnchor(href, e) {
+    if (!href || href.charAt(0) !== '#') return false;
+    if (e) e.preventDefault();
+    var target = document.getElementById(decodeURIComponent(href.slice(1)));
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+    return true;
+  }
 
   // 横スクロールする表(.table-wrap)の上でホイールを回すと、横にまだ動かせる間は
   // ブラウザがホイールを横スクロールに吸ってしまい、ページの縦スクロールが止まる。
@@ -332,22 +385,53 @@
     return !!(s && s.contains(document.activeElement));
   }
 
-  // 検索バー / ヘルプ / 右クリックメニューのいずれかが開いているか。開いている間は素キーを止める。
-  // この判定は毎 keydown（巨大ファイルの j/k 連打を含む）で走るため、getElementById による O(1)
-  // 参照だけで済ませる。querySelector('.md-search-bar:not(.hidden)') は document 全走査になり、
-  // オーバーレイが閉じている通常時ほど重くなるので使わない（各オーバーレイに安定 id を振ってある）。
-  // exceptId を渡すと、その id のオーバーレイだけ数えない。「自分以外が開いているか」を
-  // 知りたい側（Esc を自分が処理してよいかの判定）が使う。判定を各所で書き写すと
-  // ズレるので、一覧はここだけに置く。
-  function isOverlayOpen(exceptId) {
-    if (exceptId !== 'md-help-backdrop' && document.getElementById('md-help-backdrop')) return true;   // 開いている間だけ存在
-    if (exceptId !== 'md-pal-backdrop' && document.getElementById('md-pal-backdrop')) return true;     // ファイル検索(⌘P)。開いている間だけ存在
-    if (exceptId !== 'md-context-menu' && document.getElementById('md-context-menu')) return true;     // 開いている間だけ存在
-    if (exceptId !== 'md-cmt-popover' && document.getElementById('md-cmt-popover')) return true;       // コメント入力中だけ存在
-    if (exceptId === 'md-search-bar') return false;
-    var sb = document.getElementById('md-search-bar');              // 常在。hidden で開閉を表す
-    return !!(sb && !sb.classList.contains('hidden'));
+  // ── オーバーレイのレジストリ ──────────────────────────────────
+  // 検索バー・ヘルプ・ファイル検索・右クリックメニュー・コメント入力は、互いに
+  // 2 点だけ気にする必要がある:
+  //   (1) 開いている間は本文の素キー（j/k・c・/ など）を止める
+  //   (2) Esc は「いちばん前にある 1 つ」だけを閉じる
+  //
+  // 以前は (1) の判定が id のハードコード列で、(2) は各モジュールが自前で Esc を拾い
+  // 「他が開いていたら譲る」を個別に書いていた。6 つ目を足すには 3 箇所を揃える必要が
+  // あり、譲り合いの条件も書き写すたびにズレる形だった。ここに登録制で集約する。
+  //
+  // spec: {
+  //   id, isOpen(), close(),
+  //   priority   … 大きいほど前面。Esc はこれが最大の 1 つだけを閉じる
+  //   blocksKeys … 開いている間、本文の素キーを止めるか（既定 true）
+  // }
+  var overlays = [];
+
+  function registerOverlay(spec) {
+    overlays.push(spec);
+    overlays.sort(function(a, b) { return b.priority - a.priority; });
   }
+
+  // 開いているオーバーレイを前面順に返す。exceptId はその 1 つを除く。
+  function openOverlays(exceptId) {
+    return overlays.filter(function(o) {
+      if (o.id === exceptId) return false;
+      try { return !!o.isOpen(); } catch (e) { return false; }
+    });
+  }
+
+  // 素キーを止めるべきオーバーレイが開いているか。毎 keydown（巨大ファイルでの j/k
+  // 連打を含む）で走るので、各 isOpen() は getElementById か class 参照だけで済ませる
+  // （querySelector による document 全走査は使わない。各オーバーレイに安定 id がある）。
+  function isOverlayOpen(exceptId) {
+    return openOverlays(exceptId).some(function(o) { return o.blocksKeys !== false; });
+  }
+
+  // Esc を 1 箇所で受ける。最前面の 1 つだけ閉じてそこで止めるので、1 回の Esc で
+  // 2 つ閉じることも、誰も閉じないこともない。capture で各モジュールより先に受ける。
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    var open = openOverlays();
+    if (!open.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    open[0].close();
+  }, true);
 
   // フォーカスが文字入力欄（素キーを横取りしてはいけない要素）に乗っているか。
   // iframe 転送・スクロール素キー・フォーカス移譲の各所で同じ判定を使うため一本化する。
@@ -403,6 +487,12 @@
     return false;
   }
 
+  // アプリ全体のキー。keymap.js は common.js の直後に評価されるので、ここで差し込める。
+  if (window.MdKeymap) {
+    MdKeymap.on('select-body', selectBody);
+    MdKeymap.on('window-close', closeWindow);
+  }
+
   window.MdCommon = {
     loadLib: loadLib,
     slugify: slugify,
@@ -410,15 +500,19 @@
     ensureHeadingIds: ensureHeadingIds,
     addCopyButtons: addCopyButtons,
     addLineNumbers: addLineNumbers,
+    highlightIn: highlightIn,
+    hydrate: hydrate,
     runMermaid: runMermaid,
     runDrawio: runDrawio,
     wireHtmlFrames: wireHtmlFrames,
     getScroller: getScroller,
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
+    registerOverlay: registerOverlay,
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
     applyScrollKey: applyScrollKey,
+    scrollToAnchor: scrollToAnchor,
     cornerStack: cornerStack
   };
 })();

@@ -377,9 +377,9 @@
     }
     save.addEventListener('click', commit);
     cancel.addEventListener('click', closePopover);
+    // Esc（取消）の受け手は MdCommon が一括で持つ。
     ta.addEventListener('keydown', function(e) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); commit(); }
-      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePopover(); }
     });
 
     document.body.appendChild(pop);
@@ -902,50 +902,52 @@
       hidePreview();
     });
 
-    // キーボード: c でモード / Esc でポップオーバー→モードの順に閉じる。
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') {
-        if (popover) { e.preventDefault(); e.stopPropagation(); closePopover(); return; }
-        if (mode) {
-          // 前面に別オーバーレイ（ヘルプ/検索/メニュー）がある時は、まずそちらに Esc を
-          // 譲る（それらは stopPropagation しないため、譲らないと 1 回の Esc で両方閉じる）。
-          if (window.MdCommon && MdCommon.isOverlayOpen && MdCommon.isOverlayOpen()) return;
-          e.preventDefault(); e.stopPropagation(); setMode(false); return;
-        }
-        return;
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      // 入力欄フォーカス中・他オーバーレイ表示中・ツリーフォーカス中は素キーを奪わない。
-      if (window.MdCommon) {
-        if (MdCommon.isFieldEl(e.target)) return;
-        if (MdCommon.isOverlayOpen && MdCommon.isOverlayOpen()) return;
-        if (MdCommon.isSidebarFocused && MdCommon.isSidebarFocused()) return;
-      }
+    // Esc の受け手は MdCommon が一括で持つ。ポップオーバー（入力中）はいちばん前面、
+    // コメントモード自体はいちばん後ろ——この優先順位のおかげで「入力を取消 → もう一度
+    // Esc でモードを抜ける」が 1 回ずつ順に効く。
+    // モードは本文の素キーを止めない（d/u/Space のページ送りはモード中も使う）ので
+    // blocksKeys:false にする。
+    if (window.MdCommon && MdCommon.registerOverlay) {
+      MdCommon.registerOverlay({
+        id: 'md-cmt-popover',
+        isOpen: function() { return !!popover; },
+        close: closePopover,
+        priority: 50
+      });
+      MdCommon.registerOverlay({
+        id: 'md-cmt-mode',
+        isOpen: function() { return mode; },
+        close: function() { setMode(false); },
+        priority: 10,
+        blocksKeys: false
+      });
+    }
 
-      // モード中のキーボード操作（マウス無しでコメント）。
-      if (mode) {
-        var k = e.key;
-        // キーに持ち替えた合図。ホバーの「+」を畳んで、指し示すものをカーソルの枠 1 つに保つ
-        // （次にマウスを動かせば mousemove 側で戻る）。
+    // キーの割り当て・効く文脈（入力欄 / オーバーレイ / ツリーフォーカスの除外）は
+    // keymap.js の表が持つ。ここはモード中の各キーの実処理だけ。
+    if (window.MdKeymap) {
+      MdKeymap.on('comment-toggle', toggleMode);
+      MdKeymap.on('comment-mode', function(e) {
+        // キーに持ち替えた合図。ホバーの「+」を畳んで、指し示すものをカーソルの枠 1 つに
+        // 保つ（次にマウスを動かせば mousemove 側で戻る）。
         hideHandle();
-        if (k === 'j' || k === 'J' || k === 'ArrowDown') { e.preventDefault(); kbMove(1, e.shiftKey); return; }
-        if (k === 'k' || k === 'K' || k === 'ArrowUp') { e.preventDefault(); kbMove(-1, e.shiftKey); return; }
-        if (k === 'Enter') { e.preventDefault(); kbCommit(); return; }
-        // n / p: 付けたコメントを巡回してジャンプ（別ファイルも自動で開く）。
-        if (k === 'n') { e.preventDefault(); jumpToComment(1); return; }
-        if (k === 'p') { e.preventDefault(); jumpToComment(-1); return; }
-        // e: 対象コメントを編集 / x・Delete・Backspace: 対象コメントを削除。
-        if (k === 'e') { e.preventDefault(); editCurrent(); return; }
-        // 削除は x / Delete のみ。Backspace は「戻る/文字消し」の筋反射で誤爆しやすいので割り当てない。
-        if (k === 'x' || k === 'Delete') { e.preventDefault(); deleteCurrent(); return; }
-        // y: 全部コピー（パネルのボタンと同じ。トーストで結果を返す）。
-        if (k === 'y') { e.preventDefault(); copyAll(null); return; }
-      }
-
-      if (e.key !== 'c') return;
-      e.preventDefault();
-      toggleMode();
-    });
+        switch (e.key) {
+          case 'j': case 'J': case 'ArrowDown': kbMove(1, e.shiftKey); return;
+          case 'k': case 'K': case 'ArrowUp': kbMove(-1, e.shiftKey); return;
+          case 'Enter': kbCommit(); return;
+          // n / p: 付けたコメントを巡回してジャンプ（別ファイルも自動で開く）。
+          case 'n': jumpToComment(1); return;
+          case 'p': jumpToComment(-1); return;
+          case 'e': editCurrent(); return;
+          // 削除は x / Delete のみ。Backspace は「戻る/文字消し」の筋反射で誤爆しやすい
+          // ので割り当てない。
+          case 'x': case 'Delete': deleteCurrent(); return;
+          // y: 全部コピー（パネルのボタンと同じ。トーストで結果を返す）。
+          case 'y': copyAll(null); return;
+          default: return;
+        }
+      });
+    }
 
     // ビューポート変化: ポップオーバーはアンカーへ追従（入力中の内容を失わない）、
     // ハンドル/プレビューは畳む。folder のスクロール主体は #preview-pane なので、

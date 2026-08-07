@@ -40,7 +40,6 @@
     menuEl.remove();
     menuEl = null;
     document.removeEventListener('mousedown', onDocMouseDown, true);
-    document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('scroll', close, true);
     window.removeEventListener('blur', close);
     window.removeEventListener('resize', close);
@@ -50,8 +49,15 @@
     if (menuEl && !menuEl.contains(e.target)) close();
   }
 
-  function onKeyDown(e) {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  // Esc の受け手は MdCommon が一括で持つ（最前面の 1 つだけを閉じる）。
+  // メニューは開いている間だけ DOM にあるので、存在がそのまま開閉状態。
+  if (window.MdCommon && MdCommon.registerOverlay) {
+    MdCommon.registerOverlay({
+      id: 'md-context-menu',
+      isOpen: function() { return !!menuEl; },
+      close: close,
+      priority: 40
+    });
   }
 
   function dispatch(action, selection, ctx) {
@@ -163,7 +169,6 @@
     // 同期で開いた直後の click/contextmenu を拾わないよう次tickで登録。
     setTimeout(function() {
       document.addEventListener('mousedown', onDocMouseDown, true);
-      document.addEventListener('keydown', onKeyDown, true);
       document.addEventListener('scroll', close, true);
       window.addEventListener('blur', close);
       window.addEventListener('resize', close);

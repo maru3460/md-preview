@@ -109,7 +109,7 @@ sup.footnote-reference a {
     color: #1f2328;
 }
 
-.binary-msg {
+.md-notice {
     color: #656d76;
     font-style: italic;
 }
@@ -453,7 +453,7 @@ pre.mermaid {
 
     .fm-key { color: #8b949e; }
     .fm-val { color: #e6edf3; }
-    .binary-msg { color: #8b949e; }
+    .md-notice { color: #8b949e; }
 
     body {
         color: #e6edf3;

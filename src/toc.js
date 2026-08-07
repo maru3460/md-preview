@@ -185,12 +185,7 @@
       if (!initialized) {
         buildPanel();
         initialized = true;
-        document.addEventListener('keydown', function(e) {
-          if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) {
-            e.preventDefault();
-            toggle();
-          }
-        });
+        if (window.MdKeymap) MdKeymap.on('toc-toggle', toggle);
         attachScrollListener();
         // 画面幅が変わったら自動表示条件を再評価（狭くなれば退避、広がれば復帰）。
         var rTick = false;

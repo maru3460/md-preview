@@ -85,7 +85,7 @@ fn inside_work_tree(dir: &Path) -> bool {
 }
 
 fn message_html(msg: &str) -> String {
-    format!(r#"<p class="diff-msg">{}</p>"#, html_escape(msg))
+    crate::request::notice_html(msg)
 }
 
 /// トグルボタンのバッジ用に、追加行数・削除行数だけを軽量に数える。差分本文は組まず
@@ -519,7 +519,7 @@ mod tests {
 
         let html = render_diff_inner(&file);
         assert!(!html.contains("diff-del") && !html.contains("diff-add"), "ハイライトが付いた: {html}");
-        assert!(!html.contains("diff-msg"), "余計な通知が出た: {html}");
+        assert!(!html.contains("md-notice"), "余計な通知が出た: {html}");
         assert!(html.contains("本文なのだ"), "本文が無い: {html}");
         assert!(html.contains("diff-ctx"), "context 表示になっていない: {html}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -549,7 +549,7 @@ mod tests {
         std::fs::write(&file, "# タイトル\n\n本文なのだ。\n").unwrap();
 
         let html = render_diff_inner(&file);
-        assert!(!html.contains("diff-msg"), "余計な通知が出た: {html}");
+        assert!(!html.contains("md-notice"), "余計な通知が出た: {html}");
         assert!(!html.contains("diff-del") && !html.contains("diff-add"), "ハイライトが付いた: {html}");
         assert!(html.contains("本文なのだ"), "本文が無い: {html}");
         let _ = std::fs::remove_dir_all(&dir);

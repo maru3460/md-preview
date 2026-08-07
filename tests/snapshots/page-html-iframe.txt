@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'nonce-NONCE'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; media-src 'self' data:; frame-src 'self'; worker-src 'self' blob:">
+<title>page.html</title>
+<style>…</style>
+<style>…</style>
+<style>…</style>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+
+</head>
+<body>
+<article class="markdown-body html-page">
+<iframe class="html-frame" src="/page.html" title="page.html" referrerpolicy="no-referrer"></iframe>
+</article>
+</body>
+</html>

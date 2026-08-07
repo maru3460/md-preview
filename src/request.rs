@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::html::{attr_escape, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, render_full_document, DRAWIO_JS, MERMAID_JS};
+use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
 
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
@@ -122,7 +122,7 @@ pub fn has_md_descendant(dir: &Path) -> bool {
             if has_md_descendant(&p) {
                 return true;
             }
-        } else if is_md(&p) {
+        } else if classify_ext(&p) == ViewKind::Markdown {
             return true;
         }
     }
@@ -344,21 +344,133 @@ pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
     }
 }
 
-fn is_md(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("md") | Some("markdown")
-    )
+/// ファイルの見せ方。**拡張子と中身だけで決まる、この 4 択が唯一の分類**。
+///
+/// 以前は「.md はレンダリング / .html は iframe / それ以外はソース / 非 UTF-8 は通知」
+/// という同じ判断が main.rs・request.rs・folder.js の 7 箇所に独立して書かれており、
+/// コメントで「揃える」と human に保証させていた（実際 .markdown がウォッチャから
+/// 漏れる回帰が起きた）。新しい表示対象を足すときは、この enum と `classify_ext` /
+/// `render_file` だけを触ればよい。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ViewKind {
+    /// Markdown としてレンダリングする。
+    Markdown,
+    /// iframe（ミニブラウザ）で描画する。
+    HtmlPage,
+    /// 行番号つきのソースビューで見せる。
+    Source,
+    /// 非 UTF-8。中身を見せずに通知だけ出す。
+    Binary,
 }
 
-fn is_html(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some("html") | Some("htm")
-    )
+/// 通常表示がレンダリング結果になる拡張子。`raw` トグルが意味を持つ対象でもある。
+/// JS 側（folder.js の `isRenderablePath`）へは起動時にこの配列をそのまま注入するので、
+/// **拡張子の定義元はここ 1 箇所**。
+pub const RENDERABLE_EXT: &[&str] = &["md", "markdown", "html", "htm"];
+
+fn ext_lower(path: &Path) -> Option<String> {
+    path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase())
+}
+
+/// 中身を読む前の分類。`Binary` は返さない（中身を見ないと判らないため）。
+/// ウォッチャの対象判定や `raw` の可否など、ファイルを開かずに決めたい場面で使う。
+pub fn classify_ext(path: &Path) -> ViewKind {
+    match ext_lower(path).as_deref() {
+        Some("md" | "markdown") => ViewKind::Markdown,
+        Some("html" | "htm") => ViewKind::HtmlPage,
+        _ => ViewKind::Source,
+    }
+}
+
+/// 通常表示がレンダリング結果になるか（＝`RENDERABLE_EXT` に載っているか）。
+pub fn is_renderable(path: &Path) -> bool {
+    matches!(classify_ext(path), ViewKind::Markdown | ViewKind::HtmlPage)
+}
+
+/// 表示のしかた。`Normal` は拡張子どおり、`RawSource` は raw トグル用に
+/// md / html でも必ずソースとして見せる。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Normal,
+    RawSource,
+}
+
+/// 1 ファイルを描画した結果。ページ全体にもフラグメントにも使えるよう、
+/// **ラッパ（`.markdown-body`）を付けない中身だけ**を持つ。
+pub struct RenderedFile {
+    pub kind: ViewKind,
+    /// 本文 HTML。
+    pub html: String,
+    /// `.markdown-body` に足す追加クラス（`""` / `"source-page"` / `"html-page"`）。
+    pub body_class: &'static str,
+}
+
+/// 表示できない・読めないときの通知段落。文言とクラスをここに一本化する
+/// （以前は同じ日本語が 4 箇所にあり、クラスも `binary-msg` と `diff-msg` に割れていた。
+/// 前者は CSS 規則が無く、素のままの段落として出ていた）。
+pub fn notice_html(msg: &str) -> String {
+    format!(r#"<p class="md-notice">{}</p>"#, html_escape(msg))
+}
+
+fn binary_notice(path: &Path) -> String {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    notice_html(&format!("バイナリファイルは表示できません: {}", name))
+}
+
+/// ファイルを読んで本文 HTML を組む。**すべての表示経路（初期ページ / フォルダの
+/// `?file=` / 単一ファイルの `?body=1` / `raw` / `--html` ダンプ）がここを通る。**
+///
+/// `rel` は html を iframe 描画するときの `src` に使う root 相対パス。
+/// 読めなければ None（404 にするか通知を出すかは呼び出し側が決める）。
+pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFile> {
+    let kind = match mode {
+        ViewMode::RawSource => ViewKind::Source,
+        ViewMode::Normal => classify_ext(path),
+    };
+
+    // html の iframe 描画だけは中身を読まない（描くのは WebView 側）。
+    if kind == ViewKind::HtmlPage {
+        return Some(RenderedFile {
+            kind,
+            html: render_html_iframe(rel),
+            body_class: "html-page",
+        });
+    }
+
+    let bytes = std::fs::read(path).ok()?;
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        // 非 UTF-8 は source-page 扱いに揃える。raw トグルの可否判定（JS 側は
+        // source-page の有無で見る）が経路によってブレないようにするため。
+        Err(_) => {
+            return Some(RenderedFile {
+                kind: ViewKind::Binary,
+                html: binary_notice(path),
+                body_class: "source-page",
+            })
+        }
+    };
+
+    Some(match kind {
+        ViewKind::Markdown => {
+            let (fm_pairs, body) = parse_frontmatter(&text);
+            RenderedFile {
+                kind,
+                // 単独行ファイルリンクの相対パスは、その md ファイルがある場所を基準に解決する。
+                html: format!(
+                    "{}{}",
+                    render_frontmatter_html(&fm_pairs),
+                    render_body_in(body, path.parent())
+                ),
+                body_class: "",
+            }
+        }
+        _ => RenderedFile {
+            kind: ViewKind::Source,
+            html: source_view_html(path, &text),
+            body_class: "source-page",
+        },
+    })
 }
 
 /// root 相対パスを URL パスとして安全にエンコードする（`/` 区切りは残す）。
@@ -387,25 +499,6 @@ pub fn render_html_iframe(rel: &str) -> String {
         // " 入りファイル名で親の信頼ドキュメントへ属性注入できてしまう）。
         title = attr_escape(rel),
     )
-}
-
-/// md ファイルを読み、frontmatter HTML と本文 HTML を組にして返す。読めなければ None。
-/// `.markdown-body` ラッパを付けるかは呼び出し側で決める。
-fn render_md_file(file_path: &Path) -> Option<(String, String)> {
-    let content = std::fs::read_to_string(file_path).ok()?;
-    let (fm_pairs, body) = parse_frontmatter(&content);
-    // 単独行ファイルリンクの相対パスは、その md ファイルがある場所を基準に解決する。
-    Some((
-        render_frontmatter_html(&fm_pairs),
-        render_body_in(body, file_path.parent()),
-    ))
-}
-
-// フォルダモードのプレビュー枠用フラグメント。本文だけ `.markdown-body` で包む。
-fn serve_md_fragment(file_path: &Path) -> Response {
-    let Some((fm_html, body_html)) = render_md_file(file_path) else { return not_found_response() };
-    let fragment = format!(r#"{}<div class="markdown-body">{}</div>"#, fm_html, body_html);
-    ok_response("text/html; charset=utf-8", fragment.into_bytes())
 }
 
 /// このサイズ / 行数を超えるソースは hljs のハイライトを切る（プレーン表示）。
@@ -472,27 +565,6 @@ fn lang_label(hljs_lang: &str) -> String {
     }
 }
 
-fn serve_non_md_fragment(file_path: &Path) -> Response {
-    let Ok(bytes) = std::fs::read(file_path) else { return not_found_response() };
-    match String::from_utf8(bytes) {
-        Ok(content) => {
-            let fragment = format!(
-                r#"<div class="markdown-body source-page">{}</div>"#,
-                source_view_html(file_path, &content)
-            );
-            ok_response("text/html; charset=utf-8", fragment.into_bytes())
-        }
-        Err(_) => {
-            let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-            let fragment = format!(
-                r#"<div class="markdown-body"><p class="binary-msg">バイナリファイルは表示できません: {}</p></div>"#,
-                html_escape(name)
-            );
-            ok_response("text/html; charset=utf-8", fragment.into_bytes())
-        }
-    }
-}
-
 fn serve_builtin_lib(name: &str) -> Response {
     let js = match name {
         "mermaid.min.js" => MERMAID_JS,
@@ -502,12 +574,11 @@ fn serve_builtin_lib(name: &str) -> Response {
     ok_response("application/javascript; charset=utf-8", js.as_bytes().to_vec())
 }
 
-fn handle_dir(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = percent_decode(rel_encoded);
+fn handle_dir(rel: &str, root_dir: &Path) -> Response {
     let target_dir = if rel.is_empty() {
         Some(root_dir.to_path_buf())
     } else {
-        safe_join(root_dir, &rel)
+        safe_join(root_dir, rel)
     };
     match target_dir {
         Some(dir) if dir.is_dir() => ok_response(
@@ -518,40 +589,30 @@ fn handle_dir(rel_encoded: &str, root_dir: &Path) -> Response {
     }
 }
 
-fn handle_file(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = percent_decode(rel_encoded);
-    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
-    if is_md(&file_path) {
-        serve_md_fragment(&file_path)
-    } else if is_html(&file_path) {
-        // html は通常表示をソースではなく iframe 描画にする（.md と同じ立ち位置）。
-        let fragment = format!(
-            r#"<div class="markdown-body html-page">{}</div>"#,
-            render_html_iframe(&rel)
-        );
-        ok_response("text/html; charset=utf-8", fragment.into_bytes())
-    } else {
-        serve_non_md_fragment(&file_path)
-    }
-}
-
 fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &str) -> Response {
     let relative = url_path.strip_prefix('/').unwrap_or(url_path);
     let Some(file_path) = safe_join(root_dir, relative) else { return not_found_response() };
-    if is_md(&file_path) {
-        let Ok(content) = std::fs::read_to_string(&file_path) else { return not_found_response() };
-        let file_title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
-        // render_full_document を通すことで frontmatter も本来のページと同様に描画する。
-        let rendered = render_full_document(&content, file_title, theme_css, custom_css, file_path.parent());
-        ok_response("text/html; charset=utf-8", rendered.into_bytes())
-    } else if is_html(&file_path) {
+    match classify_ext(&file_path) {
+        // md を直接開いた場合はページとして描画する（本来のページと同じ経路）。
+        ViewKind::Markdown => {
+            let title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
+            let Some(r) = render_file(&file_path, relative, ViewMode::Normal) else {
+                return not_found_response();
+            };
+            let page = build_html(&r.html, title, theme_css, custom_css, r.body_class);
+            ok_response("text/html; charset=utf-8", page.into_bytes())
+        }
         // iframe に配信する html は、head 内 CSS が JS より先に適用されるよう
         // style-gate を注入してから返す（下記 inject_style_gate 参照）。
-        let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
-        ok_response("text/html; charset=utf-8", inject_style_gate(bytes))
-    } else {
-        let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
-        ok_response(guess_mime(&file_path), bytes)
+        ViewKind::HtmlPage => {
+            let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
+            ok_response("text/html; charset=utf-8", inject_style_gate(bytes))
+        }
+        // 画像・CSS・フォントなど。iframe 内の html から参照されるサブリソースを含む。
+        _ => {
+            let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
+            ok_response(guess_mime(&file_path), bytes)
+        }
     }
 }
 
@@ -619,159 +680,188 @@ fn inject_style_gate(bytes: Vec<u8>) -> Vec<u8> {
     }
 }
 
-// 単一ファイルモードの body=1 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
-pub fn serve_single_file_body(file_path: &Path) -> Response {
-    // html は iframe 描画。初期 article は html-page クラスを持つ（build_html 側）ので、
-    // ここでは中身の iframe だけ返す。単一ファイルモードは root=親ディレクトリなので
-    // rel はファイル名。
-    if is_html(file_path) {
-        let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        return ok_response("text/html; charset=utf-8", render_html_iframe(name).into_bytes());
-    }
-    // その他の非 md は初回 build_html と同じソースビューを返す。これを md 描画にすると、
-    // ホットリロードや diff/off の再取得（loadNormalBody）で全幅 Markdown に化ける。
-    if !is_md(file_path) {
-        return ok_response("text/html; charset=utf-8", render_raw_inner(file_path).into_bytes());
-    }
-    let Some((fm_html, body_html)) = render_md_file(file_path) else { return not_found_response() };
-    let fragment = format!("{}{}", fm_html, body_html);
-    ok_response("text/html; charset=utf-8", fragment.into_bytes())
+/// カスタムプロトコルのハンドラが 1 リクエストを処理するのに必要なもの一式。
+///
+/// ハンドラは別スレッドで走る（`main.rs` 参照）ので、`Arc` で包んで共有できるよう
+/// 参照ではなく所有した値で持つ。引数を 7 つ引き回していた頃と違い、配信に必要な
+/// ものを足すときの変更がこの構造体の中だけで済む。
+pub struct RequestContext {
+    /// 配信を許可する範囲の頂点。`safe_join` はここから出るパスを拒否する。
+    pub root_dir: PathBuf,
+    /// `/` で返す初期ページ。起動時に組み立て済み。
+    pub index_html: Vec<u8>,
+    pub theme_css: String,
+    pub custom_css: String,
+    /// 単一ファイルモードで開いているファイル。フォルダモードでは None。
+    /// `?body=1` などの「引数なし番兵」クエリの対象になる。
+    pub single_file: Option<PathBuf>,
 }
 
-// フォルダモードの diff 用フラグメント。プレビュー枠を丸ごと差し替えるので .markdown-body で包む。
-// ソース差分なので md 以外のテキストファイルも対象にする（バイナリは中で弾く）。
-fn serve_diff_fragment(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = percent_decode(rel_encoded);
-    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
-    let inner = crate::diff::render_diff_inner(&file_path);
-    // diff はソース差分なので raw / 非mdソースビューと同じく全幅で出す（md/非md問わず）。
-    let fragment = format!(r#"<div class="markdown-body source-page">{}</div>"#, inner);
-    ok_response("text/html; charset=utf-8", fragment.into_bytes())
-}
-
-// 単一ファイルモードの diff 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
-fn serve_single_file_diff(file_path: &Path) -> Response {
-    let inner = crate::diff::render_diff_inner(file_path);
-    ok_response("text/html; charset=utf-8", inner.into_bytes())
-}
-
-// トグルボタンのバッジ用に、追加/削除行数だけを JSON で返す（軽量・非ブロッキング用途）。
-fn diffstat_json(file_path: &Path) -> Response {
-    let (add, del) = crate::diff::diff_stat(file_path);
-    let body = format!(r#"{{"add":{},"del":{}}}"#, add, del).into_bytes();
-    ok_response("application/json; charset=utf-8", body)
-}
-
-fn serve_diffstat(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = percent_decode(rel_encoded);
-    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
-    diffstat_json(&file_path)
-}
-
-/// ファイルのソースを、拡張子に応じた言語クラス付きの `<pre><code>` フラグメントにして
-/// 返す。レンダリング結果ではなく生ソースなので、.md 以外のテキストファイルも対象。
-/// 返すのは中身だけ（`.markdown-body` ラッパは呼び出し側で付ける）。ハイライトは
-/// クライアント側の hljs が担当する。バイナリ / 読めない場合は通知メッセージを返す。
-fn render_raw_inner(file_path: &Path) -> String {
-    let Ok(bytes) = std::fs::read(file_path) else {
-        return r#"<p class="diff-msg">ファイルを読み込めませんでした</p>"#.to_string();
-    };
-    match String::from_utf8(bytes) {
-        Ok(content) => source_view_html(file_path, &content),
-        Err(_) => {
-            // バイナリ通知は他経路（serve_non_md_fragment / 単一ファイル / --html）と文言を揃える。
-            let name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-            format!(
-                r#"<p class="diff-msg">バイナリファイルは表示できません: {}</p>"#,
-                html_escape(name)
-            )
-        }
+impl RequestContext {
+    fn single(&self) -> Option<&Path> {
+        self.single_file.as_deref()
     }
 }
 
-// フォルダモードの raw 用フラグメント。プレビュー枠を丸ごと差し替えるので .markdown-body で包む。
-// raw はソース表示なので、非md のソースビューと同じく全幅（source-page）で出す。
-fn serve_raw_fragment(rel_encoded: &str, root_dir: &Path) -> Response {
-    let rel = percent_decode(rel_encoded);
-    let Some(file_path) = safe_join(root_dir, &rel) else { return not_found_response() };
-    let inner = render_raw_inner(&file_path);
-    let fragment = format!(r#"<div class="markdown-body source-page">{}</div>"#, inner);
-    ok_response("text/html; charset=utf-8", fragment.into_bytes())
+/// 操作対象のファイルの指し方。
+///
+/// 単一ファイルモードは開いているファイルが決まっているので `?raw=1` のように
+/// 引数を取らない。フォルダモードは `?raw=<rel>` で相対パスを渡す。この 2 通りを
+/// ここで吸収することで、配信側は「単一用」と「フォルダ用」を 2 本持たなくてよくなる。
+#[derive(Debug, PartialEq, Eq)]
+enum Target {
+    /// 単一ファイルモードで開いているファイル。
+    Single,
+    /// root 相対パス（percent-decode 済み）。
+    Rel(String),
 }
 
-// 単一ファイルモードの raw 用フラグメント。既存の .markdown-body 内に差し込むのでラッパ無し。
-fn serve_single_file_raw(file_path: &Path) -> Response {
-    let inner = render_raw_inner(file_path);
-    ok_response("text/html; charset=utf-8", inner.into_bytes())
+impl Target {
+    /// プレビュー枠を丸ごと差し替えるか（＝`.markdown-body` ラッパを付けるか）。
+    /// 単一ファイルモードは既存の `.markdown-body` の中へ差し込むので付けない。
+    fn wrapped(&self) -> bool {
+        matches!(self, Target::Rel(_))
+    }
 }
 
-pub fn handle_request(
-    url_path: &str,
-    query: &str,
-    root_dir: &Path,
-    html_bytes: &[u8],
-    theme_css: &str,
-    custom_css: &str,
-    single_file: Option<&Path>,
-) -> Response {
+/// URL とクエリが指す処理。
+///
+/// 以前はクエリ文字列を `strip_prefix` で順番に舐めており、`file=` が `files=1` を
+/// 拾わないことや `diff=1` を `diff=<rel>` より先に見ることが、**判定の順序**によって
+/// 保たれていた（そのためのテストまであった）。キーで厳密に分けることで、
+/// エンドポイントを足しても前方一致の衝突が起きえなくなる。
+#[derive(Debug, PartialEq, Eq)]
+enum Route<'a> {
+    BuiltinLib(&'a str),
+    Dir(String),
+    HasMd(String),
+    Files,
+    Changed,
+    /// 通常表示（フォルダの `?file=` / 単一の `?body=1`）。
+    View(Target),
+    /// raw（ソース）表示。
+    Raw(Target),
+    Diff(Target),
+    DiffStat(Target),
+    /// 起動時に組み立てた初期ページ。
+    Index,
+    /// 画像・CSS・フォントなどの実ファイル配信。
+    Asset(&'a str),
+}
+
+/// `?raw=1` 形式の「引数なし番兵」を解釈する。単一ファイルモードでは開いている
+/// ファイルが対象。フォルダモードに番兵は無いので `"1"` という名前の相対パス指定
+/// として扱う（従来どおり。実際には該当ファイルが無く 404 になる）。
+fn sentinel_target(value: &str, has_single: bool) -> Target {
+    if has_single && value == "1" {
+        Target::Single
+    } else {
+        Target::Rel(percent_decode(value))
+    }
+}
+
+fn parse_route<'a>(url_path: &'a str, query: &str, has_single: bool) -> Route<'a> {
     if let Some(name) = url_path.strip_prefix("/__lib/") {
-        return serve_builtin_lib(name);
+        return Route::BuiltinLib(name);
     }
-    if let Some(rel_encoded) = query.strip_prefix("dir=") {
-        return handle_dir(rel_encoded, root_dir);
-    }
-    // ファイル検索（⌘P）の一覧。`file=` の strip_prefix とは前方一致しない
-    // （"files=1" は "file=" で始まらない）ので順序に依存しないが、dir= の隣に置く。
-    if query == "files=1" {
-        return handle_files(root_dir);
-    }
-    // ファイル検索（⌘P）の「変更のあるファイル」一覧。`file=` とも `diff=` とも
-    // 前方一致しないので順序に依存しないが、files=1 の隣に置く。
-    if query == "changed=1" {
-        return handle_changed(root_dir);
-    }
-    if let Some(rel_encoded) = query.strip_prefix("file=") {
-        return handle_file(rel_encoded, root_dir);
-    }
-    if query == "body=1" {
-        if let Some(path) = single_file {
-            return serve_single_file_body(path);
+    // クエリは常に「キー=値」1 組。値は percent-encode されて届く。
+    if let Some((key, value)) = query.split_once('=') {
+        match key {
+            "dir" => return Route::Dir(percent_decode(value)),
+            "has_md" => return Route::HasMd(percent_decode(value)),
+            "files" => return Route::Files,
+            "changed" => return Route::Changed,
+            "file" => return Route::View(Target::Rel(percent_decode(value))),
+            "body" => return Route::View(Target::Single),
+            "raw" => return Route::Raw(sentinel_target(value, has_single)),
+            "diff" => return Route::Diff(sentinel_target(value, has_single)),
+            "diffstat" => return Route::DiffStat(sentinel_target(value, has_single)),
+            _ => {}
         }
-        return not_found_response();
-    }
-    // diff=1 は単一ファイルモードの番兵。folder モードの diff=<rel> より先に判定する
-    // （strip_prefix("diff=") は "diff=1" も拾ってしまうため）。single_file が無い
-    // （＝folder モード）なら番兵ではなく、"1" という名前のファイル指定として後続に流す。
-    if query == "diff=1" {
-        if let Some(path) = single_file {
-            return serve_single_file_diff(path);
-        }
-    }
-    if let Some(rel_encoded) = query.strip_prefix("diff=") {
-        return serve_diff_fragment(rel_encoded, root_dir);
-    }
-    // diff と同じく diffstat=1 は単一ファイルの番兵、diffstat=<rel> は folder。
-    if query == "diffstat=1" {
-        if let Some(path) = single_file {
-            return diffstat_json(path);
-        }
-    }
-    if let Some(rel_encoded) = query.strip_prefix("diffstat=") {
-        return serve_diffstat(rel_encoded, root_dir);
-    }
-    // diff と同じく raw=1 は単一ファイルモードの番兵、raw=<rel> は folder モード。
-    if query == "raw=1" {
-        if let Some(path) = single_file {
-            return serve_single_file_raw(path);
-        }
-    }
-    if let Some(rel_encoded) = query.strip_prefix("raw=") {
-        return serve_raw_fragment(rel_encoded, root_dir);
     }
     if url_path == "/" {
-        return ok_response("text/html; charset=utf-8", html_bytes.to_vec());
+        return Route::Index;
     }
-    handle_asset(url_path, root_dir, theme_css, custom_css)
+    Route::Asset(url_path)
+}
+
+/// 対象を「実パス」と「iframe の `src` に使う root 相対パス」の組へ解決する。
+/// root の外を指すもの・単一ファイルモードでないのに `Single` を指すものは None。
+fn resolve(target: &Target, ctx: &RequestContext) -> Option<(PathBuf, String)> {
+    match target {
+        Target::Single => {
+            let p = ctx.single()?;
+            // 単一ファイルモードの root は親ディレクトリなので、rel はファイル名。
+            let rel = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            Some((p.to_path_buf(), rel))
+        }
+        Target::Rel(rel) => safe_join(&ctx.root_dir, rel).map(|p| (p, rel.clone())),
+    }
+}
+
+/// 本文 HTML を、対象に応じてラッパ有り / 無しで返す。
+fn respond_fragment(target: &Target, body_class: &str, html: String) -> Response {
+    let body = if target.wrapped() {
+        let class = if body_class.is_empty() {
+            "markdown-body".to_string()
+        } else {
+            format!("markdown-body {}", body_class)
+        };
+        format!(r#"<div class="{}">{}</div>"#, class, html)
+    } else {
+        html
+    };
+    ok_response("text/html; charset=utf-8", body.into_bytes())
+}
+
+fn serve_view(ctx: &RequestContext, target: &Target, mode: ViewMode) -> Response {
+    let Some((path, rel)) = resolve(target, ctx) else { return not_found_response() };
+    let Some(r) = render_file(&path, &rel, mode) else { return not_found_response() };
+    respond_fragment(target, r.body_class, r.html)
+}
+
+/// diff はレンダリング結果ではなくソース差分なので、md / 非md を問わず全幅
+/// （`source-page`）で出す。バイナリ・巨大ファイルは diff 側が中で弾く。
+fn serve_diff(ctx: &RequestContext, target: &Target) -> Response {
+    let Some((path, _)) = resolve(target, ctx) else { return not_found_response() };
+    respond_fragment(target, "source-page", crate::diff::render_diff_inner(&path))
+}
+
+/// トグルボタンのバッジ用に、追加/削除行数だけを返す（軽量・非ブロッキング用途）。
+fn serve_diffstat(ctx: &RequestContext, target: &Target) -> Response {
+    let Some((path, _)) = resolve(target, ctx) else { return not_found_response() };
+    let (add, del) = crate::diff::diff_stat(&path);
+    ok_response(
+        "application/json; charset=utf-8",
+        format!(r#"{{"add":{},"del":{}}}"#, add, del).into_bytes(),
+    )
+}
+
+pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Response {
+    match parse_route(url_path, query, ctx.single().is_some()) {
+        Route::BuiltinLib(name) => serve_builtin_lib(name),
+        Route::Dir(rel) => handle_dir(&rel, &ctx.root_dir),
+        // サイドバーの「md を含むフォルダ」の点。深さ無制限の全走査になりうるが、
+        // ハンドラ自体が別スレッドで走るのでここで完結してよい。
+        Route::HasMd(rel) => handle_has_md(&rel, &ctx.root_dir),
+        Route::Files => handle_files(&ctx.root_dir),
+        Route::Changed => handle_changed(&ctx.root_dir),
+        Route::View(t) => serve_view(ctx, &t, ViewMode::Normal),
+        Route::Raw(t) => serve_view(ctx, &t, ViewMode::RawSource),
+        Route::Diff(t) => serve_diff(ctx, &t),
+        Route::DiffStat(t) => serve_diffstat(ctx, &t),
+        Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html.clone()),
+        Route::Asset(p) => handle_asset(p, &ctx.root_dir, &ctx.theme_css, &ctx.custom_css),
+    }
+}
+
+/// サイドバーのフォルダに「中に md がある」点を出すかの判定。
+fn handle_has_md(rel: &str, root_dir: &Path) -> Response {
+    let found = safe_join(root_dir, rel).map(|p| has_md_descendant(&p)).unwrap_or(false);
+    ok_response(
+        "application/json; charset=utf-8",
+        format!(r#"{{"has_md":{}}}"#, found).into_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -813,12 +903,41 @@ mod tests {
     }
 
     #[test]
-    fn is_html_detects_extensions() {
-        assert!(is_html(Path::new("a.html")));
-        assert!(is_html(Path::new("a.HTML")));
-        assert!(is_html(Path::new("a.htm")));
-        assert!(!is_html(Path::new("a.md")));
-        assert!(!is_html(Path::new("a.txt")));
+    fn classify_ext_is_case_insensitive() {
+        use ViewKind::*;
+        for (name, want) in [
+            ("a.md", Markdown),
+            ("a.MARKDOWN", Markdown),
+            ("a.html", HtmlPage),
+            ("a.HTM", HtmlPage),
+            ("a.txt", Source),
+            ("a.rs", Source),
+            ("noext", Source),
+        ] {
+            assert_eq!(classify_ext(Path::new(name)), want, "{name}");
+        }
+        // RENDERABLE_EXT（JS 側へ注入する一覧）と判定が一致していること。
+        for ext in RENDERABLE_EXT {
+            assert!(is_renderable(Path::new(&format!("a.{ext}"))), "{ext}");
+        }
+        assert!(!is_renderable(Path::new("a.txt")));
+    }
+
+    #[test]
+    fn binary_is_source_page_on_every_path() {
+        // 非 UTF-8 は経路によらず source-page 扱い（JS 側の raw 可否判定がブレないように）。
+        let dir = std::env::temp_dir().join(format!("md-binary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("blob.bin");
+        std::fs::write(&file, [0xff, 0xfe, 0x00]).unwrap();
+
+        for mode in [ViewMode::Normal, ViewMode::RawSource] {
+            let r = render_file(&file, "blob.bin", mode).unwrap();
+            assert_eq!(r.kind, ViewKind::Binary);
+            assert_eq!(r.body_class, "source-page");
+            assert!(r.html.contains("md-notice"), "{}", r.html);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -887,11 +1006,10 @@ mod tests {
         let md = dir.join("doc.md");
         std::fs::write(&md, "[code](./code.txt#L2)\n").unwrap();
 
-        let resp = serve_md_fragment(&md);
-        assert_eq!(resp.status(), 200);
-        let body = String::from_utf8_lossy(resp.body());
-        assert!(body.contains("code-embed"), "not embedded: {body}");
-        assert!(body.contains(">two</code>"), "wrong line: {body}");
+        let r = render_file(&md, "doc.md", ViewMode::Normal).unwrap();
+        assert_eq!(r.kind, ViewKind::Markdown);
+        assert!(r.html.contains("code-embed"), "not embedded: {}", r.html);
+        assert!(r.html.contains(">two</code>"), "wrong line: {}", r.html);
     }
 
     #[test]
@@ -983,18 +1101,49 @@ mod tests {
     }
 
     #[test]
-    fn file_list_query_is_not_shadowed_by_file_prefix() {
-        // "files=1" が `file=` の前方一致に吸われないこと（吸われると一覧が404になる）。
-        assert!("files=1".strip_prefix("file=").is_none());
+    fn routes_are_keyed_not_prefix_matched() {
+        // 似た名前のキーが互いを食わないこと（以前は strip_prefix の順序で守っていた）。
+        assert_eq!(parse_route("/", "files=1", false), Route::Files);
+        assert_eq!(parse_route("/", "changed=1", false), Route::Changed);
+        assert_eq!(
+            parse_route("/", "file=a.md", false),
+            Route::View(Target::Rel("a.md".to_string()))
+        );
+        assert_eq!(parse_route("/", "diffstat=1", true), Route::DiffStat(Target::Single));
+        // 値は percent-decode される。
+        assert_eq!(
+            parse_route("/", "file=sub%20dir%2Fa.md", false),
+            Route::View(Target::Rel("sub dir/a.md".to_string()))
+        );
     }
 
     #[test]
-    fn changed_query_is_not_shadowed_by_other_prefixes() {
-        // "changed=1" が他のクエリの前方一致に吸われないこと（吸われると 404 になり、
-        // パレットは並べ替え無しで動いてしまう＝壊れたことに気付きにくい）。
-        assert!("changed=1".strip_prefix("file=").is_none());
-        assert!("changed=1".strip_prefix("diff=").is_none());
-        assert!("changed=1".strip_prefix("dir=").is_none());
+    fn sentinel_only_applies_in_single_file_mode() {
+        // 単一ファイルモードの `=1` は「開いているファイル」。
+        assert_eq!(parse_route("/", "raw=1", true), Route::Raw(Target::Single));
+        assert_eq!(parse_route("/", "diff=1", true), Route::Diff(Target::Single));
+        // フォルダモードには番兵が無いので "1" という名前の相対パス指定になる。
+        assert_eq!(parse_route("/", "raw=1", false), Route::Raw(Target::Rel("1".to_string())));
+        assert_eq!(parse_route("/", "diff=1", false), Route::Diff(Target::Rel("1".to_string())));
+        // body=1 は常に単一ファイル向け（フォルダモードでは resolve が失敗して 404）。
+        assert_eq!(parse_route("/", "body=1", false), Route::View(Target::Single));
+    }
+
+    #[test]
+    fn non_query_routes() {
+        assert_eq!(parse_route("/__lib/mermaid.min.js", "", false), Route::BuiltinLib("mermaid.min.js"));
+        assert_eq!(parse_route("/", "", false), Route::Index);
+        assert_eq!(parse_route("/img/a.png", "", false), Route::Asset("/img/a.png"));
+        // 知らないキーはアセット配信に落ちる（クエリ付きの画像 URL 等）。
+        assert_eq!(parse_route("/img/a.png", "v=2", false), Route::Asset("/img/a.png"));
+    }
+
+    #[test]
+    fn single_target_is_not_wrapped_but_rel_is() {
+        // 単一ファイルは既存の .markdown-body の中へ差し込むのでラッパ無し、
+        // フォルダはプレビュー枠を丸ごと差し替えるのでラッパ有り。
+        assert!(!Target::Single.wrapped());
+        assert!(Target::Rel("a.md".to_string()).wrapped());
     }
 
     #[test]
@@ -1012,11 +1161,15 @@ mod tests {
     }
 
     #[test]
-    fn single_file_body_html_returns_iframe() {
-        let resp = serve_single_file_body(Path::new("/tmp/whatever/foo.html"));
-        assert_eq!(resp.status(), 200);
-        let body = String::from_utf8_lossy(resp.body());
-        assert!(body.contains(r#"class="html-frame""#), "{body}");
-        assert!(body.contains(r#"src="/foo.html""#), "{body}");
+    fn html_is_rendered_as_iframe_without_reading_the_file() {
+        // html は中身を読まずに iframe を返す（描くのは WebView 側）。存在しない
+        // パスでも 200 になるのはそのため。
+        let r = render_file(Path::new("/tmp/whatever/foo.html"), "foo.html", ViewMode::Normal).unwrap();
+        assert_eq!(r.kind, ViewKind::HtmlPage);
+        assert_eq!(r.body_class, "html-page");
+        assert!(r.html.contains(r#"class="html-frame""#), "{}", r.html);
+        assert!(r.html.contains(r#"src="/foo.html""#), "{}", r.html);
+        // raw トグル時はソース扱いなので、読めなければ None（404）。
+        assert!(render_file(Path::new("/tmp/whatever/foo.html"), "foo.html", ViewMode::RawSource).is_none());
     }
 }

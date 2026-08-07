@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use md_preview::request::{handle_request, has_md_descendant, safe_join};
+use md_preview::request::{handle_request, has_md_descendant, safe_join, RequestContext};
 
 /// 決定論のための小さな PRNG（splitmix64）。乱数クレートを足さずに、シードから
 /// 完全に再現可能な操作列を作るために自前で持つ。
@@ -104,40 +104,29 @@ enum Action {
 }
 
 /// root を空文字（ルート自身）と与えられた相対パスから、各操作を実行する。
-/// `handle_request` に渡す付随引数は空で構わない（本文 HTML 生成やテーマは
+/// `RequestContext` の付随フィールドは空で構わない（本文 HTML 生成やテーマは
 /// 固まり/パニックの判定に関係しないため）。
 fn perform(action: &Action, root: &Path) {
-    let root = root.to_path_buf();
+    let ctx = RequestContext {
+        root_dir: root.to_path_buf(),
+        index_html: Vec::new(),
+        theme_css: String::new(),
+        custom_css: String::new(),
+        single_file: None,
+    };
     match action {
-        Action::ListDir(rel) => {
-            let q = format!("dir={}", rel);
-            drop(handle_request("/", &q, &root, b"", "", "", None));
-        }
+        Action::ListDir(rel) => drop(handle_request(&ctx, "/", &format!("dir={}", rel))),
         Action::HasMd(rel) => {
-            // main.rs の has_md= 経路と同じ。safe_join を通してから全走査する。
-            if let Some(p) = safe_join(&root, rel) {
+            // has_md= 経路と同じ。safe_join を通してから全走査する。
+            if let Some(p) = safe_join(&ctx.root_dir, rel) {
                 let _ = has_md_descendant(&p);
             }
         }
-        Action::OpenFile(rel) => {
-            let q = format!("file={}", rel);
-            drop(handle_request("/", &q, &root, b"", "", "", None));
-        }
-        Action::Raw(rel) => {
-            let q = format!("raw={}", rel);
-            drop(handle_request("/", &q, &root, b"", "", "", None));
-        }
-        Action::Diff(rel) => {
-            let q = format!("diff={}", rel);
-            drop(handle_request("/", &q, &root, b"", "", "", None));
-        }
-        Action::Asset(rel) => {
-            let path = format!("/{}", rel);
-            drop(handle_request(&path, "", &root, b"", "", "", None));
-        }
-        Action::Garbage(q) => {
-            drop(handle_request("/", q, &root, b"", "", "", None));
-        }
+        Action::OpenFile(rel) => drop(handle_request(&ctx, "/", &format!("file={}", rel))),
+        Action::Raw(rel) => drop(handle_request(&ctx, "/", &format!("raw={}", rel))),
+        Action::Diff(rel) => drop(handle_request(&ctx, "/", &format!("diff={}", rel))),
+        Action::Asset(rel) => drop(handle_request(&ctx, &format!("/{}", rel), "")),
+        Action::Garbage(q) => drop(handle_request(&ctx, "/", q)),
     }
 }
 

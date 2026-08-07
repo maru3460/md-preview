@@ -159,17 +159,15 @@
     return parts.join('/');
   }
 
-  function isMarkdownPath(p) {
-    return /\.(md|markdown)$/i.test(p || '');
-  }
-
-  function isHtmlPath(p) {
-    return /\.html?$/i.test(p || '');
-  }
-
   // 通常表示がレンダリング結果になるファイル（md / html）。Raw トグルが意味を持つ対象。
+  // 拡張子の一覧は Rust 側（request::RENDERABLE_EXT）が定義元で、起動時に
+  // window.MD_RENDERABLE_EXT として注入される。ここに書き写さないこと
+  // （書き写すと Rust 側だけ直した時に、開けるのに raw が出ないファイルが生まれる）。
   function isRenderablePath(p) {
-    return isMarkdownPath(p) || isHtmlPath(p);
+    var m = /\.([^./\\]+)$/.exec(p || '');
+    if (!m) return false;
+    var exts = window.MD_RENDERABLE_EXT || [];
+    return exts.indexOf(m[1].toLowerCase()) >= 0;
   }
 
   // iframe(.html-frame) 内の相対リンククリックを親のプレビュー遷移に回す。true を返すと
@@ -191,7 +189,7 @@
     var article = document.createElement('div');
     article.className = 'markdown-body';
     var p = document.createElement('p');
-    p.className = 'binary-msg';
+    p.className = 'md-notice';
     p.textContent = 'このファイルは開けませんでした: ' + name
       + '（フォルダ外を指すリンク・権限・壊れたファイルなどの可能性）';
     article.appendChild(p);
@@ -216,20 +214,15 @@
     // md / html は通常表示がレンダリング結果なので Raw（ソース）トグルを有効化する。
     // それ以外は通常表示が既にソースなので raw は無効化（トグルを隠す）。raw 表示中に
     // 無効ファイルへ切り替えたら setAvailable(false) が状態を畳むので通常フェッチに落ちる。
-    if (window.MdRaw && window.MdRaw.setAvailable) window.MdRaw.setAvailable(isRenderablePath(relPath));
+    if (window.MdRaw) window.MdRaw.setAvailable(isRenderablePath(relPath));
 
     // raw / diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
-    // ソース / 差分を表示する（本文レンダリングには戻さない）。両者は排他。
-    if (window.MdRaw && window.MdRaw.isActive()) {
+    // ソース / 差分を表示する（本文レンダリングには戻さない）。
+    var mode = window.MdViewModes && window.MdViewModes.active();
+    if (mode) {
       // ファイル切替（preserveScroll=false）は先頭から、ホットリロードは位置維持。
       if (!preserveScroll) pane.scrollTop = 0;
-      window.MdRaw.refresh();
-      return;
-    }
-    if (window.MdDiff && window.MdDiff.isActive()) {
-      // ファイル切替（preserveScroll=false）は先頭から、ホットリロードは位置維持。
-      if (!preserveScroll) pane.scrollTop = 0;
-      window.MdDiff.refresh();
+      mode.refresh();
       return;
     }
 
@@ -242,17 +235,9 @@
         if (html == null) { showLoadError(pane, relPath); return; }
         pane.innerHTML = html;
         pane.scrollTop = savedScroll;
-        MdCommon.ensureHeadingIds(pane);
-        if (window.hljs) hljs.highlightAll();
-        MdCommon.addCopyButtons(pane);
-        MdCommon.addLineNumbers(pane);
-        MdCommon.runMermaid(pane);
-        MdCommon.runDrawio(pane);
-        if (window.MdToc) window.MdToc.refresh();
-        // html 表示（iframe）なら、ショートカット転送＋相対リンクの親側ルーティングを配線する。
-        if (MdCommon.wireHtmlFrames) MdCommon.wireHtmlFrames(pane, { onLinkClick: frameLinkClick });
-        // ファイル切替/ホットリロードで本文が入れ替わるので、現在ファイルのマーカーを貼り直す。
-        if (window.MdComment) window.MdComment.reanchor();
+        // html 表示（iframe）の相対リンクは、iframe 内遷移ではなく親のプレビュー遷移に
+        // 回す（サイドバーの選択やコメントの現在ファイルを同期させるため）。
+        MdCommon.hydrate(pane, { onLinkClick: frameLinkClick });
       })
       .catch(function() { showLoadError(pane, relPath); });
   }
@@ -261,8 +246,8 @@
     if (!currentFilePath) return;
     if (relPath && relPath !== currentFilePath) return;
     // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
-    if (window.MdRaw && window.MdRaw.isActive()) { window.MdRaw.refresh(); return; }
-    if (window.MdDiff && window.MdDiff.isActive()) { window.MdDiff.refresh(); return; }
+    var mode = window.MdViewModes && window.MdViewModes.active();
+    if (mode) { mode.refresh(); return; }
     loadPreview(currentFilePath, true);
   };
 
@@ -406,36 +391,35 @@
     if (wasTree) { setCursor(row); focusTree(); }
   }
 
-  document.addEventListener('keydown', function(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;           // ⌘系はここでは扱わない
-    if (window.MdCommon && MdCommon.isOverlayOpen()) return;   // 検索/ヘルプ/右クリメニュー中は休止
-    var inTree = !!(window.MdCommon && MdCommon.isSidebarFocused());
-
+  // キーの割り当て・効く文脈は keymap.js の表が持つ。ここは実処理だけ。
+  //
+  // 注: このファイルは初期化スクリプト（document-start）として注入されるので、
+  // <head> の各モジュールより **先に** 評価される。MdKeymap はまだ存在しないため、
+  // 登録は DOMContentLoaded まで遅らせる。
+  function registerKeys() {
+    if (!window.MdKeymap) return;
     // Tab / [ / ] はツリー内外どちらでも効くアプリ全体のナビ。
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      if (inTree) focusPreview(); else focusTree();
-      return;
-    }
-    if (e.key === '[') { e.preventDefault(); gotoAdjacentFile(-1); return; }
-    if (e.key === ']') { e.preventDefault(); gotoAdjacentFile(1); return; }
-
-    // 以降はツリーにフォーカスがある時だけ。
-    if (!inTree) return;
-    switch (e.key) {
-      case 'j': case 'ArrowDown':  e.preventDefault(); moveCursor(1); break;
-      case 'k': case 'ArrowUp':    e.preventDefault(); moveCursor(-1); break;
-      case 'g':                    e.preventDefault(); cursorEdge(false); break;
-      case 'G':                    e.preventDefault(); cursorEdge(true); break;
-      case 'l': case 'ArrowRight': e.preventDefault(); expandOrOpen(); break;
-      case 'h': case 'ArrowLeft':  e.preventDefault(); collapseOrParent(); break;
-      case 'Enter':                e.preventDefault(); toggleOrOpen(); break;
-      // ツリーにフォーカスがある間は keyscroll.js が休止するので、'/' はここで拾う
-      // （⌘F / ? と揃えて、どのフォーカスでも検索を開けるようにする）。
-      case '/':                    e.preventDefault(); if (window.MdSearch && MdSearch.open) MdSearch.open(); break;
-      default: break;
-    }
-  });
+    MdKeymap.on('focus-toggle', function() {
+      if (window.MdCommon && MdCommon.isSidebarFocused()) focusPreview();
+      else focusTree();
+    });
+    MdKeymap.on('file-cycle', function(e) {
+      gotoAdjacentFile(e.key === '[' ? -1 : 1);
+    });
+    // ツリーにフォーカスがある時だけ呼ばれる（keymap.js 側の when が保証する）。
+    MdKeymap.on('tree', function(e) {
+      switch (e.key) {
+        case 'j': case 'ArrowDown':  moveCursor(1); break;
+        case 'k': case 'ArrowUp':    moveCursor(-1); break;
+        case 'g':                    cursorEdge(false); break;
+        case 'G':                    cursorEdge(true); break;
+        case 'l': case 'ArrowRight': expandOrOpen(); break;
+        case 'h': case 'ArrowLeft':  collapseOrParent(); break;
+        case 'Enter':                toggleOrOpen(); break;
+        default: break;
+      }
+    });
+  }
 
   // フォーカスがサイドバー外へ出たら、サイドバーのアクティブ枠(nav-tree)を畳む。
   // 本文クリックやトグル操作でツリーから抜けた時に、枠が残って主役表示が嘘になるのを防ぐ。
@@ -448,6 +432,7 @@
   });
 
   document.addEventListener('DOMContentLoaded', function() {
+    registerKeys();
     var resizer = document.getElementById('resizer');
     var sidebar = document.getElementById('sidebar');
     var isDragging = false;
@@ -488,20 +473,19 @@
       // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。
       window.MdPalette.init({ openFile: function(rel) { loadPreview(rel); } });
     }
-    if (window.MdDiff) {
-      window.MdDiff.init({
-        getContainer: function() { return document.getElementById('preview-pane'); },
-        getScroller: function() { return document.getElementById('preview-pane'); },
-        getDiffUrl: function() { return currentFilePath ? '/?diff=' + encodeURIComponent(currentFilePath) : null; },
-        getStatUrl: function() { return currentFilePath ? '/?diffstat=' + encodeURIComponent(currentFilePath) : null; },
-        reloadNormal: function() { if (currentFilePath) loadPreview(currentFilePath, true); }
-      });
-    }
-    if (window.MdRaw) {
-      window.MdRaw.init({
-        getContainer: function() { return document.getElementById('preview-pane'); },
-        getScroller: function() { return document.getElementById('preview-pane'); },
-        getRawUrl: function() { return currentFilePath ? '/?raw=' + encodeURIComponent(currentFilePath) : null; },
+    if (window.MdViewModes) {
+      var previewPane = function() { return document.getElementById('preview-pane'); };
+      window.MdViewModes.initAll({
+        getContainer: previewPane,
+        getScroller: previewPane,
+        // フォルダモードは対象ファイルを相対パスで渡す（単一ファイルモードの `=1` 番兵
+        // と違い、開いているファイルがサーバ側に無いため）。
+        url: function(id) {
+          return currentFilePath ? '/?' + id + '=' + encodeURIComponent(currentFilePath) : null;
+        },
+        getStatUrl: function() {
+          return currentFilePath ? '/?diffstat=' + encodeURIComponent(currentFilePath) : null;
+        },
         reloadNormal: function() { if (currentFilePath) loadPreview(currentFilePath, true); }
       });
     }
@@ -540,23 +524,14 @@
       });
   });
 
-  document.addEventListener('keydown', function(e) {
-    if (e.metaKey && e.key === 'w') {
-      e.preventDefault();
-      window.ipc.postMessage('close');
-    }
-  });
-
+  // ⌘W と ⌘A は common.js が keymap 経由で処理する。
   document.addEventListener('click', function(e) {
     var a = e.target.closest('a[href]');
     if (!a) return;
     var href = a.getAttribute('href');
     if (!href) return;
-    if (href.charAt(0) === '#') {
-      e.preventDefault();
-      var id = decodeURIComponent(href.slice(1));
-      var target = document.getElementById(id);
-      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    if (MdCommon.scrollToAnchor(href, e)) {
+      // ページ内アンカーは処理済み。
     } else if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('mailto:')) {
       var hashIdx = href.indexOf('#');
       var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;

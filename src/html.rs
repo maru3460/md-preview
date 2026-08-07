@@ -85,17 +85,34 @@ pub const MERMAID_JS: &str = include_str!("mermaid.min.js");
 pub const DRAWIO_JS: &str = include_str!("drawio-viewer.min.js");
 
 pub const INIT_JS: &str = include_str!("init.js");
-pub const SEARCH_JS: &str = include_str!("search.js");
-pub const PALETTE_JS: &str = include_str!("palette.js");
-pub const TOC_JS: &str = include_str!("toc.js");
-pub const COMMON_JS: &str = include_str!("common.js");
-pub const CONTEXT_JS: &str = include_str!("contextmenu.js");
-pub const DIFF_JS: &str = include_str!("diff.js");
-pub const RAW_JS: &str = include_str!("raw.js");
-pub const KEYMAP_JS: &str = include_str!("keymap.js");
-pub const HELP_JS: &str = include_str!("help.js");
-pub const KEYSCROLL_JS: &str = include_str!("keyscroll.js");
-pub const COMMENT_JS: &str = include_str!("comment.js");
+
+/// ページの `<head>` に inline する自前スクリプト。**この配列の順序が読み込み順**で、
+/// モジュールを足すときはここに 1 行加えるだけでよい。
+///
+/// 順序に意味があるのは先頭の 2 つだけ:
+///   - `keymap.js` … ショートカットの単一定義元。各モジュールが評価時に
+///                   `MdKeymap.on()` でハンドラを差し込むので、いちばん先に置く。
+///                   この中で `MdCommon` を触るのは全て呼び出し時なので、
+///                   common.js より前でも問題ない。
+///   - `common.js` … 共有ヘルパとオーバーレイ レジストリ。評価時に
+///                   `MdCommon.registerOverlay` を呼ぶモジュールより前に置く。
+/// 残りは互いに依存しない（初期化は DOMContentLoaded 後に走る）。
+///
+/// モードごとの起動スクリプト（`INIT_JS` / `FOLDER_JS`）はここには含めない。
+/// あちらは `<head>` ではなく初期化スクリプトとして注入される。
+const PAGE_SCRIPTS: &[(&str, &str)] = &[
+    ("keymap.js", include_str!("keymap.js")),
+    ("common.js", include_str!("common.js")),
+    ("highlight.min.js", include_str!("highlight.min.js")),
+    ("search.js", include_str!("search.js")),
+    ("palette.js", include_str!("palette.js")),
+    ("toc.js", include_str!("toc.js")),
+    ("contextmenu.js", include_str!("contextmenu.js")),
+    ("viewmode.js", include_str!("viewmode.js")),
+    ("help.js", include_str!("help.js")),
+    ("keyscroll.js", include_str!("keyscroll.js")),
+    ("comment.js", include_str!("comment.js")),
+];
 
 /// CSP の nonce を生成する。本文（untrusted な Markdown）に埋め込まれた inline
 /// script を実行させないため、自前の inline script だけにこの nonce を付ける。
@@ -401,11 +418,14 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
     out
 }
 
-/// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、
-/// common.js（init/folder より前に評価させたい共有ヘルパ）・hljs・search・palette・toc を inline する。
-/// keymap.js はショートカット定義の単一定義元なので、それを読む help.js より前に置く。
+/// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、`PAGE_SCRIPTS` の
+/// 各モジュールを nonce 付きで inline する。
 /// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILE 等）を末尾に差し込む。
 fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce: &str) -> String {
+    let scripts: String = PAGE_SCRIPTS
+        .iter()
+        .map(|(_name, src)| format!("<script nonce=\"{}\">{}</script>\n", nonce, src))
+        .collect();
     // CSP: script は nonce 付きの自前 script と同一オリジン（mdpreview://localhost、
     // /__lib/ の mermaid・drawio 等）のみ許可。'unsafe-inline' を入れないことで、
     // 本文に書かれた <script> や on* 属性は実行されない。'unsafe-eval' は mermaid/drawio
@@ -417,36 +437,13 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 <style>{base_css}</style>
 <style>{theme_css}</style>
 <style>{custom_css}</style>
-<script nonce="{nonce}">{common_js}</script>
-<script nonce="{nonce}">{hljs_js}</script>
-<script nonce="{nonce}">{search_js}</script>
-<script nonce="{nonce}">{palette_js}</script>
-<script nonce="{nonce}">{toc_js}</script>
-<script nonce="{nonce}">{context_js}</script>
-<script nonce="{nonce}">{diff_js}</script>
-<script nonce="{nonce}">{raw_js}</script>
-<script nonce="{nonce}">{keymap_js}</script>
-<script nonce="{nonce}">{help_js}</script>
-<script nonce="{nonce}">{keyscroll_js}</script>
-<script nonce="{nonce}">{comment_js}</script>
-{extra_head}"#,
+{scripts}{extra_head}"#,
         nonce = nonce,
         title = html_escape(title),
         base_css = BASE_CSS,
         theme_css = theme_css,
         custom_css = custom_css,
-        common_js = COMMON_JS,
-        hljs_js = HLJS_JS,
-        search_js = SEARCH_JS,
-        palette_js = PALETTE_JS,
-        toc_js = TOC_JS,
-        context_js = CONTEXT_JS,
-        diff_js = DIFF_JS,
-        raw_js = RAW_JS,
-        keymap_js = KEYMAP_JS,
-        help_js = HELP_JS,
-        keyscroll_js = KEYSCROLL_JS,
-        comment_js = COMMENT_JS,
+        scripts = scripts,
         extra_head = extra_head,
     )
 }

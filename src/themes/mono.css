@@ -55,7 +55,7 @@ sup.footnote-reference a { text-decoration: none; font-weight: 700; }
 .frontmatter { background-color: #efece3; border-color: #d3cdbd; line-height: 1.7; }
 .fm-key { color: #6b675c; font-weight: 700; }
 .fm-val { color: #2b2a26; }
-.binary-msg { color: #6b675c; font-style: italic; }
+.md-notice { color: #6b675c; font-style: italic; }
 
 blockquote.markdown-alert-note,
 blockquote.markdown-alert-tip,

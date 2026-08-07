@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'nonce-NONCE'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; media-src 'self' data:; frame-src 'self'; worker-src 'self' blob:">
+<title>fixtures</title>
+<style>…</style>
+<style>…</style>
+<style>…</style>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
+</head>
+<body class="folder-mode">
+<div class="folder-layout">
+  <div id="sidebar" tabindex="-1"></div>
+  <div id="resizer"></div>
+  <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
+</div>
+</body>
+</html>

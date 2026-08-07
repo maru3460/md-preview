@@ -1,0 +1,7 @@
+status: 200
+content-type: application/octet-stream
+----
+one
+two
+three
+four

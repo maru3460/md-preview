@@ -1225,7 +1225,10 @@ details[open] {
     border-radius: 2px;
 }
 
-.diff-msg {
+/* 「表示できません」系の通知段落。バイナリ・巨大ファイル・読み込み失敗・
+   フォルダ外リンクなど、経路を問わずこの 1 クラスに揃える（以前は diff-msg と
+   binary-msg に割れており、後者は CSS 規則が無く素の段落で出ていた）。 */
+.md-notice {
     text-align: center;
     color: color-mix(in srgb, currentColor 55%, transparent);
     padding: 32px 0;

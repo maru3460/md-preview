@@ -1,0 +1,4 @@
+status: 200
+content-type: text/html; charset=utf-8
+----
+<div class="markdown-body html-page"><iframe class="html-frame" src="/page.html" title="page.html" referrerpolicy="no-referrer"></iframe></div>

@@ -351,10 +351,7 @@
   // ── 操作 ─────────────────────────────────────────────────────
   function onInputKey(e) {
     switch (e.key) {
-      case 'Escape':
-        e.preventDefault();
-        close();
-        return;
+      // Esc は MdCommon が一括で受ける（最前面の 1 つだけを閉じる）。
       case 'Enter':
         e.preventDefault();
         choose();
@@ -492,21 +489,19 @@
       opts = o || {};
       if (initialized) return;
       initialized = true;
-      document.addEventListener('keydown', function(e) {
-        // パレット内の ⌃p（上へ移動）は input 側で処理済みなので、ここでは触らない。
-        if (e.defaultPrevented) return;
-        // 入力欄からフォーカスが外れていても Esc で閉じられるようにする
-        // （リストの余白クリック等でフォーカスが抜けた時の保険）。
-        if (e.key === 'Escape' && overlay) {
-          e.preventDefault();
-          close();
-          return;
-        }
-        if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
-        if (e.key !== 'p' && e.key !== 'P' && e.code !== 'KeyP') return;
-        e.preventDefault();
-        toggle();
-      });
+      // Esc の受け手は MdCommon が一括で持つ。入力欄からフォーカスが外れていても
+      // （リストの余白クリック等）閉じられる。
+      if (window.MdCommon && MdCommon.registerOverlay) {
+        MdCommon.registerOverlay({
+          id: 'md-pal-backdrop',
+          isOpen: function() { return !!overlay; },
+          close: close,
+          priority: 30
+        });
+      }
+      // パレット内の ⌃p（Emacs 流の上移動）は input 側で処理済み。keymap の
+      // ディスパッチャが defaultPrevented を見て譲るので、ここでは気にしなくてよい。
+      if (window.MdKeymap) MdKeymap.on('palette-toggle', toggle);
     },
     // 起動直後に一覧を温めておく（初回の ⌘P を待たせない）。
     prefetch: function() { load(); },

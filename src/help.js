@@ -104,19 +104,18 @@
     maybeOnboard();
   }
 
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && overlay) {
-      e.preventDefault();
-      close();
-      return;
-    }
-    if (e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
-    // 入力欄（検索ボックス等）にフォーカス中は通常入力に委ねる。
-    var t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    e.preventDefault();
-    open();
-  });
+  // Esc の受け手は MdCommon が一括で持つ（最前面の 1 つだけを閉じる）。
+  if (window.MdCommon && MdCommon.registerOverlay) {
+    MdCommon.registerOverlay({
+      id: 'md-help-backdrop',
+      isOpen: function() { return !!overlay; },
+      close: close,
+      priority: 30
+    });
+  }
+
+  // `?` は開閉トグル（open() 側が「既に開いていれば閉じる」を見ている）。
+  if (window.MdKeymap) MdKeymap.on('help-toggle', function() { open(); });
 
   window.MdHelp = {
     open: function() {

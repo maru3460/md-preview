@@ -1,0 +1,4 @@
+status: 200
+content-type: text/html; charset=utf-8
+----
+<div class="markdown-body source-page"><p class="md-notice">バイナリファイルは表示できません: blob.bin</p></div>
