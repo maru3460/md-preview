@@ -280,6 +280,16 @@
 
     syncFrameBackground(frame);
 
+    // iframe 内の mousedown / scroll は親 document には届かないので、contextmenu.js が
+    // 「外側クリック / スクロールで閉じる」ために親へ張るリスナーが発火しない。
+    // 開いたままになる右クリックメニューを、ここで明示的に閉じる（未オープン時は no-op）。
+    doc.addEventListener('mousedown', function() {
+      if (window.MdMenu) MdMenu.close();
+    }, true);
+    doc.addEventListener('scroll', function() {
+      if (window.MdMenu) MdMenu.close();
+    }, true);
+
     doc.addEventListener('keydown', function(e) {
       // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 /
       // w=close / f=検索)だけ親へ委譲する。

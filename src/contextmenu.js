@@ -192,6 +192,9 @@
 
   window.MdMenu = {
     // folder.js が loadPreview 時に現在ファイルの相対パスを通知する。
-    setCurrentFile: function(rel) { currentRel = rel || null; }
+    setCurrentFile: function(rel) { currentRel = rel || null; },
+    // iframe(html-frame)内のクリック/スクロールは親 document のリスナーに届かない。
+    // common.js の bindFrame がここを呼んで閉じる（未オープン時は no-op）。
+    close: close
   };
 })();

@@ -228,3 +228,24 @@ test('j / k で本文がスクロールする', async ({ page }) => {
   await page.keyboard.press('k');
   expect(await top()).toBe(0);
 });
+
+test('html プレビュー(iframe)内のクリックで右クリックメニューが閉じる', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+
+  // 先に iframe 内を一度クリックしてフォーカスを移しておく。実機では右クリック自体が
+  // フォーカスを移すため、メニューが開いた後のクリックでは親 window の blur が
+  // 発火しない。この状態を作らないと、blur 経由で閉じてしまいバグを検出できない。
+  await frame.locator('h1').click();
+
+  await frame.locator('h1').click({ button: 'right' });
+  const menu = page.locator('#md-context-menu');
+  await expect(menu).toBeVisible();
+
+  // メニュー外＝iframe 内の別の場所をクリック。親 document にはこの mousedown が
+  // 届かないので、bindFrame の橋渡しが無いとメニューが開いたまま残る。
+  await frame.locator('p').last().click();
+  await expect(menu).toHaveCount(0);
+});
