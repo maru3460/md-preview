@@ -33,6 +33,7 @@ pub struct AppConfig {
     /// 右クリックメニューの出し分けに使う実行モード。"folder" | "single" | "stdin"。
     pub menu_mode: &'static str,
     /// 単一ファイルモードで、コメントの file:line に使う相対パス（cwd 外なので basename）。
+    /// stdin モードは実体のファイルが無いので "(stdin)" とラベルする。
     /// folder / cwd モードは JS 側が現在ファイルの相対パスを持つので None。
     pub file_rel: Option<String>,
 }
@@ -46,8 +47,9 @@ impl AppConfig {
     /// - `MD_APPEARANCE`     解決済みテーマの外観。JS で描く図（mermaid）を OS 設定では
     ///                       なくテーマに追従させる。
     /// - `MD_MENU_MODE`      右クリックメニューとヘルプの出し分けに使う実行モード。
-    /// - `MD_FILE_REL`       単一ファイルモードで、コメントの file:line に使う相対パス。
-    ///                       folder / stdin は空（folder は JS 側が現在ファイルを持つ）。
+    /// - `MD_FILE_REL`       単一ファイル/stdin モードで、コメントの file:line に使うラベル
+    ///                       （単一=相対パス / stdin="(stdin)"）。folder は JS 側が現在
+    ///                       ファイルを持つので空。
     /// - `MD_RENDERABLE_EXT` レンダリング対象の拡張子。定義元は `request::RENDERABLE_EXT`。
     pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
         let renderable = request::RENDERABLE_EXT
@@ -115,7 +117,8 @@ impl AppConfig {
         let root = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
         // stdin にはファイルの居場所が無いので、単独行ファイルリンクは cwd 基準で解決する。
         let html = render_full_document(&markdown, "stdin", theme_css, custom_css, Some(&root));
-        Self::single_page("stdin".to_string(), html, root, None, "stdin", None)
+        // 実体のファイルが無いので、コメントの file:line にはパイプ入力と分かるラベルを使う。
+        Self::single_page("stdin".to_string(), html, root, None, "stdin", Some("(stdin)".to_string()))
     }
 
     /// 引数で渡されたパスを解決し、フォルダ / cwd 内ファイル / 単一ファイルの
