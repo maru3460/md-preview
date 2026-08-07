@@ -1,0 +1,11 @@
+{
+  "name": "md-preview-ui-tests",
+  "private": true,
+  "description": "md-preview の UI スモークテスト用の足場。製品コードは Rust 側（Cargo.toml）で、ここはブラウザ越しに UI を叩くためだけに存在する。",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

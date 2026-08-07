@@ -11,6 +11,12 @@ CLAUDE.md
 # playwright-cli の作業ディレクトリ（動作確認の一時成果物）
 .playwright-cli/
 
+# UI スモークテスト（Playwright）の依存と成果物。package.json は追跡する。
+node_modules/
+package-lock.json
+test-results/
+playwright-report/
+
 # cargo-fuzz の成果物（コーパス・クラッシュ入力・ビルド）
 fuzz/target/
 fuzz/corpus/
