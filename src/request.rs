@@ -454,13 +454,16 @@ pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFil
     Some(match kind {
         ViewKind::Markdown => {
             let (fm_pairs, body) = parse_frontmatter(&text);
+            // 行番号はファイルの行に揃える（フロントマターぶんを足す）。raw 表示（⌘R）の
+            // 行番号や貼り付け先の file:line と一致させるため。
+            let offset = crate::html::body_line_offset(&text, body);
             RenderedFile {
                 kind,
                 // 単独行ファイルリンクの相対パスは、その md ファイルがある場所を基準に解決する。
                 html: format!(
                     "{}{}",
-                    render_frontmatter_html(&fm_pairs),
-                    render_body_in(body, path.parent())
+                    render_frontmatter_html(&fm_pairs, offset),
+                    render_body_in(body, path.parent(), offset)
                 ),
                 body_class: "",
             }

@@ -133,7 +133,13 @@
   // 無い。分岐を増やすより、無いものを黙って飛ばす方が経路ごとの差を生まない。
   //
   // opts.onLinkClick … iframe 内の相対リンクを親のプレビュー遷移へ回す（folder のみ）
+  // 本文（プレビュー枠）の差し替え回数。ファイル切替・raw/diff の切替・ホットリロードの
+  // どれで入れ替わっても増える。「差し替えがもう起きたか」を待ちたい側（コメントのジャンプ）が
+  // 見る——currentFile() は差し替えの前に切り替わるので、名前だけでは判断できない。
+  var bodySwaps = 0;
+
   function hydrate(scope, opts) {
+    bodySwaps++;
     var o = opts || {};
     var root = scope || document;
     ensureHeadingIds(root);
@@ -512,6 +518,7 @@
     addLineNumbers: addLineNumbers,
     highlightIn: highlightIn,
     hydrate: hydrate,
+    bodyGen: function() { return bodySwaps; },
     runMermaid: runMermaid,
     runDrawio: runDrawio,
     wireHtmlFrames: wireHtmlFrames,

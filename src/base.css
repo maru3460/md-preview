@@ -407,6 +407,9 @@ blockquote.markdown-alert-caution {
 .source-main {
     display: flex;
     align-items: stretch;
+    /* 行レイヤ（.md-src-rows）は通常 .code-wrapper に重なるが、Copy ボタンが付かず
+       ラッパが無い場合はここが基準になる。 */
+    position: relative;
 }
 .source-gutter {
     flex: 0 0 auto;
@@ -440,8 +443,11 @@ blockquote.markdown-alert-caution {
 .source-view pre code.hljs {
     padding: 0;
 }
-/* pre / code の 85% 複合を打ち消し、ガターと同じ絶対サイズに固定して行を揃える。 */
+/* pre / code の 85% 複合を打ち消し、ガターと同じ絶対サイズに固定して行を揃える。
+   コメント用の行レイヤ（.md-src-rows）も同じ行送りを共有する。ここが揃っている限り、
+   行レイヤは座標計算なしに 1 行 1 段でコード側と重なる。 */
 .source-gutter,
+.md-src-rows,
 .source-main pre,
 .source-main pre code {
     font-size: 13px;
@@ -1247,12 +1253,57 @@ details[open] {
    ────────────────────────────────────────────────────────────── */
 
 /* コメントモード中は本文のテキスト選択を止め、ドラッグをユニット選択に使う。
-   非 md のソース表示（.source-page）には [data-src-line] が無くコメントできないので、
-   crosshair や選択不可を出さない（「コメントできそう」に見える空振りを防ぐ）。 */
-body.md-cmt-mode .markdown-body:not(.source-page) {
+   ソース表示（.source-page）は本文まるごとではなく .source-main だけに掛ける——
+   差分（⌘D）も .source-page だがコメントできないので、「コメントできそう」に見える
+   空振りを避ける（差分に .source-main は無い）。 */
+body.md-cmt-mode .markdown-body:not(.source-page),
+body.md-cmt-mode .source-main {
     cursor: crosshair;
     user-select: none;
     -webkit-user-select: none;
+}
+
+/* raw / ソース表示の行ユニット（comment.js が必要な時だけ作る透明な行レイヤ）。
+   <code> を 1 行ずつ包むと hljs のハイライトが壊れるので、code には触れずに重ねる。
+   高さは座標計算ではなく行ボックスの積み上げで合わせる（pre と同じ font-size /
+   line-height を共有し、空の行も ::before の zero-width space で 1 行分になる）。 */
+.md-src-rows {
+    position: absolute;
+    top: 0;
+    /* コードの左に 6px はみ出させる。色帯（左 4px）を行番号ガターとコードの
+       すき間に落として、1 文字目に重ならないようにするため。 */
+    left: -6px;
+    right: 0;
+    z-index: 3;
+    /* 行の高さを決めるのは font-size / line-height だけ（上の共有ルール）。
+       font-family は行送りに影響しないので、ここでは指定しない。 */
+    /* 素の閲覧ではコードのテキスト選択を邪魔しない。掴めるのはコメントモード中だけ。 */
+    pointer-events: none;
+}
+.md-src-row {
+    position: relative;
+}
+.md-src-row::before {
+    content: "\200B";
+}
+body.md-cmt-mode .md-src-rows {
+    pointer-events: auto;
+    cursor: crosshair;
+}
+/* 💬 バッジはモード外でも押せる／ホバーできる（行レイヤ自体は通り抜ける）。 */
+.md-src-row .md-cmt-badge {
+    pointer-events: auto;
+}
+/* 先頭の 2 行だけは、右上に浮く Copy ボタンとぶつかるので左へずらす
+   （コードブロックの .code-wrapper.md-cmt-marked と同じ回避を、行レイヤ版で行う）。 */
+.md-src-row[data-src-line="1"] .md-cmt-badge,
+.md-src-row[data-src-line="2"] .md-cmt-badge {
+    right: 64px;
+}
+/* コメントモード中は行レイヤが全面を覆うので、Copy ボタンだけ上に出して押せるままにする
+   （ホバーで出てくるのに反応しない、という状態を作らない）。 */
+body.md-cmt-mode .source-main .copy-btn {
+    z-index: 4;
 }
 
 /* コメント済みユニットの目印。モード内外どちらでも残る。左の帯は inset box-shadow で
@@ -1532,6 +1583,20 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
     font-size: 11.5px;
     color: color-mix(in srgb, CanvasText 55%, transparent);
     word-break: break-all;
+}
+
+/* raw 表示で付けたコメントの印。n/p で飛ぶと raw に切り替わるので、一覧でも
+   区別が付くようにする（プレビュー由来は印なし）。 */
+.md-cmt-tag {
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: 1px;
+    border: 1px solid color-mix(in srgb, CanvasText 30%, transparent);
+    color: color-mix(in srgb, CanvasText 65%, transparent);
 }
 
 .md-cmt-body {

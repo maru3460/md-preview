@@ -8,25 +8,30 @@ use std::ops::Range;
 /// Markdown 中の改行位置を先にインデックス化し、バイトオフセットから 1 始まりの
 /// 行番号を O(log n) で引く。コメント機能の `data-src-line`（file:line 解決の肝）で使う。
 /// 末尾空白のトリム（`li` レンジは末尾の空行を含むため）に元ソースも保持する。
+///
+/// `base` は本文がファイルの何行目から始まるか（フロントマターで飛ばした行数）。
+/// レンダリング結果の行番号は**ファイルの行**でなければならない——raw 表示（⌘R）や
+/// 貼り付け先の `file:line` は元ファイルの行を指すため。
 struct LineIndex<'a> {
     src: &'a str,
     starts: Vec<usize>,
+    base: usize,
 }
 
 impl<'a> LineIndex<'a> {
-    fn new(s: &'a str) -> Self {
+    fn new(s: &'a str, base: usize) -> Self {
         let mut starts = vec![0usize];
         for (i, b) in s.bytes().enumerate() {
             if b == b'\n' {
                 starts.push(i + 1);
             }
         }
-        Self { src: s, starts }
+        Self { src: s, starts, base }
     }
 
-    /// バイトオフセットを含む行の 1 始まり行番号。
+    /// バイトオフセットを含む行の 1 始まり行番号（ファイル基準）。
     fn line(&self, offset: usize) -> usize {
-        match self.starts.binary_search(&offset) {
+        self.base + match self.starts.binary_search(&offset) {
             Ok(i) => i + 1,
             Err(i) => i,
         }
@@ -153,13 +158,15 @@ fn alert_meta(kind: BlockQuoteKind) -> (&'static str, &'static str) {
 }
 
 pub fn render_body(markdown: &str) -> String {
-    render_body_in(markdown, None)
+    render_body_in(markdown, None, 0)
 }
 
 /// `base_dir` は単独行ファイルリンクをコード埋め込みに展開するときの相対パス解決の
 /// 基準ディレクトリ（通常は描画中の md ファイルがある場所）。None なら展開しない。
-pub fn render_body_in(markdown: &str, base_dir: Option<&Path>) -> String {
-    let idx = LineIndex::new(markdown);
+/// `line_offset` は本文の前に飛ばした行数（フロントマター）。`data-src-line` を
+/// ファイルの行番号に揃えるために足す（`body_line_offset` で求める）。
+pub fn render_body_in(markdown: &str, base_dir: Option<&Path>, line_offset: usize) -> String {
+    let idx = LineIndex::new(markdown, line_offset);
     let parser = Parser::new_ext(markdown, MD_OPTIONS).into_offset_iter();
     let events = transform_events(parser, &idx, base_dir);
     let mut body = String::new();
@@ -459,9 +466,10 @@ pub fn render_full_document(
     base_dir: Option<&Path>,
 ) -> String {
     let (fm_pairs, body) = parse_frontmatter(markdown);
-    let fm_html = render_frontmatter_html(&fm_pairs);
+    let offset = body_line_offset(markdown, body);
+    let fm_html = render_frontmatter_html(&fm_pairs, offset);
     build_html(
-        &format!("{}{}", fm_html, render_body_in(body, base_dir)),
+        &format!("{}{}", fm_html, render_body_in(body, base_dir, offset)),
         title,
         theme_css,
         custom_css,
@@ -547,7 +555,20 @@ pub fn parse_frontmatter(s: &str) -> (Vec<(String, String)>, &str) {
     (pairs, body)
 }
 
-pub fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
+/// `parse_frontmatter` が返した本文が、元ファイルの何行目から始まるか（0 なら 1 行目）。
+/// `body` は `src` の末尾スライスであること（前半の改行数がそのまま飛ばした行数になる）。
+/// 引数を逆に渡すと減算がアンダーフローするので、前提をアサートで見えるようにしておく。
+pub fn body_line_offset(src: &str, body: &str) -> usize {
+    debug_assert!(body.len() <= src.len(), "body は src の末尾スライスであること");
+    let skipped = src.len().saturating_sub(body.len());
+    src.as_bytes()[..skipped].iter().filter(|&&b| b == b'\n').count()
+}
+
+/// `lines` はフロントマターが占めるファイルの行数（`body_line_offset` の値）。
+/// ブロック全体を 1 コメント単位にするため `data-src-line`（1 行目〜）を振る。
+/// これが無いと、raw 表示でフロントマターの行に付けたコメントがプレビューで錨を失う
+/// （本文側に対応するユニットが 1 つも無くなるため）。0 なら属性を出さない。
+pub fn render_frontmatter_html(pairs: &[(String, String)], lines: usize) -> String {
     if pairs.is_empty() {
         return String::new();
     }
@@ -559,7 +580,12 @@ pub fn render_frontmatter_html(pairs: &[(String, String)]) -> String {
             html_escape(v)
         ));
     }
-    format!(r#"<div class="frontmatter">{}</div>"#, rows)
+    let attrs = match lines {
+        0 => String::new(),
+        1 => r#" data-src-line="1""#.to_string(),
+        n => format!(r#" data-src-line="1" data-src-end-line="{}""#, n),
+    };
+    format!(r#"<div class="frontmatter"{}>{}</div>"#, attrs, rows)
 }
 
 pub fn build_folder_html(title: &str, theme_css: &str, custom_css: &str, initial_file: Option<&str>) -> String {
@@ -625,6 +651,41 @@ mod tests {
     }
 
     // ── コメント機能: data-src-line 注入 ─────────────────────────
+    #[test]
+    fn frontmatter_shifts_src_line_to_file_lines() {
+        // フロントマターがあっても data-src-line は「ファイルの行」を指す。ここがずれると
+        // raw 表示（1 行 1 ユニット）とプレビューで同じコメントが別の行を指してしまう。
+        let md = "---\ntitle: t\n---\n\n# 見出し\n\n段落。\n";
+        let (_, body) = parse_frontmatter(md);
+        assert_eq!(body_line_offset(md, body), 3);
+        let html = render_body_in(body, None, body_line_offset(md, body));
+        assert!(html.contains("<h1 data-src-line=\"5\">"), "heading: {html}");
+        assert!(html.contains("<p data-src-line=\"7\">"), "paragraph: {html}");
+    }
+
+    #[test]
+    fn frontmatter_block_is_one_unit() {
+        // フロントマターのブロック自体もコメント単位（1 行目〜終わりの `---`）。
+        // raw でフロントマターの行に付けたコメントの錨がここになる。
+        let md = "---\ntitle: t\nauthor: z\n---\n\n# 見出し\n";
+        let (pairs, body) = parse_frontmatter(md);
+        let html = render_frontmatter_html(&pairs, body_line_offset(md, body));
+        assert!(
+            html.contains(r#"<div class="frontmatter" data-src-line="1" data-src-end-line="4">"#),
+            "frontmatter unit: {html}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_src_line_handles_crlf() {
+        // CRLF でも飛ばした行数の数え方（\n の個数）は変わらない。
+        let md = "---\r\ntitle: t\r\n---\r\n\r\n# 見出し\r\n";
+        let (_, body) = parse_frontmatter(md);
+        assert_eq!(body_line_offset(md, body), 3);
+        let html = render_body_in(body, None, body_line_offset(md, body));
+        assert!(html.contains("<h1 data-src-line=\"5\">"), "crlf heading: {html}");
+    }
+
 
     #[test]
     fn src_line_on_common_units() {
@@ -715,7 +776,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("md-html-embed-{}", name));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "one\ntwo\nthree\n").unwrap();
-        render_body_in(md, Some(&dir))
+        render_body_in(md, Some(&dir), 0)
     }
 
     #[test]

@@ -1,52 +1,52 @@
 status: 200
 content-type: text/html; charset=utf-8
 ----
-<div class="frontmatter"><div class="fm-row"><span class="fm-key">title</span><span class="fm-val">スナップショット用</span></div><div class="fm-row"><span class="fm-key">author</span><span class="fm-val">ずんだもん</span></div></div><h1 data-src-line="2">見出し1</h1>
-<p data-src-line="4" data-src-end-line="5">段落なのだ。<strong>強調</strong>と<code>インラインコード</code>と<a href="https://example.com">リンク</a>がある。
+<div class="frontmatter" data-src-line="1" data-src-end-line="4"><div class="fm-row"><span class="fm-key">title</span><span class="fm-val">スナップショット用</span></div><div class="fm-row"><span class="fm-key">author</span><span class="fm-val">ずんだもん</span></div></div><h1 data-src-line="6">見出し1</h1>
+<p data-src-line="8" data-src-end-line="9">段落なのだ。<strong>強調</strong>と<code>インラインコード</code>と<a href="https://example.com">リンク</a>がある。
 複数行にまたがる段落なので data-src-end-line が付く。</p>
-<h2 data-src-line="7">見出し2</h2>
+<h2 data-src-line="11">見出し2</h2>
 <ul>
-<li data-src-line="9">リスト1</li>
-<li data-src-line="10" data-src-end-line="11">リスト2
+<li data-src-line="13">リスト1</li>
+<li data-src-line="14" data-src-end-line="15">リスト2
 <ul>
-<li data-src-line="11">ネストしたリスト</li>
+<li data-src-line="15">ネストしたリスト</li>
 </ul>
 </li>
 </ul>
 <ol>
-<li data-src-line="13">数字リスト</li>
-<li data-src-line="14">ふたつめ</li>
+<li data-src-line="17">数字リスト</li>
+<li data-src-line="18">ふたつめ</li>
 </ol>
 <ul>
-<li data-src-line="16"><input disabled="" type="checkbox"/>
+<li data-src-line="20"><input disabled="" type="checkbox"/>
 タスク未完了</li>
-<li data-src-line="17"><input disabled="" type="checkbox" checked=""/>
+<li data-src-line="21"><input disabled="" type="checkbox" checked=""/>
 タスク完了</li>
 </ul>
-<blockquote data-src-line="19">
-<p data-src-line="19">ふつうの引用なのだ。</p>
+<blockquote data-src-line="23">
+<p data-src-line="23">ふつうの引用なのだ。</p>
 </blockquote>
-<blockquote class="markdown-alert-note" data-src-line="21" data-src-end-line="22">
-<div class="markdown-alert-title"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg><span>Note</span></div><p data-src-line="22">Note アラート。</p>
+<blockquote class="markdown-alert-note" data-src-line="25" data-src-end-line="26">
+<div class="markdown-alert-title"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg><span>Note</span></div><p data-src-line="26">Note アラート。</p>
 </blockquote>
-<blockquote class="markdown-alert-warning" data-src-line="24" data-src-end-line="25">
-<div class="markdown-alert-title"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg><span>Warning</span></div><p data-src-line="25">Warning アラート。</p>
+<blockquote class="markdown-alert-warning" data-src-line="28" data-src-end-line="29">
+<div class="markdown-alert-title"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg><span>Warning</span></div><p data-src-line="29">Warning アラート。</p>
 </blockquote>
-<div class="table-wrap" data-src-line="27" data-src-end-line="29"><table><thead><tr><th style="text-align: left">左寄せ</th><th style="text-align: right">右寄せ</th></tr></thead><tbody>
+<div class="table-wrap" data-src-line="31" data-src-end-line="33"><table><thead><tr><th style="text-align: left">左寄せ</th><th style="text-align: right">右寄せ</th></tr></thead><tbody>
 <tr><td style="text-align: left">a</td><td style="text-align: right">b</td></tr>
 </tbody></table>
-</div><div class="code-wrapper" data-src-line="31" data-src-end-line="33">
+</div><div class="code-wrapper" data-src-line="35" data-src-end-line="37">
 <pre><code class="language-rust">fn plain() {}
 </code></pre>
-</div><div class="code-wrapper has-filename" data-src-line="35" data-src-end-line="37"><div class="code-filename">src/named.rs</div><pre><code class="language-rust">fn named() {}
-</code></pre></div><pre class="mermaid" data-src-line="39" data-src-end-line="42">graph LR
+</div><div class="code-wrapper has-filename" data-src-line="39" data-src-end-line="41"><div class="code-filename">src/named.rs</div><pre><code class="language-rust">fn named() {}
+</code></pre></div><pre class="mermaid" data-src-line="43" data-src-end-line="46">graph LR
 A--&gt;B
-</pre><div class="drawio-wrap" data-src-line="44" data-src-end-line="46"><div class="mxgraph" data-mxgraph="{&quot;highlight&quot;:&quot;#0066cc&quot;,&quot;nav&quot;:true,&quot;resize&quot;:true,&quot;lightbox&quot;:true,&quot;toolbar&quot;:&quot;lightbox&quot;,&quot;xml&quot;:&quot;\u003cmxGraphModel&gt;\u003croot&gt;A &amp;amp; \&quot;B\&quot;\u003c/root&gt;\u003c/mxGraphModel&gt;&quot;}"></div></div><details data-src-line="48">
-<summary data-src-line="49">折りたたみ</summary>
-<p data-src-line="51">中身なのだ。</p>
+</pre><div class="drawio-wrap" data-src-line="48" data-src-end-line="50"><div class="mxgraph" data-mxgraph="{&quot;highlight&quot;:&quot;#0066cc&quot;,&quot;nav&quot;:true,&quot;resize&quot;:true,&quot;lightbox&quot;:true,&quot;toolbar&quot;:&quot;lightbox&quot;,&quot;xml&quot;:&quot;\u003cmxGraphModel&gt;\u003croot&gt;A &amp;amp; \&quot;B\&quot;\u003c/root&gt;\u003c/mxGraphModel&gt;&quot;}"></div></div><details data-src-line="52">
+<summary data-src-line="53">折りたたみ</summary>
+<p data-src-line="55">中身なのだ。</p>
 </details>
-<div class="code-wrapper has-filename code-embed" data-src-line="55"><div class="code-filename"><span class="code-embed-path">embed.txt</span><span class="code-embed-lines">L2-L3</span></div><pre><code class="language-plaintext">two
-three</code></pre></div><p data-src-line="57">脚注つきの文<sup class="footnote-reference"><a href="#1">1</a></sup>。</p>
-<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup><p data-src-line="59">脚注の中身なのだ。</p>
+<div class="code-wrapper has-filename code-embed" data-src-line="59"><div class="code-filename"><span class="code-embed-path">embed.txt</span><span class="code-embed-lines">L2-L3</span></div><pre><code class="language-plaintext">two
+three</code></pre></div><p data-src-line="61">脚注つきの文<sup class="footnote-reference"><a href="#1">1</a></sup>。</p>
+<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup><p data-src-line="63">脚注の中身なのだ。</p>
 </div>
-<p data-src-line="61"><del>打ち消し線</del> と <a href="WikiLink">WikiLink</a> 。</p>
+<p data-src-line="65"><del>打ち消し線</del> と <a href="WikiLink">WikiLink</a> 。</p>
