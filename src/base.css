@@ -8,7 +8,7 @@
 :root {
     color-scheme: light dark;
     /* 見出しナビ(TOC)サイドバーの幅。開いている間は右ガターをこの幅ぶん空ける。 */
-    --md-toc-w: 260px;
+    --md-toc-w: 300px;
 }
 
 body {
@@ -1368,7 +1368,7 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
 .md-cmt-popover {
     position: fixed;
     z-index: 1150;
-    width: 300px;
+    width: 380px;
     max-width: calc(100vw - 16px);
     padding: 10px;
     border-radius: 10px;
@@ -1381,7 +1381,8 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
     width: 100%;
     min-height: 68px;
     box-sizing: border-box;
-    resize: vertical;
+    /* 高さは JS の自動グローが持つ（入力に合わせて伸び、上限でスクロール）。 */
+    resize: none;
     padding: 7px 9px;
     border-radius: 7px;
     border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
@@ -1459,30 +1460,21 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
     border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
 }
 
-/* 右下フロートのパネル。#md-corner スタックの最上段（order:0）に載り、下の
-   diff/raw トグルと下揃えで詰まる（トグルの有無で隙間が出ない）。 */
+/* 右下フロート。モード外の「💬 N」ピル（一覧への入口）だけを出す。モード中の一覧は
+   サイドバー（コメントタブ＝.md-cmt-side）側にある。#md-corner スタックの最上段
+   （order:0）に載り、下の diff/raw トグルと下揃えで詰まる。 */
 .md-cmt-panel {
     order: 0;
-    width: 320px;
-    max-width: calc(100vw - 32px);
-    max-height: 60vh;
-    display: flex;
-    flex-direction: column;
-    border-radius: 12px;
-    background: Canvas;
-    color: CanvasText;
-    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.26), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
-    font-size: 13px;
-    overflow: hidden;
 }
 
-/* モード外（コメント有り）の「💬 N」ピル状態。箱は透明にしてピルだけ見せる。 */
-.md-cmt-panel.pill {
-    width: auto;
-    max-height: none;
-    background: transparent;
-    box-shadow: none;
-    overflow: visible;
+/* コメントタブの中身（comment.js が MdToc.mountComments でサイドバーに常駐させる）。
+   表示/非表示は toc.js が style.display で切り替える。 */
+.md-cmt-side {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    font-size: 13px;
 }
 
 .md-cmt-pill {
@@ -1498,19 +1490,6 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
 
 .md-cmt-pill:hover {
     background: color-mix(in srgb, Highlight 88%, black);
-}
-
-.md-cmt-panel-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 9px 11px;
-    border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
-}
-
-.md-cmt-panel-title {
-    font-weight: 600;
-    font-size: 13px;
 }
 
 /* キー操作の常設ヒント（ヘッダ直下）。 */
@@ -1536,6 +1515,16 @@ body.md-cmt-mode .markdown-body:not(.source-page) {
 
 .md-cmt-item:hover {
     background: color-mix(in srgb, CanvasText 5%, transparent);
+}
+
+/* inview＝アンカーが画面内（複数可・薄）。review＝n/p の巡回対象（1 件・強）。 */
+.md-cmt-item.inview {
+    background: color-mix(in srgb, Highlight 8%, transparent);
+}
+
+.md-cmt-item.review {
+    background: color-mix(in srgb, Highlight 16%, transparent);
+    box-shadow: inset 3px 0 0 Highlight;
 }
 
 .md-cmt-loc {

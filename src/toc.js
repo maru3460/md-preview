@@ -17,6 +17,23 @@
   // 「実際に開く瞬間」で判定する（単一/フォルダ両モードで一貫）。
   var autoFirstPending = true;
 
+  // ── タブ ──────────────────────────────────────────────────────
+  // サイドバーの中身は常に 1 つ。普段は Outline、コメントモード中は Comment に
+  // まるごと置き換わり、ヘッダのタイトルも差し替わる（タブの並列は見せない——
+  // Outline=ただの表示、Comment=モード、という非対称を対等な切替に見せないため）。
+  // Comment の中身は comment.js が mountComments で差し込む（このファイルは
+  // 枠・開閉・切替だけを持つ）。モードの入口はピル/c/バッジ側、出口は ×/⌘T/Esc/c。
+  // ×/⌘T のクリックはここで直接切り替えず onExit で comment.js の setMode に
+  // 要求し、setMode が openComments/closeComments を呼び返す（状態遷移の一元化）。
+  var activeTab = 'outline';
+  var cm = null;             // mountComments で渡される { contentEl, onExit }
+  var outlineLabel = null;
+  var cmLabel = null;
+  // モードに入る前のサイドバー状態（'outline' | 'closed'）。抜けたとき復元する。
+  var cmPrev = null;
+  // ⌘T/×起点のモード終了で、復元より優先する行き先（'outline' | 'close'）。
+  var pendingExit = null;
+
   // 自動表示のしきい値。見出しがこの数以上あり、かつ本文＋TOC が収まる幅が
   // あるときだけ自動で開く。狭い/見出しが少ないときは引っ込めて本文に被せない。
   var MIN_HEADINGS = 3;
@@ -30,7 +47,8 @@
     panel.className = 'md-toc-panel hidden';
     panel.innerHTML =
       '<div class="md-toc-header">' +
-        '<span class="md-toc-title">Outline</span>' +
+        '<span class="md-toc-title" data-tab="outline">Outline</span>' +
+        '<span class="md-toc-title" data-tab="comments" hidden>Comment</span>' +
         '<button type="button" class="md-toc-close" title="Close" aria-label="Close">×</button>' +
       '</div>' +
       '<div class="md-toc-empty" hidden>No headings</div>' +
@@ -38,11 +56,30 @@
     document.body.appendChild(panel);
     listEl = panel.querySelector('.md-toc-list');
     emptyEl = panel.querySelector('.md-toc-empty');
-    panel.querySelector('.md-toc-close').addEventListener('click', closePanel);
+    outlineLabel = panel.querySelector('[data-tab="outline"]');
+    cmLabel = panel.querySelector('[data-tab="comments"]');
+    panel.querySelector('.md-toc-close').addEventListener('click', function() {
+      // Comment 表示中の × はモード終了＋サイドバーごと閉じる（明示操作）。
+      if (activeTab === 'comments' && cm) { pendingExit = 'close'; cm.onExit(); return; }
+      closePanel();
+    });
+  }
+
+  // 中身の実切替。タイトルごと置き換える。Outline の中身は隠れている間に古びるので、
+  // 戻るとき再構築する。
+  function setTab(tab) {
+    activeTab = tab;
+    var isC = tab === 'comments';
+    outlineLabel.hidden = isC;
+    cmLabel.hidden = !isC;
+    listEl.style.display = isC ? 'none' : '';
+    emptyEl.style.display = isC ? 'none' : '';
+    if (cm) cm.contentEl.style.display = isC ? '' : 'none';
+    if (!isC) build();
   }
 
   function build() {
-    if (!scroller) return;
+    if (!scroller || activeTab !== 'outline') return;
     var headings = Array.prototype.slice.call(
       scroller.querySelectorAll('h1,h2,h3,h4,h5,h6')
     );
@@ -74,7 +111,7 @@
   }
 
   function updateActive() {
-    if (!open || !anchorMap.length) return;
+    if (!open || activeTab !== 'outline' || !anchorMap.length) return;
     var threshold = 80;
     var active = null;
     for (var i = 0; i < anchorMap.length; i++) {
@@ -119,8 +156,9 @@
   // 現在ページで自動表示すべきか判定して開閉する。
   // ・幅不足/見出し不足 → 開いていれば退避（userClosed は変えない＝広くなれば戻る）
   // ・条件を満たす      → ユーザーが閉じていなければ開く
+  // コメントタブは手動で出すものなので、表示中は自動退避も自動切替もしない。
   function autoEvaluate() {
-    if (!initialized) return;
+    if (!initialized || activeTab === 'comments') return;
     var enough = headingCount() >= MIN_HEADINGS;
     var fits = availWidth() >= MIN_WIDTH;
     if (!enough || !fits) {
@@ -157,6 +195,8 @@
   }
 
   function toggle() {
+    // Comment 表示中の ⌘T は「Outline へ切替」（＝モード終了）として扱う。
+    if (activeTab === 'comments' && cm) { pendingExit = 'outline'; cm.onExit(); return; }
     if (open) closePanel(); else openPanel();
   }
 
@@ -183,7 +223,7 @@
         ? window
         : scrollerEl;
       if (!initialized) {
-        buildPanel();
+        if (!panel) buildPanel();   // mountComments が先に走った場合は構築済み
         initialized = true;
         if (window.MdKeymap) MdKeymap.on('toc-toggle', toggle);
         attachScrollListener();
@@ -210,6 +250,39 @@
     // （folder モードのファイルツリー リサイズ等）から呼ぶ。
     reevaluate: autoEvaluate,
     close: closePanel,
-    open: openPanel
+    open: openPanel,
+
+    // ── コメントタブ連携（comment.js から呼ばれる） ──────────────
+    // o: { contentEl, onExit() }。contentEl はパネル内に常駐させ、表示/非表示だけ
+    // こちらで切り替える。onExit は Outline タブ/×/⌘T からのモード終了要求。
+    mountComments: function(o) {
+      cm = o;
+      if (!panel) buildPanel();
+      cm.contentEl.style.display = 'none';
+      panel.appendChild(cm.contentEl);
+    },
+    setCommentsCount: function(n) {
+      if (cmLabel) cmLabel.textContent = n > 0 ? 'Comment (' + n + ')' : 'Comment';
+    },
+    // モード入り: 現在のサイドバー状態を控えてコメントタブへ切り替え、閉じていれば開く。
+    openComments: function() {
+      if (!panel || !cm || activeTab === 'comments') return;
+      cmPrev = open ? 'outline' : 'closed';
+      setTab('comments');
+      show(false);
+    },
+    // モード終了: タブ/×クリックの明示操作（pendingExit）が最優先、なければ入る前へ復元。
+    closeComments: function() {
+      if (activeTab !== 'comments') return;
+      var exit = pendingExit;
+      pendingExit = null;
+      var prev = cmPrev;
+      cmPrev = null;
+      setTab('outline');
+      if (exit === 'outline') { openPanel(); return; }
+      if (exit === 'close') { closePanel(); return; }
+      // 復元。userClosed は触らない＝以前の自動表示条件をそのまま引き継ぐ。
+      if (prev !== 'outline') hide();
+    }
   };
 })();

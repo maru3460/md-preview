@@ -185,6 +185,11 @@
     var c = list[i];
     reviewId = c.id;
     gotoComment(c);
+    // サイドバー一覧も巡回対象へ追従させる（強ハイライト＋見える位置へスクロール）。
+    updateSideHighlights();
+    for (var s = 0; s < sideItems.length; s++) {
+      if (sideItems[s].c.id === c.id) { sideItems[s].el.scrollIntoView({ block: 'nearest' }); break; }
+    }
     toast((i + 1) + ' / ' + list.length + '  ' + locLabel(c));
   }
 
@@ -355,6 +360,18 @@
     ta.placeholder = 'コメント… (⌘+Enter で保存 / Esc で取消)';
     pop.appendChild(ta);
 
+    // 入力に合わせて縦へ自動で伸ばす（上限は画面の 40%。超えたらスクロール）。
+    // 伸びたら再配置して画面内に収める。手動リサイズは自動グローと競合するので
+    // 持たない（CSS 側で resize: none）。
+    function autoGrow() {
+      var cap = Math.round(window.innerHeight * 0.4);
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, cap) + 'px';
+      ta.style.overflowY = ta.scrollHeight > cap ? 'auto' : 'hidden';
+      positionPopover(pop, popoverAnchor);
+    }
+    ta.addEventListener('input', autoGrow);
+
     var actions = document.createElement('div');
     actions.className = 'md-cmt-actions';
     var save = document.createElement('button');
@@ -383,6 +400,7 @@
     });
 
     document.body.appendChild(pop);
+    autoGrow();   // 編集時の長文も開いた時点でちょうどの高さにする
     positionPopover(pop, anchorEl);
     popover = pop;
     setTimeout(function() { ta.focus(); }, 0);
@@ -447,52 +465,53 @@
   }
 
   function renderPanel() {
+    if (window.MdToc && MdToc.setCommentsCount) MdToc.setCommentsCount(comments.length);
+    renderCorner();
+    renderSide();
+  }
+
+  // 右下コーナーはモード外の「💬 N」ピル（一覧への入口）だけを出す。モード中の
+  // 一覧はサイドバー（コメントタブ）側が持つ。本文のブロック右上バッジは別途
+  // redraw が出しているので、両方で「コメントあり」が分かる。
+  function renderCorner() {
     var p = ensurePanel();
     p.innerHTML = '';
     var n = comments.length;
-
-    // モード外の表示は件数で分岐:
-    //  ・コメント無し → 何も出さない
-    //  ・コメント有り → 「💬 N」ピル（クリックでモードに入り一覧を開く）。本文のブロック
-    //    右上バッジは別途 redraw が出しているので、両方で「コメントあり」が分かる。
-    if (!mode) {
-      p.classList.remove('pill');
-      if (n === 0) { p.style.display = 'none'; return; }
-      p.style.display = '';
-      p.classList.add('pill');
-      var pill = document.createElement('button');
-      pill.type = 'button';
-      pill.className = 'md-cmt-pill';
-      pill.textContent = '💬 ' + n;
-      pill.title = 'コメント ' + n + ' 件（クリックで一覧）';
-      pill.addEventListener('click', function() { setMode(true); });
-      p.appendChild(pill);
-      return;
-    }
+    if (mode || n === 0) { p.style.display = 'none'; return; }
     p.style.display = '';
-    p.classList.remove('pill');
+    var pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'md-cmt-pill';
+    pill.textContent = '💬 ' + n;
+    pill.title = 'コメント ' + n + ' 件（クリックで一覧）';
+    pill.addEventListener('click', function() { setMode(true); });
+    p.appendChild(pill);
+  }
 
-    // ヘッダ: タイトル＋件数、完了ボタン。
-    var head = document.createElement('div');
-    head.className = 'md-cmt-panel-head';
-    var title = document.createElement('span');
-    title.className = 'md-cmt-panel-title';
-    title.textContent = 'コメント ' + n;
-    head.appendChild(title);
+  // ── サイドバー（コメントタブ）への一覧描画 ────────────────────
+  var sideEl = null;     // タブの中身。MdToc.mountComments でパネル内に常駐する
+  var sideItems = [];    // 一覧項目とコメントの対応（in-view/巡回ハイライト用）
 
-    var spacer = document.createElement('span');
-    spacer.style.flex = '1';
-    head.appendChild(spacer);
+  function ensureSide() {
+    if (sideEl) return sideEl;
+    if (!(window.MdToc && MdToc.mountComments)) return null;
+    sideEl = document.createElement('div');
+    sideEl.className = 'md-cmt-side';
+    // Outline タブ/×/⌘T によるモード終了の要求は setMode に集約する
+    // （実際のタブ切替は setMode が openComments/closeComments を呼び返す）。
+    MdToc.mountComments({
+      contentEl: sideEl,
+      onExit: function() { setMode(false); }
+    });
+    return sideEl;
+  }
 
-    // パネルが出ている＝モード中なので、ボタンはパネルを「閉じる」（＝モードを抜ける）。c / Esc でも可。
-    var doneBtn = document.createElement('button');
-    doneBtn.type = 'button';
-    doneBtn.className = 'md-cmt-btn';
-    doneBtn.textContent = '閉じる';
-    doneBtn.title = 'コメントモードを抜ける (c / Esc)';
-    doneBtn.addEventListener('click', function() { setMode(false); });
-    head.appendChild(doneBtn);
-    p.appendChild(head);
+  function renderSide() {
+    var side = ensureSide();
+    if (!side) return;
+    side.innerHTML = '';
+    sideItems = [];
+    var n = comments.length;
 
     // キー操作の常設ヒント（ヘルプを開かなくても要点が分かるように）。件数で出し分ける。
     var hint = document.createElement('div');
@@ -500,17 +519,23 @@
     hint.textContent = (n === 0)
       ? 'j / k で移動、Enter でコメント（Shift+j/k で複数行）。クリック・ドラッグでも可'
       : 'n / p 巡回 · e 編集 · x 削除 · y 全部コピー · ? 全キー';
-    p.appendChild(hint);
+    side.appendChild(hint);
 
-    // 本文: コメント一覧。0 件のときは一覧を出さない（ヒントが案内を兼ねる）。
+    // 一覧は file→行順（n/p の巡回順・全部コピーの出力順と同じ）。巡回が一覧を
+    // 上から下へ歩くようにする。
     var listEl = document.createElement('div');
     listEl.className = 'md-cmt-list';
-    comments.forEach(function(c) {
+    sortedComments().forEach(function(c) {
       var item = document.createElement('div');
       item.className = 'md-cmt-item';
       item.title = 'クリックで ' + locLabel(c) + ' へ移動';
       // 項目クリックでコメント先（file:line）へジャンプ（folder は別ファイルも開く）。
-      item.addEventListener('click', function() { gotoComment(c); });
+      // 巡回対象（reviewId）もそこへ移す＝クリック後の e / x / n / p がそこから続く。
+      item.addEventListener('click', function() {
+        reviewId = c.id;
+        gotoComment(c);
+        updateSideHighlights();
+      });
 
       var loc = document.createElement('div');
       loc.className = 'md-cmt-loc';
@@ -548,7 +573,7 @@
       row.appendChild(del);
       item.appendChild(row);
 
-      // パネル項目にホバー → 本文の該当ユニットをハイライト。
+      // 一覧項目にホバー → 本文の該当ユニットをハイライト。
       item.addEventListener('mouseenter', function() {
         if (c.file !== currentFile()) return;
         var host = hostEl();
@@ -561,8 +586,9 @@
       });
 
       listEl.appendChild(item);
+      sideItems.push({ c: c, el: item });
     });
-    p.appendChild(listEl);
+    side.appendChild(listEl);
 
     // フッタ: 全部コピー / 全消去。
     var foot = document.createElement('div');
@@ -581,7 +607,46 @@
     clear.addEventListener('click', function() { if (n) clearAll(); });
     foot.appendChild(clear);
     foot.appendChild(copy);
-    p.appendChild(foot);
+    side.appendChild(foot);
+
+    updateSideHighlights();
+  }
+
+  // サイドバー一覧のハイライト。inview（アンカーが画面内・複数可・薄）と review
+  // （n/p の巡回対象・1 件・強）は役割を分ける——前者はスクロールで受動的に変わり、
+  // 後者は n/p と一覧クリックでだけ動く（「再生中の曲」と「見えてる曲」の関係）。
+  function updateSideHighlights() {
+    if (!sideItems.length) return;
+    var host = hostEl();
+    var file = currentFile();
+    var vh = window.innerHeight;
+    var all = host ? allUnits(host) : [];
+    sideItems.forEach(function(it) {
+      var c = it.c;
+      var vis = false;
+      if (host && c.file === file && c.startLine) {
+        var units = unitsInRange(all, c.startLine, c.endLine || c.startLine);
+        if (!units.length) {
+          var one = host.querySelector('[data-src-line="' + c.startLine + '"]');
+          if (one) units = [one];
+        }
+        for (var i = 0; i < units.length && !vis; i++) {
+          var r = units[i].getBoundingClientRect();
+          vis = r.bottom > 0 && r.top < vh;
+        }
+      }
+      it.el.classList.toggle('inview', vis);
+      it.el.classList.toggle('review', c.id === reviewId);
+    });
+  }
+
+  // ハイライト同期の rAF スロットル。reviewId を動かす各所（kbMove / ホバー /
+  // ドラッグ掴み直し）とスクロール/リサイズ（onViewportChange）から呼ぶ。
+  var hlTick = false;
+  function scheduleHl() {
+    if (hlTick || !sideItems.length) return;
+    hlTick = true;
+    requestAnimationFrame(function() { hlTick = false; updateSideHighlights(); });
   }
 
   // file:line ラベル。行が取れなければ file のみ、レンジなら :start-end。
@@ -698,7 +763,7 @@
     // ドラッグでも「動かしている端」に枠を出し、キーボードのレンジと同じ見え方にする。
     // landKbCursor は clearSelecting を含むので、塗る前に呼ぶ。reviewId を落とすのは
     // kbMove / ホバーと同じ理由（掴み直したら e/x の対象もそこへ移す）。
-    if (u2 !== kbCursor) { reviewId = null; landKbCursor(u2); }
+    if (u2 !== kbCursor) { reviewId = null; scheduleHl(); landKbCursor(u2); }
     clearSelecting();
     var s = Math.min(unitStart(u1), unitStart(u2));
     var e = Math.max(unitEnd(u1), unitEnd(u2));
@@ -774,6 +839,7 @@
     // カーソルを手で動かしたら n/p の巡回ポインタは無効化（e/x はカーソル位置の
     // コメントを対象にする）。
     reviewId = null;
+    scheduleHl();
     var units = kbUnits();
     if (!units.length) return;
     var i = kbCursor ? units.indexOf(kbCursor) : -1;
@@ -793,7 +859,7 @@
   // ── モード切替 ────────────────────────────────────────────────
   function toggleMode() { setMode(!mode); }
   function setMode(on) {
-    var was = mode;
+    if (mode === on) return;
     mode = on;
     document.body.classList.toggle('md-cmt-mode', mode);
     if (!mode) {
@@ -805,8 +871,12 @@
       dragging = false;
       dragStartUnit = null;
       dragUnits = null;
-    } else if (!was) {
-      // 入った瞬間、見えているユニットにキーボード・カーソルを置く（マウス無しの起点）。
+      // サイドバーを入る前の状態へ復元（タブ/×クリック起点なら toc.js 側の指定が優先）。
+      if (window.MdToc && MdToc.closeComments) MdToc.closeComments();
+    } else {
+      // 先にサイドバー（コメントタブ）を開いてガター分のリフローを済ませてから、
+      // 見えているユニットにキーボード・カーソルを置く（着地点のズレを防ぐ）。
+      if (window.MdToc && MdToc.openComments) { ensureSide(); MdToc.openComments(); }
       initKbCursor();
     }
     renderPanel();
@@ -867,7 +937,7 @@
       // reviewId を落とすのは kbMove と同じ理由（カーソルを手で動かしたら e/x の対象は
       // n/p の巡回対象ではなくカーソル位置にする）。landKbCursor 側では落とせない
       // ——n/p 自身が reviewId を立てた直後に scrollToLine 経由で呼ぶため。
-      if (hu && hu !== kbCursor) { reviewId = null; landKbCursor(hu); }
+      if (hu && hu !== kbCursor) { reviewId = null; scheduleHl(); landKbCursor(hu); }
       moveHandle(hu);
     });
 
@@ -956,6 +1026,8 @@
       if (popover && popoverAnchor) positionPopover(popover, popoverAnchor);
       hidePreview();
       hideHandle();
+      // スクロール/リサイズで in-view ハイライトを追従させる（rAF スロットル）。
+      if (mode) scheduleHl();
     }
     window.addEventListener('resize', onViewportChange);
     document.addEventListener('scroll', onViewportChange, true);
