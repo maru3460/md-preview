@@ -1541,6 +1541,54 @@ body.md-cmt-mode .source-main .copy-btn {
     border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
 }
 
+/* ── インライン埋め込み（モード中のみ、アンカーユニットの直後） ─────────
+   GitHub の diff コメント風に、コメントを本文の該当ブロックの直下で読めるようにする。
+   ユニットの兄弟ノードで data-src-line を持たないので、選択（ドラッグ / j·k）の
+   対象にならない。本文のテーマに馴染むよう、色は transparent 混色だけで作る
+   （Canvas 系のシステム色を混ぜると、テーマの背景色と食い違うことがある）。 */
+.md-cmt-embed {
+    margin: 8px 0 12px;
+    border: 1px solid color-mix(in srgb, var(--md-accent, Highlight) 32%, transparent);
+    border-left: 3px solid var(--md-accent, Highlight);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--md-accent, Highlight) 6%, transparent);
+    font-size: 13px;
+    line-height: 1.55;
+    /* モード中の本文は user-select:none（ドラッグ＝ユニット選択）だが、
+       コメント本文は普通に選択・コピーできてよい。 */
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: default;
+}
+
+.md-cmt-embed-item {
+    padding: 7px 11px;
+}
+
+.md-cmt-embed-item + .md-cmt-embed-item {
+    border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.md-cmt-embed-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.md-cmt-embed-loc {
+    flex: 1 1 auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: color-mix(in srgb, CanvasText 55%, transparent);
+    word-break: break-all;
+}
+
+.md-cmt-embed-body {
+    margin-top: 2px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* 右下フロート。モード外の「💬 N」ピル（一覧への入口）だけを出す。モード中の一覧は
    サイドバー（コメントタブ＝.md-cmt-side）側にある。#md-corner スタックの最上段
    （order:0）に載り、下の diff/raw トグルと下揃えで詰まる。 */

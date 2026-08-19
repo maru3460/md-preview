@@ -18,6 +18,7 @@
   // ドラッグ選択の途中状態。
   var dragging = false;
   var dragStartUnit = null;
+  var dragEndUnit = null; // ドラッグ中に最後に塗った端。埋め込みの上で離しても範囲を保つ
   var dragUnits = null;   // ドラッグ開始時のユニット配列スナップショット（毎 mousemove の全走査を避ける）
   var handleUnit = null;  // 「+」ハンドルが今指しているユニット
 
@@ -169,7 +170,7 @@
     }
     var isCode = u.classList.contains('code-wrapper') || u.tagName === 'PRE';
     var clone = u.cloneNode(true);
-    clone.querySelectorAll('.md-cmt-badge, .copy-btn, .code-filename').forEach(function(n) { n.remove(); });
+    clone.querySelectorAll('.md-cmt-badge, .md-cmt-embed, .copy-btn, .code-filename').forEach(function(n) { n.remove(); });
     var text = clone.textContent || '';
     if (isCode) return text.replace(/\s+$/, '');
     return text.replace(/\s+/g, ' ').trim();
@@ -206,20 +207,20 @@
       quote: t.quote,
       body: body
     });
-    redraw();
+    anchorScroll(redraw);
   }
   function updateComment(id, body) {
     var c = findComment(id);
-    if (c) { c.body = body; redraw(); }
+    if (c) { c.body = body; anchorScroll(redraw); }
   }
   function deleteComment(id) {
     comments = comments.filter(function(c) { return c.id !== id; });
-    redraw();
+    anchorScroll(redraw);
   }
   function clearAll() {
     comments = [];
     reviewId = null;
-    redraw();
+    anchorScroll(redraw);
   }
   function findComment(id) {
     for (var i = 0; i < comments.length; i++) if (comments[i].id === id) return comments[i];
@@ -430,6 +431,7 @@
   function clearMarkers(host) {
     host.querySelectorAll('.md-cmt-marked').forEach(function(u) { u.classList.remove('md-cmt-marked'); });
     host.querySelectorAll('.md-cmt-badge').forEach(function(b) { b.remove(); });
+    host.querySelectorAll('.md-cmt-embed').forEach(function(b) { b.remove(); });
   }
 
   function redraw() {
@@ -444,6 +446,8 @@
       // raw / ソース表示は行ユニットが DOM に無いので、必要なときだけ先に作る。
       syncSourceRows(host);
       var all = allUnits(host);   // 1 回だけ取得して全コメントで使い回す
+      // インライン埋め込みはモード中だけ。錨の要素 -> そこに出すコメント配列。
+      var embedSlots = mode ? new Map() : null;
       comments.forEach(function(c) {
         if (c.file !== file) return;
         var units = unitsInRange(all, c.startLine, c.endLine);
@@ -458,6 +462,17 @@
           var slot = slots.get(anchor);
           if (!slot) { slot = { el: anchor, list: [] }; slots.set(anchor, slot); }
           slot.list.push(c);
+        }
+        // 埋め込みは範囲の最後のユニットの直後に出す（GitHub 風）。ソース表示の
+        // 行レイヤ（.md-src-row）は行ボックスの積み上げで位置を合わせていて、間に
+        // ブロックを挟めないので出さない（raw のコメントはサイドバー一覧で読む）。
+        if (embedSlots) {
+          var tail = units[units.length - 1];
+          if (tail && !tail.classList.contains('md-src-row')) {
+            var elist = embedSlots.get(tail);
+            if (!elist) { elist = []; embedSlots.set(tail, elist); }
+            elist.push(c);
+          }
         }
       });
       slots.forEach(function(slot) {
@@ -474,6 +489,12 @@
         });
         slot.el.appendChild(badge);
       });
+      if (embedSlots) {
+        embedSlots.forEach(function(list, tail) {
+          var embed = buildEmbed(list.slice().sort(byFileLine));
+          tail.parentNode.insertBefore(embed, tail.nextSibling);
+        });
+      }
 
       // 本文が入れ替わった可能性があるのでユニット配列キャッシュを捨てる。
       invalidateKbUnits();
@@ -494,6 +515,62 @@
 
   // ホットリロード後などに markers を貼り直す（配列は生きている）。
   function reanchor() { redraw(); }
+
+  // ── インライン埋め込み（モード中、アンカー直下に出す GitHub 風の表示） ──
+  // ユニットの「兄弟」として直後に差し込む（子に入れるとユニット自身のレイアウトを
+  // 壊すため）。data-src-line を持たせず contenteditable=false にして（バッジと同じ
+  // 扱い）、クリック/ドラッグ/j·k のユニット選択の対象から外す。真実は comments[] の
+  // ままで、これも redraw が毎回貼り直す派生物（ホットリロードにもそのまま乗る）。
+  function buildEmbed(list) {
+    var box = document.createElement('div');
+    box.className = 'md-cmt-embed';
+    box.setAttribute('contenteditable', 'false');
+    list.forEach(function(c) {
+      var item = document.createElement('div');
+      item.className = 'md-cmt-embed-item';
+
+      var head = document.createElement('div');
+      head.className = 'md-cmt-embed-head';
+      var loc = document.createElement('span');
+      loc.className = 'md-cmt-embed-loc';
+      // レンジコメントは最後のユニットの下に出るので、どこからの範囲かを行で示す。
+      loc.textContent = '💬 ' + locLabel(c);
+      head.appendChild(loc);
+      var edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'md-cmt-link';
+      edit.textContent = '編集';
+      edit.addEventListener('click', function(e) {
+        e.stopPropagation();
+        // 錨は埋め込み自身ではなく直前のユニットにする——埋め込みは redraw のたびに
+        // 作り直される使い捨てで、開いている間にホットリロード等の redraw が走ると
+        // 錨が宙に浮いてスクロール追従が壊れる。範囲の最後のユニット（＝埋め込みの
+        // 直前）なら位置はほぼ同じままで、バッジ/一覧の編集と同じ耐久性になる。
+        var units = markEls[c.id];
+        var anchor = (units && units[units.length - 1]) || unitAtLine(hostEl(), c.startLine);
+        openEditPopover(anchor, c);
+      });
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'md-cmt-link md-cmt-link-danger';
+      del.textContent = '削除';
+      del.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (reviewId === c.id) reviewId = null;
+        deleteComment(c.id);
+      });
+      head.appendChild(edit);
+      head.appendChild(del);
+      item.appendChild(head);
+
+      var body = document.createElement('div');
+      body.className = 'md-cmt-embed-body';
+      body.textContent = c.body;
+      item.appendChild(body);
+      box.appendChild(item);
+    });
+    return box;
+  }
 
   // ── ポップオーバー（新規/編集の textarea） ───────────────────
   var popover = null;
@@ -1034,6 +1111,38 @@
     openNewPopover(target);
   }
 
+  // ── 埋め込みの出し入れに伴うスクロール補正 ────────────────────
+  // 埋め込みの挿入/除去で本文の高さが変わる。基準ユニット（キーボード・カーソル、
+  // 無ければ画面内の最初のユニット）の画面上の位置を DOM 変更の前後で合わせて、
+  // 見ていた場所が飛ばないようにする。
+  // スクロールの主体は単一=window、folder=#preview-pane なので、host から
+  // いちばん近いスクロール可能な祖先を探す（host 自身も含む）。
+  function scrollerOf(host) {
+    var el = host;
+    while (el && el !== document.body && el !== document.documentElement) {
+      var st = getComputedStyle(el);
+      if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+      el = el.parentElement;
+    }
+    return window;
+  }
+  function anchorScroll(fn) {
+    var host = hostEl();
+    var ref = (kbCursor && kbCursor.isConnected) ? kbCursor : null;
+    if (!ref && host) {
+      var units = allUnits(host);
+      for (var i = 0; i < units.length; i++) {
+        if (units[i].getBoundingClientRect().bottom > 0) { ref = units[i]; break; }
+      }
+    }
+    if (!ref) { fn(); return; }
+    var before = ref.getBoundingClientRect().top;
+    fn();
+    if (!ref.isConnected) return;
+    var delta = ref.getBoundingClientRect().top - before;
+    if (delta) scrollerOf(host).scrollBy(0, delta);
+  }
+
   // ── モード切替 ────────────────────────────────────────────────
   function toggleMode() { setMode(!mode); }
   function setMode(on) {
@@ -1048,19 +1157,22 @@
       // 選択状態を確実にリセットする。
       dragging = false;
       dragStartUnit = null;
+      dragEndUnit = null;
       dragUnits = null;
       // サイドバーを入る前の状態へ復元（タブ/×クリック起点なら toc.js 側の指定が優先）。
       if (window.MdToc && MdToc.closeComments) MdToc.closeComments();
+      // 埋め込みが抜けて本文が縮むぶんはスクロール補正しつつ貼り直す。
+      anchorScroll(redraw);
     } else {
       // raw / ソース表示は行の単位が DOM に無いので、ここで行ユニットを作る（コメントが
       // 1 件も無いファイルでは redraw 側の条件に掛からないため）。
       syncSourceRows(hostEl());
-      // 先にサイドバー（コメントタブ）を開いてガター分のリフローを済ませてから、
-      // 見えているユニットにキーボード・カーソルを置く（着地点のズレを防ぐ）。
+      // 先にサイドバー（コメントタブ）を開いてガター分のリフローを済ませてから
+      // 埋め込みを差し込む（redraw が入れて、伸びるぶんはスクロール補正。見えている
+      // ユニットへのキーボード・カーソルも redraw 内の initKbCursor が置く）。
       if (window.MdToc && MdToc.openComments) { ensureSide(); MdToc.openComments(); }
-      initKbCursor();
+      anchorScroll(redraw);
     }
-    renderPanel();
   }
 
   // ── イベント配線 ──────────────────────────────────────────────
@@ -1077,7 +1189,8 @@
       if (!mode) return;
       if (e.button !== 0) return;   // 右/中クリックは選択に使わない（右クリックはメニューへ）
       if (e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-panel') ||
-          e.target.closest('.md-cmt-handle') || e.target.closest('.md-cmt-badge')) return;
+          e.target.closest('.md-cmt-handle') || e.target.closest('.md-cmt-badge') ||
+          e.target.closest('.md-cmt-embed')) return;
       var host = hostEl();
       if (!host || !host.contains(e.target)) return;
       var u = e.target.closest('[data-src-line]');
@@ -1085,6 +1198,7 @@
       e.preventDefault();
       dragging = true;
       dragStartUnit = u;
+      dragEndUnit = u;
       dragUnits = allUnits(host);   // 以降の mousemove はこのスナップショットで範囲判定
       setSelecting(u, u);
     });
@@ -1094,7 +1208,8 @@
     document.addEventListener('click', function(e) {
       if (!mode) return;
       if (e.target.closest('.md-cmt-badge') || e.target.closest('.md-cmt-panel') ||
-          e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-handle')) return;
+          e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-handle') ||
+          e.target.closest('.md-cmt-embed')) return;
       var host = hostEl();
       if (host && host.contains(e.target)) { e.preventDefault(); e.stopPropagation(); }
     }, true);
@@ -1108,7 +1223,7 @@
       if (!mode) return;
       if (dragging) {
         var u = e.target.closest && e.target.closest('[data-src-line]');
-        if (u) setSelecting(dragStartUnit, u);
+        if (u) { dragEndUnit = u; setSelecting(dragStartUnit, u); }
         return;
       }
       // マウスが止まっていても mousemove は飛んでくる——本文がスクロールしたときや、
@@ -1125,7 +1240,8 @@
       // ハンドル自体の上ではそのまま維持（消すとクリックできなくなる）。
       if (handle && handle.contains(e.target)) return;
       // ハンドル追従（ポップオーバー/パネル上では出さない）。
-      if (e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-panel')) { hideHandle(); return; }
+      if (e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-panel') ||
+          e.target.closest('.md-cmt-embed')) { hideHandle(); return; }
       // Shift+j/k で掴んでいるレンジは、マウスの微動で消さない。この間は代わりに「+」を
       // 出さないことで、指し示すものをレンジの枠だけに保つ。
       if (kbCursor && kbAnchor && kbAnchor !== kbCursor) { hideHandle(); return; }
@@ -1144,10 +1260,15 @@
     document.addEventListener('mouseup', function(e) {
       if (!dragging) return;
       dragging = false;
-      var u = (e.target.closest && e.target.closest('[data-src-line]')) || dragStartUnit;
+      // 埋め込みの上で離すと closest はユニットを見つけられない（入れ子なら外側の
+      // ユニットに化ける）。その場合はドラッグ中に最後に塗った端（dragEndUnit）へ
+      // 倒し、画面で見えていた選択範囲のままコメントを開く。
+      var u = (e.target.closest && !e.target.closest('.md-cmt-embed') && e.target.closest('[data-src-line]'))
+        || dragEndUnit || dragStartUnit;
       clearSelecting();
       var target = computeTarget(dragStartUnit, u);
       dragStartUnit = null;
+      dragEndUnit = null;
       dragUnits = null;
       openNewPopover(target);
     });
