@@ -1425,6 +1425,15 @@ body.md-cmt-mode .source-main .copy-btn {
     left: 8px;
 }
 
+/* mermaid 用のバッジ台。ユニットの中に置くと textContent（図のソース）が汚れて
+   再パースで構文エラーになるため、0 高さの台をユニット直前に挟んでそこへ載せる。
+   見た目は他ユニットと同じ「ブロック右上」になる。 */
+.md-cmt-badge-holder {
+    position: relative;
+    height: 0;
+    z-index: 5;
+}
+
 /* ホバーで左に出る「+」ハンドル。 */
 .md-cmt-handle {
     position: fixed;

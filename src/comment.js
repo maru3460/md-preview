@@ -38,6 +38,16 @@
   // 現在ファイルで raw トグルが意味を持つか（md なら true、非 md は false）。
   function rawAvailable() { return !!(window.MdRaw && MdRaw.isAvailable && MdRaw.isAvailable()); }
 
+  // コメントが「今の表示」のものか。本文への描画（マーカー/バッジ/埋め込み/ホバー）は
+  // 付けた表示と現在の表示が一致するものだけに絞る——raw の行コメントがプレビューの
+  // ブロック全体に落ちる（コードや mermaid の全体に色帯が付く）粗い錨を見せない。
+  // サイドバー一覧は全件出す（横断インデックス。n/p・クリックが表示ごと切り替えて
+  // 着地する）。非 md のソースビューは表示が 1 つしかないので常に一致。
+  function inCurrentView(c) {
+    if (!rawAvailable()) return true;
+    return !!c.raw === isRawView();
+  }
+
   // ── raw / ソース表示の行ユニット ──────────────────────────────
   // ソース表示（raw トグル・非 md ファイル）は全文が 1 個の <pre><code> で、行の単位に
   // なる要素が DOM に無い。1 行ずつ span で包むと hljs のハイライト（複数行にまたがる
@@ -103,7 +113,7 @@
   function syncSourceRows(host) {
     if (!host) return;
     var file = currentFile();
-    var needed = mode || comments.some(function(c) { return c.file === file; });
+    var needed = mode || comments.some(function(c) { return c.file === file && inCurrentView(c); });
     if (!needed) return;
     ensureSourceRows(host);
     // なぜ行を掴めないのかを伝える。モードに入った時だけでなく、モード中に巨大ファイルへ
@@ -234,7 +244,7 @@
     var file = currentFile();
     return comments.filter(function(c) {
       var end = c.endLine || c.startLine;
-      return c.file === file && c.startLine <= e && end >= s;
+      return c.file === file && inCurrentView(c) && c.startLine <= e && end >= s;
     // 行順に返す。大きなユニット（長いコードブロック等）に複数のコメントが重なるとき、
     // e/x の対象（先頭）が追加順で変わらないようにする。
     }).sort(function(a, b) { return a.startLine - b.startLine; });
@@ -432,6 +442,7 @@
     host.querySelectorAll('.md-cmt-marked').forEach(function(u) { u.classList.remove('md-cmt-marked'); });
     host.querySelectorAll('.md-cmt-badge').forEach(function(b) { b.remove(); });
     host.querySelectorAll('.md-cmt-embed').forEach(function(b) { b.remove(); });
+    host.querySelectorAll('.md-cmt-badge-holder').forEach(function(b) { b.remove(); });
   }
 
   function redraw() {
@@ -449,7 +460,7 @@
       // インライン埋め込みはモード中だけ。錨の要素 -> そこに出すコメント配列。
       var embedSlots = mode ? new Map() : null;
       comments.forEach(function(c) {
-        if (c.file !== file) return;
+        if (c.file !== file || !inCurrentView(c)) return;
         var units = unitsInRange(all, c.startLine, c.endLine);
         if (!units.length) {
           var one = unitAtLine(host, c.startLine, all);
@@ -487,7 +498,18 @@
           if (!mode) setMode(true);
           openEditPopover(slot.el, slot.list[0]);
         });
-        slot.el.appendChild(badge);
+        // mermaid はユニットの textContent がそのまま図のソースで、ホットリロード時は
+        // バッジ貼り(reanchor・同期)の後に mermaid.run(非同期)が走るため、中に置くと
+        // 「💬」が混ざって構文エラーになる。0 高さのホルダーを直前に挟んでそこへ載せる。
+        if (slot.el.classList.contains('mermaid')) {
+          var holder = document.createElement('div');
+          holder.className = 'md-cmt-badge-holder';
+          holder.setAttribute('contenteditable', 'false');
+          holder.appendChild(badge);
+          slot.el.parentNode.insertBefore(holder, slot.el);
+        } else {
+          slot.el.appendChild(badge);
+        }
       });
       if (embedSlots) {
         embedSlots.forEach(function(list, tail) {
@@ -832,7 +854,7 @@
 
       // 一覧項目にホバー → 本文の該当ユニットをハイライト。
       item.addEventListener('mouseenter', function() {
-        if (c.file !== currentFile()) return;
+        if (c.file !== currentFile() || !inCurrentView(c)) return;
         var host = hostEl();
         var u = unitAtLine(host, c.startLine);
         if (u) u.classList.add('md-cmt-flash');
