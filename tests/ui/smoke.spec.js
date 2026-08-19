@@ -164,16 +164,18 @@ test('? のヘルプが開き、Esc で閉じる（キー一覧は keymap から
   await page.keyboard.press('?');
   const help = page.locator('#md-help-backdrop');
   await expect(help).toBeVisible();
-  // フォルダモード限定のキー（⌘P）が一覧に出ていること。
+  // フォルダモード限定のキー（⌘P / ⌘B）が一覧に出ていること。
   await expect(help).toContainText('⌘P');
+  await expect(help).toContainText('⌘B');
   await page.keyboard.press('Escape');
   await expect(help).toHaveCount(0);
 
-  // 単一ファイルモードでは ⌘P は一覧に出ない（scope: folder）。
+  // 単一ファイルモードでは ⌘P / ⌘B は一覧に出ない（scope: folder）。
   await open(page, SINGLE_URL);
   await page.keyboard.press('?');
   await expect(page.locator('#md-help-backdrop')).toBeVisible();
   await expect(page.locator('#md-help-backdrop')).not.toContainText('⌘P');
+  await expect(page.locator('#md-help-backdrop')).not.toContainText('⌘B');
 });
 
 test('Tab でツリーへ移り、j/k がツリー操作になる', async ({ page }) => {
@@ -193,6 +195,38 @@ test('Tab でツリーへ移り、j/k がツリー操作になる', async ({ pag
   // Tab で本文へ戻る。
   await page.keyboard.press('Tab');
   await expect(page.locator('body')).not.toHaveClass(/nav-tree/);
+});
+
+test('⌘B でファイルツリーを畳み、もう一度押すと元の幅で戻る', async ({ page }) => {
+  await openFolder(page);
+  const sidebar = page.locator('#sidebar');
+  const width = async () => (await sidebar.boundingBox()).width;
+  const before = await width();
+  expect(before).toBeGreaterThan(0);
+
+  await page.keyboard.press('Meta+b');
+  await expect(page.locator('body')).toHaveClass(/sidebar-closed/);
+  await expect.poll(width).toBe(0); // 0.15s の transition が終わるまで待つ
+
+  await page.keyboard.press('Meta+b');
+  await expect(page.locator('body')).not.toHaveClass(/sidebar-closed/);
+  await expect.poll(width).toBe(before); // 幅は CSS 変数に残っているので元通り
+});
+
+test('ツリーにフォーカスがある状態で畳むと、本文へフォーカスが戻る', async ({ page }) => {
+  await openFolder(page);
+  await page.keyboard.press('Tab');
+  await expect(page.locator('body')).toHaveClass(/nav-tree/);
+
+  // 見えないツリーにカーソルが居座ると j/k がツリー操作のままになるので、本文へ返す。
+  await page.keyboard.press('Meta+b');
+  await expect(page.locator('body')).toHaveClass(/sidebar-closed/);
+  await expect(page.locator('body')).not.toHaveClass(/nav-tree/);
+
+  // 畳んだ状態の Tab は「開いてからツリーへ」。
+  await page.keyboard.press('Tab');
+  await expect(page.locator('body')).not.toHaveClass(/sidebar-closed/);
+  await expect(page.locator('body')).toHaveClass(/nav-tree/);
 });
 
 test('⌘F は検索の入力欄にフォーカスがあっても閉じられる', async ({ page }) => {

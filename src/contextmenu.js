@@ -83,6 +83,9 @@
       case 'palette':
         if (window.MdPalette) window.MdPalette.open();
         break;
+      case 'sidebar-toggle':
+        if (window.MdSidebar) window.MdSidebar.toggle();
+        break;
       case 'help':
         if (window.MdHelp) window.MdHelp.open();
         break;
@@ -120,6 +123,12 @@
     // ファイル検索はフォルダモードだけの機能（別ファイルを開く入口があるのがそこだけ）。
     if (mode === 'folder') {
       items.push({ label: 'ファイル検索 (⌘P)', action: 'palette', enabled: true });
+      var treeOpen = !window.MdSidebar || window.MdSidebar.isOpen();
+      items.push({
+        label: (treeOpen ? 'ファイルツリーを隠す' : 'ファイルツリーを表示') + ' (⌘B)',
+        action: 'sidebar-toggle',
+        enabled: true
+      });
       items.push({ sep: true });
     }
     items.push({ label: '再読み込み', action: 'reload', enabled: true });

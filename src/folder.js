@@ -4,6 +4,7 @@
   var windowReady = false;
   var mdCheckQueue = [];
   var mdDotCache = {};
+  var sidebarOpen = true;
 
   function doHasMdCheck(path, row) {
     if (path in mdDotCache) {
@@ -295,7 +296,8 @@
 
   function focusTree() {
     var sb = document.getElementById('sidebar');
-    if (!sb) return;
+    // 畳んでいる間は見えない行にカーソルを送らない（呼ぶ側が先に開くこと）。
+    if (!sb || !sidebarOpen) return;
     sb.focus({ preventScroll: true });
     document.body.classList.add('nav-tree');
     // カーソルが未設定/不可視なら、開いているファイル→先頭可視行の順で置く。
@@ -307,6 +309,34 @@
       setCursor(cursorRow); // 見える位置へ再スクロール
     }
   }
+
+  // ── サイドバーの開閉（⌘B / 右クリックメニュー / 閉じている時のリサイザ） ────
+  // 幅は CSS 変数 --md-sidebar-w が持つので、ここはクラスの付け外しだけでよい。
+  // 状態はセッション内のみ（このアプリはサイドバー幅も含め永続化していない）。
+  function setSidebarOpen(open) {
+    open = !!open;
+    if (open === sidebarOpen) return;
+    sidebarOpen = open;
+    document.body.classList.toggle('sidebar-closed', !open);
+    // 閉じた瞬間にツリーへフォーカスが残ると、見えない行にカーソルが居座って
+    // j/k がツリー操作のままになる。本文へ返して nav-tree も畳む。
+    if (!open && window.MdCommon && MdCommon.isSidebarFocused()) focusPreview();
+    // 本文ペインの幅が変わるので、TOC の自動退避/復帰を評価し直す。
+    // width の transition が終わってからでないと availWidth() が古い幅を見る。
+    setTimeout(function() {
+      if (window.MdToc) window.MdToc.reevaluate();
+    }, 200);
+  }
+
+  function toggleSidebar() { setSidebarOpen(!sidebarOpen); }
+
+  // 右クリックメニューがラベルの出し分け（隠す / 表示）に使う。
+  window.MdSidebar = {
+    isOpen: function() { return sidebarOpen; },
+    toggle: toggleSidebar,
+    open: function() { setSidebarOpen(true); },
+    close: function() { setSidebarOpen(false); }
+  };
 
   function moveCursor(delta) {
     var rows = visibleRows();
@@ -400,9 +430,13 @@
     if (!window.MdKeymap) return;
     // Tab / [ / ] はツリー内外どちらでも効くアプリ全体のナビ。
     MdKeymap.on('focus-toggle', function() {
-      if (window.MdCommon && MdCommon.isSidebarFocused()) focusPreview();
-      else focusTree();
+      if (window.MdCommon && MdCommon.isSidebarFocused()) { focusPreview(); return; }
+      // 畳んである時の Tab は「開いてからツリーへ」。Tab はツリーへ行く操作なので、
+      // 閉じているという理由で無反応にするより開いてしまう方が意図に合う。
+      setSidebarOpen(true);
+      focusTree();
     });
+    MdKeymap.on('sidebar-toggle', toggleSidebar);
     MdKeymap.on('file-cycle', function(e) {
       gotoAdjacentFile(e.key === '[' ? -1 : 1);
     });
@@ -438,10 +472,13 @@
     var isDragging = false;
     var startX, startWidth;
     resizer.addEventListener('mousedown', function(e) {
+      // 畳んである時のリサイザはドラッグ用の取っ手ではなく、開くためのボタン。
+      if (!sidebarOpen) { setSidebarOpen(true); e.preventDefault(); return; }
       isDragging = true;
       startX = e.clientX;
       startWidth = sidebar.offsetWidth;
       resizer.classList.add('dragging');
+      document.body.classList.add('sidebar-resizing');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
       e.preventDefault();
@@ -450,12 +487,14 @@
       if (!isDragging) return;
       var newWidth = startWidth + (e.clientX - startX);
       newWidth = Math.max(120, Math.min(newWidth, window.innerWidth - 200));
-      sidebar.style.width = newWidth + 'px';
+      // 幅は CSS 変数で持つ（開閉が幅の退避/復元なしに成り立つのはこのため）。
+      document.documentElement.style.setProperty('--md-sidebar-w', newWidth + 'px');
     });
     document.addEventListener('mouseup', function() {
       if (!isDragging) return;
       isDragging = false;
       resizer.classList.remove('dragging');
+      document.body.classList.remove('sidebar-resizing');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       // ツリーを広げて preview-pane が閾値を割ったら TOC を退避、

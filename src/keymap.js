@@ -122,7 +122,10 @@
     { cat: 'files', keys: 'Tab', desc: '本文 ⇄ ファイルツリー のフォーカス切替', scope: 'folder',
       run: 'focus-toggle', match: keys('Tab'), when: bare },
 
-    // ── ファイルツリー（folder.js。ツリーにフォーカスがある時） ──
+    // ── ファイルツリー（folder.js） ──
+    { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉', scope: 'folder',
+      run: 'sidebar-toggle', match: letter('b'), when: cmdAnywhere },
+    // 以下はツリーにフォーカスがある時だけ。
     { cat: 'tree', keys: 'ツリー内', desc: 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ', scope: 'folder',
       run: 'tree', match: keys('j', 'k', 'g', 'G', 'l', 'h', 'Enter',
                                'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'),

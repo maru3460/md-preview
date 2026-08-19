@@ -298,12 +298,13 @@
 
     doc.addEventListener('keydown', function(e) {
       // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 /
-      // w=close / f=検索)だけ親へ委譲する。
+      // b=ファイルツリー開閉 / w=close / f=検索)だけ親へ委譲する。
       // ⌘A(全選択)・⌘C 等は iframe のネイティブ動作に任せる。
       // ⌘F は MdSearch が iframe の document も走査するようになったので転送する
       // （WKWebView 自体は検索 UI を持たないので、転送しないと無反応になる）。
       var k = (e.key || '').toLowerCase();
-      var isCmd = (e.metaKey || e.ctrlKey) && (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'w' || k === 'f');
+      var isCmd = (e.metaKey || e.ctrlKey) &&
+        (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'b' || k === 'w' || k === 'f');
       var inField = isFieldEl(e.target);
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
