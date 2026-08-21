@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use crate::embed;
 use std::ops::Range;
@@ -168,7 +168,9 @@ pub fn render_body(markdown: &str) -> String {
 pub fn render_body_in(markdown: &str, base_dir: Option<&Path>, line_offset: usize) -> String {
     let idx = LineIndex::new(markdown, line_offset);
     let parser = Parser::new_ext(markdown, MD_OPTIONS).into_offset_iter();
-    let events = transform_events(parser, &idx, base_dir);
+    // 裸 URL のリンク化を transform_events の前に一段挟む。
+    let linkified = linkify_bare_urls(parser);
+    let events = transform_events(linkified.into_iter(), &idx, base_dir);
     let mut body = String::new();
     html::push_html(&mut body, events.into_iter());
     body
@@ -245,6 +247,161 @@ fn alert_class(kind: BlockQuoteKind) -> &'static str {
         BlockQuoteKind::Important => "markdown-alert-important",
         BlockQuoteKind::Warning => "markdown-alert-warning",
         BlockQuoteKind::Caution => "markdown-alert-caution",
+    }
+}
+
+/// 裸 URL のリンク化で認識するスキーム。`www.` 始まりや裸のメールアドレスは
+/// 誤検知が増えるだけなので対象にしない。
+const URL_SCHEMES: [&str; 2] = ["https://", "http://"];
+
+/// 裸の `http(s)://` URL をリンクのイベント列へ分割する（GFM の autolink literals 相当）。
+/// pulldown-cmark にはこの拡張のフラグが無いので、`Event::Text` を自前で加工する。
+/// コードブロック・リンク・画像の中では何もしない（二重リンクや alt 属性の破壊になる）。
+fn linkify_bare_urls<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
+    parser: I,
+) -> Vec<(Event<'a>, Range<usize>)> {
+    let mut out: Vec<(Event<'a>, Range<usize>)> = Vec::new();
+    // リンク化を止める文脈の深さ。画像の中にリンクが入るなど入れ子があり得るので数で持つ。
+    let mut skip_depth = 0usize;
+    // 連続する Text をためる。pulldown は強調にならなかった `_` や `*` の位置でも
+    // Text を切るので（`…/Foo_(bar)` が 3 イベントになる）、連結してから走査する。
+    // HTML 出力上、隣り合う Text をひとつにまとめても結果は変わらない。
+    let mut pending: Option<(String, Range<usize>)> = None;
+    for (ev, range) in parser {
+        let is_plain_text = matches!(ev, Event::Text(_)) && skip_depth == 0;
+        if is_plain_text {
+            let Event::Text(t) = &ev else { unreachable!() };
+            match &mut pending {
+                Some((buf, _)) => buf.push_str(t),
+                None => pending = Some((t.to_string(), range)),
+            }
+            continue;
+        }
+        flush_linkified(&mut out, pending.take());
+        match &ev {
+            Event::Start(Tag::CodeBlock(_))
+            | Event::Start(Tag::Link { .. })
+            | Event::Start(Tag::Image { .. }) => skip_depth += 1,
+            Event::End(TagEnd::CodeBlock)
+            | Event::End(TagEnd::Link)
+            | Event::End(TagEnd::Image) => skip_depth = skip_depth.saturating_sub(1),
+            _ => {}
+        }
+        // インラインコード（Event::Code）と生 HTML は Text ではないので素通りする。
+        out.push((ev, range));
+    }
+    flush_linkified(&mut out, pending.take());
+    out
+}
+
+/// ためた Text を裸 URL で分割して吐く。分割した各イベントには元 Text のレンジを
+/// 複製して付ける。transform_events がレンジを使うのはブロック要素の data-src-line
+/// だけなので実害は無い。
+fn flush_linkified<'a>(
+    out: &mut Vec<(Event<'a>, Range<usize>)>,
+    pending: Option<(String, Range<usize>)>,
+) {
+    let Some((text, range)) = pending else { return };
+    let spans = if text.contains("http") { find_bare_urls(&text) } else { Vec::new() };
+    if spans.is_empty() {
+        out.push((Event::Text(text.into()), range));
+        return;
+    }
+    let mut cursor = 0usize;
+    for span in spans {
+        if span.start > cursor {
+            out.push((Event::Text(text[cursor..span.start].to_string().into()), range.clone()));
+        }
+        let url = &text[span.clone()];
+        out.push((
+            Event::Start(Tag::Link {
+                link_type: LinkType::Autolink,
+                dest_url: url.to_string().into(),
+                title: "".into(),
+                id: "".into(),
+            }),
+            range.clone(),
+        ));
+        out.push((Event::Text(url.to_string().into()), range.clone()));
+        out.push((Event::End(TagEnd::Link), range.clone()));
+        cursor = span.end;
+    }
+    if cursor < text.len() {
+        out.push((Event::Text(text[cursor..].to_string().into()), range.clone()));
+    }
+}
+
+/// `text` の中の裸 URL の範囲（バイト）を前から順に返す。
+fn find_bare_urls(text: &str) -> Vec<Range<usize>> {
+    let mut out: Vec<Range<usize>> = Vec::new();
+    let mut i = 0usize;
+    while i < text.len() {
+        if !text.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        let rest = &text[i..];
+        let Some(scheme) = URL_SCHEMES.iter().find(|s| rest.starts_with(**s)) else {
+            i += 1;
+            continue;
+        };
+        let body_start = i + scheme.len();
+        if !start_allowed(text, i) {
+            i = body_start;
+            continue;
+        }
+        // 空白・山カッコ・非 ASCII 文字で URL を打ち切る。非 ASCII で切るのは、日本語の
+        // 地の文に URL を直接埋めても「を参照」まで飲み込まないようにするため。山カッコで
+        // 切るのは `&lt;` `&gt;` を URL に含めないため（実体参照は pulldown が復号済みで、
+        // ここに届く時点では生の `<` `>` になっている）。
+        let mut end = body_start;
+        for (off, c) in text[body_start..].char_indices() {
+            if c.is_whitespace() || !c.is_ascii() || c == '<' || c == '>' {
+                break;
+            }
+            end = body_start + off + c.len_utf8();
+        }
+        let url = trim_url_end(&text[i..end]);
+        if url.len() <= scheme.len() {
+            i = body_start;
+            continue;
+        }
+        out.push(i..i + url.len());
+        i += url.len();
+    }
+    out
+}
+
+/// URL を始めてよい位置か。GFM の規定（行頭・空白・`*` `_` `~` `(`）に加えて、
+/// 非 ASCII 文字の直後も許す。「詳細はhttps://example.com/aを参照」のように
+/// スペース無しで書かれる日本語の文書でリンクになるようにするため。
+fn start_allowed(text: &str, i: usize) -> bool {
+    match text[..i].chars().next_back() {
+        None => true,
+        Some(c) => c.is_whitespace() || matches!(c, '*' | '_' | '~' | '(') || !c.is_ascii(),
+    }
+}
+
+/// URL の末尾から、URL に含めるべきでない文字を剥がす。
+fn trim_url_end(url: &str) -> &str {
+    const TRAILING: [char; 11] = ['?', '!', '.', ',', ':', ';', '*', '_', '~', '\'', '"'];
+    let mut end = url.len();
+    loop {
+        let before = end;
+        let s = &url[..end];
+        end -= s.len() - s.trim_end_matches(TRAILING).len();
+        // 括弧は対応を取る。`(https://example.com/a)` の閉じ括弧は外し、
+        // `https://ja.wikipedia.org/wiki/Foo_(bar)` の閉じ括弧は残す。
+        while url[..end].ends_with(')') {
+            let s = &url[..end];
+            if s.matches(')').count() <= s.matches('(').count() {
+                break;
+            }
+            end -= 1;
+        }
+        if end == before {
+            return &url[..end];
+        }
     }
 }
 
@@ -810,5 +967,122 @@ mod tests {
         let body = render_in_tempdir("[a](./f.txt#L1)[b](./f.txt#L2)\n", "twolinks");
         assert!(!body.contains("code-embed"), "{body}");
         assert_eq!(body.matches("<a href").count(), 2, "{body}");
+    }
+
+    // ── 裸 URL の自動リンク化 ──
+
+    fn hrefs(body: &str) -> Vec<String> {
+        body.match_indices("<a href=\"")
+            .map(|(i, m)| {
+                let rest = &body[i + m.len()..];
+                rest[..rest.find('"').unwrap()].to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bare_url_becomes_a_link() {
+        let body = render_body("見て https://example.com/a なのだ。\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/a"], "{body}");
+    }
+
+    #[test]
+    fn bare_url_in_various_containers() {
+        let cases = [
+            "- https://example.com/a\n",
+            "| a |\n| --- |\n| https://example.com/a |\n",
+            "**https://example.com/a**\n",
+            "> [!NOTE]\n> https://example.com/a\n",
+            "# https://example.com/a\n",
+        ];
+        for md in cases {
+            let body = render_body(md);
+            assert_eq!(hrefs(&body), vec!["https://example.com/a"], "md={md:?} body={body}");
+        }
+    }
+
+    #[test]
+    fn url_in_inline_code_stays_text() {
+        let body = render_body("`https://example.com/a` なのだ。\n");
+        assert!(hrefs(&body).is_empty(), "{body}");
+        assert!(body.contains("<code>https://example.com/a</code>"), "{body}");
+    }
+
+    #[test]
+    fn url_in_code_block_stays_text() {
+        let body = render_body("```\nsee https://example.com/a\n```\n");
+        assert!(hrefs(&body).is_empty(), "{body}");
+        // インデントされたコードブロックも同じ。
+        let body = render_body("    see https://example.com/a\n");
+        assert!(hrefs(&body).is_empty(), "{body}");
+    }
+
+    #[test]
+    fn angle_autolink_is_not_double_linked() {
+        let body = render_body("<https://example.com/a>\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/a"], "{body}");
+        assert_eq!(body.matches("<a ").count(), 1, "{body}");
+    }
+
+    #[test]
+    fn inline_link_with_url_text_is_not_nested() {
+        let body = render_body("[https://example.com/a](https://example.com/b)\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/b"], "{body}");
+        assert_eq!(body.matches("<a ").count(), 1, "{body}");
+    }
+
+    #[test]
+    fn trailing_punctuation_is_excluded() {
+        for suffix in ["。", ".", ",", "!", "?", ":", ";", "、", "」", "&gt;", "*", "'"] {
+            let md = format!("x https://example.com/a{suffix} y\n");
+            let body = render_body(&md);
+            assert_eq!(hrefs(&body), vec!["https://example.com/a"], "suffix={suffix:?} {body}");
+        }
+    }
+
+    #[test]
+    fn parens_are_balanced() {
+        let body = render_body("(https://example.com/a) なのだ。\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/a"], "{body}");
+        let body = render_body("https://ja.wikipedia.org/wiki/Foo_(bar) なのだ。\n");
+        assert_eq!(hrefs(&body), vec!["https://ja.wikipedia.org/wiki/Foo_(bar)"], "{body}");
+    }
+
+    #[test]
+    fn full_width_neighbors_are_handled() {
+        // 直前が全角でも開始を許し、全角が来たら URL を打ち切る。
+        let body = render_body("詳細はhttps://example.com/aを参照。\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/a"], "{body}");
+        assert!(body.contains("を参照。"), "trailing text lost: {body}");
+        // 全角括弧も打ち切りの規則ひとつで外れる。
+        let body = render_body("（https://example.com/a）\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/a"], "{body}");
+    }
+
+    #[test]
+    fn image_alt_with_url_is_not_broken() {
+        let body = render_body("![https://example.com/a](./x.png)\n");
+        assert!(hrefs(&body).is_empty(), "{body}");
+        assert!(body.contains("alt=\"https://example.com/a\""), "{body}");
+    }
+
+    #[test]
+    fn multiple_urls_in_one_paragraph() {
+        let body = render_body("a https://example.com/1 b http://example.com/2 c\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/1", "http://example.com/2"], "{body}");
+    }
+
+    #[test]
+    fn url_query_ampersand_is_escaped() {
+        let body = render_body("https://example.com/a?x=1&y=2\n");
+        assert_eq!(hrefs(&body), vec!["https://example.com/a?x=1&amp;y=2"], "{body}");
+    }
+
+    #[test]
+    fn bare_url_paragraph_is_not_code_embedded() {
+        // 単独リンクだけの段落に見えるが、スキーム付きなのでコード埋め込みは走らない。
+        let body = render_in_tempdir("https://example.com/f.txt\n", "bareurl");
+        assert!(!body.contains("code-embed"), "{body}");
+        assert_eq!(hrefs(&body), vec!["https://example.com/f.txt"], "{body}");
     }
 }

@@ -23,7 +23,7 @@ date: 2026-05-10
 
 ### 小見出し H3
 
-リンクは [GitHub](https://github.com/) のように青基調。URL をそのまま貼るときは山カッコで囲むと飛べる → <https://github.com/>（裸の `https://github.com/` はテキストのまま）。WikiLink 記法 [[https://github.com/|GitHub（WikiLink）]] も使える。
+リンクは [GitHub](https://github.com/) のように青基調。裸の URL はそのまま貼るだけでリンクになる → https://github.com/rust-lang/rust 。日本語に直結させてもよく、詳細はhttps://github.com/を参照、のように書いても URL の部分だけがリンクになる。山カッコ形式 <https://github.com/> と WikiLink 記法 [[https://github.com/|GitHub（WikiLink）]] も使える。
 
 #### さらに小さく H4
 
