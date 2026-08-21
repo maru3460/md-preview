@@ -9,7 +9,7 @@ use crate::html::build_html;
 use crate::request::{self, ViewMode};
 use crate::theme;
 
-pub const SAMPLE_MD: &str = include_str!("sample.md");
+pub const SAMPLE_MD: &str = include_str!("assets/sample.md");
 
 /// `--help` とエラー時のどちらでも使い回す使い方テキスト。
 pub const USAGE: &str = "\

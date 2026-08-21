@@ -1,24 +1,24 @@
 use std::path::PathBuf;
 
 // 同梱（公式）テーマ。バイナリに埋め込む。
-const DEFAULT_THEME_CSS: &str = include_str!("themes/default.css");
-const MINIMAL_CSS: &str = include_str!("themes/minimal.css");
-const EDITORIAL_CSS: &str = include_str!("themes/editorial.css");
-const INK_CSS: &str = include_str!("themes/ink.css");
-const NORD_CSS: &str = include_str!("themes/nord.css");
-const PAPER_CSS: &str = include_str!("themes/paper.css");
-const MONO_CSS: &str = include_str!("themes/mono.css");
-const DRACULA_CSS: &str = include_str!("themes/dracula.css");
-const GRUVBOX_CSS: &str = include_str!("themes/gruvbox.css");
-const ROSE_PINE_CSS: &str = include_str!("themes/rose-pine.css");
-const SOLARIZED_LIGHT_CSS: &str = include_str!("themes/solarized-light.css");
-const TERMINAL_CSS: &str = include_str!("themes/terminal.css");
-const BLUEPRINT_CSS: &str = include_str!("themes/blueprint.css");
+const DEFAULT_THEME_CSS: &str = include_str!("assets/themes/default.css");
+const MINIMAL_CSS: &str = include_str!("assets/themes/minimal.css");
+const EDITORIAL_CSS: &str = include_str!("assets/themes/editorial.css");
+const INK_CSS: &str = include_str!("assets/themes/ink.css");
+const NORD_CSS: &str = include_str!("assets/themes/nord.css");
+const PAPER_CSS: &str = include_str!("assets/themes/paper.css");
+const MONO_CSS: &str = include_str!("assets/themes/mono.css");
+const DRACULA_CSS: &str = include_str!("assets/themes/dracula.css");
+const GRUVBOX_CSS: &str = include_str!("assets/themes/gruvbox.css");
+const ROSE_PINE_CSS: &str = include_str!("assets/themes/rose-pine.css");
+const SOLARIZED_LIGHT_CSS: &str = include_str!("assets/themes/solarized-light.css");
+const TERMINAL_CSS: &str = include_str!("assets/themes/terminal.css");
+const BLUEPRINT_CSS: &str = include_str!("assets/themes/blueprint.css");
 
 // シンタックスハイライト用 CSS。切り替え可能なスタイル層の一部で、どちらを
 // 適用するかはテーマの appearance が決めるため、html.rs ではなくここに置く。
-const HLJS_LIGHT_CSS: &str = include_str!("hljs-light.min.css");
-const HLJS_DARK_CSS: &str = include_str!("hljs-dark.min.css");
+const HLJS_LIGHT_CSS: &str = include_str!("assets/vendor/hljs-light.min.css");
+const HLJS_DARK_CSS: &str = include_str!("assets/vendor/hljs-dark.min.css");
 
 /// テーマが特定の外観に固定されるか、OS 設定に追従するか。
 /// これはシンタックスハイライトの配色選択も兼ねるため、ライト固定テーマが
