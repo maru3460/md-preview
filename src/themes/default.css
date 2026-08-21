@@ -191,6 +191,7 @@ blockquote.markdown-alert-caution .markdown-alert-title { color: #cf222e; }
     border-bottom-color: #d0d7de;
 }
 .source-gutter,
+.md-src-row::before,
 .diff-gutter {
     color: #8c959f;
 }
@@ -519,6 +520,7 @@ pre.mermaid {
     .source-lang { color: #8b949e; }
     .source-titlebar { border-bottom-color: #30363d; }
     .source-gutter,
+    .md-src-row::before,
     .diff-gutter { color: #6e7681; }
 }
 

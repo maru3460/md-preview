@@ -49,79 +49,21 @@
   }
 
   // ── raw / ソース表示の行ユニット ──────────────────────────────
-  // ソース表示（raw トグル・非 md ファイル）は全文が 1 個の <pre><code> で、行の単位に
-  // なる要素が DOM に無い。1 行ずつ span で包むと hljs のハイライト（複数行にまたがる
-  // 文字列・コメント）が壊れるので <code> には触れず、透明な行レイヤを上に重ねて
-  // [data-src-line] を持たせる。これで既存のユニット処理がそのまま raw にも効く。
-  //
-  // 位置合わせは座標計算をしない。行レイヤは pre と同じ font-size / line-height を共有し、
-  // 各行は空でも 1 行分の高さを持つ（base.css の ::before）ので、行ボックスを積むだけで
-  // コード側の行と揃う（ソースビューの pre は折り返さないので 1 行 = 1 段）。
-  var SRC_ROWS_MAX = 10000;   // hljs 無効化と同じ規模。これを超えたら行ユニットは作らない
-  var srcTooBig = false;      // 直近の ensureSourceRows が大きすぎて諦めたか（案内用）
-
-  function ensureSourceRows(host) {
-    srcTooBig = false;
-    if (!host) return;
-    host.querySelectorAll('.source-main').forEach(function(main) {
-      if (main.querySelector('.md-src-rows')) return;
-      var code = main.querySelector('pre code');
-      if (!code) return;
-      // 末尾の改行は「余分な空行」なので数えない（行番号ガターと同じ数え方に揃える）。
-      // textContent は hljs 適用後も元のソースのままなので、引用にもそのまま使える。
-      var lines = code.textContent.replace(/\n$/, '').split('\n');
-      if (lines.length > SRC_ROWS_MAX) { srcTooBig = true; return; }
-      var layer = document.createElement('div');
-      layer.className = 'md-src-rows';
-      var frag = document.createDocumentFragment();
-      for (var i = 0; i < lines.length; i++) {
-        var row = document.createElement('div');
-        row.className = 'md-src-row';
-        row.dataset.srcLine = String(i + 1);
-        frag.appendChild(row);
-      }
-      layer.appendChild(frag);
-      // 引用元の行はレイヤが持つ（ユニットごとに全文 textContent を読み直さないため）。
-      layer.mdLines = lines;
-      // 重ねるのは pre を包む箱（Copy ボタンの .code-wrapper）。行番号ガターの上には
-      // かぶせない——色帯や選択の塗りが番号を潰さないようにするため。hydrate は
-      // addCopyButtons → reanchor の順なので普通はもう在るが、無ければ自分で用意する
-      // （.source-main に直接重ねるとガターまで覆ってしまうため）。
-      var pre = code.parentNode;
-      var box = pre.parentElement;
-      if (!box || !box.classList.contains('code-wrapper')) {
-        box = document.createElement('div');
-        box.className = 'code-wrapper';
-        main.insertBefore(box, pre);
-        box.appendChild(pre);
-      }
-      box.appendChild(layer);
-      // モード中はレイヤがホイールを受けるので、そのままだとコードの横スクロールが死ぬ
-      // （実際の横スクローラは overflow-x を持つ <code>（or pre）で、レイヤはその外側）。
-      // 横成分だけ手で流す。縦はそのまま親（ページ）へ抜けるので触らない。
-      layer.addEventListener('wheel', function(e) {
-        if (!e.deltaX) return;
-        var sc = (code.scrollWidth > code.clientWidth) ? code : pre;
-        sc.scrollLeft += e.deltaX;
-      }, { passive: true });
-    });
-  }
-
-  // 行ユニットが要るのは「コメントモード中」か「このファイルにコメントがある」時だけ。
-  // 素の閲覧では 1 行 1 要素を作らない（ソースを開くだけの経路を軽いままにする）。
+  // ソース表示（raw トグル・非 md ファイル）は common.js の wrapSourceLines が本文の
+  // 差し替え時に常時「1 行 = 1 <div>（[data-src-line] 付き）」へ包み直すので、既存の
+  // ユニット処理がそのまま raw にも効く。行が本物の要素なので、埋め込み（カードの
+  // 兄弟挿入）も他のユニットと同じに動く。ここに残るのは「行数が多すぎて包まれなかった
+  // ソース」の案内だけ。
   var tooBigNotified = -1;   // 案内トーストを出した本文の差し替え世代（重複表示を防ぐ）
-  function syncSourceRows(host) {
-    if (!host) return;
-    var file = currentFile();
-    var needed = mode || comments.some(function(c) { return c.file === file && inCurrentView(c); });
-    if (!needed) return;
-    ensureSourceRows(host);
+  function notifySrcTooBig(host) {
+    if (!host || !mode) return;
+    var main = host.querySelector('.source-main');
+    if (!main || main.querySelector('.md-src-row')) return;
     // なぜ行を掴めないのかを伝える。モードに入った時だけでなく、モード中に巨大ファイルへ
     // 移った時にも出す（同じ本文で何度も出さないよう世代で抑える）。
-    if (mode && srcTooBig && tooBigNotified !== bodyGen()) {
-      tooBigNotified = bodyGen();
-      toast('大きなファイルなので行コメントは使えません');
-    }
+    if (tooBigNotified === bodyGen()) return;
+    tooBigNotified = bodyGen();
+    toast('大きなファイルなので行コメントは使えません');
   }
 
   // ── ユニット/引用の抽出 ───────────────────────────────────────
@@ -172,13 +114,10 @@
   // 💬 バッジ・Copy ボタン・ファイル名ラベルといった UI チップは引用に混ぜない
   // （クローンから取り除いてから textContent を読む）。
   function unitQuote(u) {
-    // 行レイヤの行は空要素なので、引用はレイヤが持つソース行から取る（1 行 1 ユニット）。
-    if (u.classList.contains('md-src-row')) {
-      var lines = u.parentElement && u.parentElement.mdLines;
-      var i = unitStart(u) - 1;
-      return (lines && lines[i] != null) ? lines[i].replace(/\s+$/, '') : '';
-    }
-    var isCode = u.classList.contains('code-wrapper') || u.tagName === 'PRE';
+    // ソース行（1 行 1 ユニット、中身は行の実テキスト）はコード扱いにして
+    // インデント・連続空白を保つ（散文側の分岐に落ちると 1 個の空白に畳まれる）。
+    var isCode = u.classList.contains('code-wrapper') || u.tagName === 'PRE' ||
+                 u.classList.contains('md-src-row');
     var clone = u.cloneNode(true);
     clone.querySelectorAll('.md-cmt-badge, .md-cmt-embed, .copy-btn, .code-filename').forEach(function(n) { n.remove(); });
     var text = clone.textContent || '';
@@ -454,13 +393,14 @@
       // 付けたコメントが、プレビューでは同じ段落へ落ちることがあるため（💬 が 2 個並ぶ）。
       var slots = new Map();
       var file = currentFile();
-      // raw / ソース表示は行ユニットが DOM に無いので、必要なときだけ先に作る。
-      syncSourceRows(host);
-      var all = allUnits(host);   // 1 回だけ取得して全コメントで使い回す
+      notifySrcTooBig(host);
+      var fileComments = comments.filter(function(c) { return c.file === file && inCurrentView(c); });
+      // 素の閲覧（モード外・このファイルにコメント 0 件）ではユニットの全走査をしない。
+      // ソースビューは常時 1 行 1 要素なので、1 万行なら 1 万ユニットの走査になるため。
+      var all = (mode || fileComments.length) ? allUnits(host) : [];
       // インライン埋め込みはモード中だけ。錨の要素 -> そこに出すコメント配列。
       var embedSlots = mode ? new Map() : null;
-      comments.forEach(function(c) {
-        if (c.file !== file || !inCurrentView(c)) return;
+      fileComments.forEach(function(c) {
         var units = unitsInRange(all, c.startLine, c.endLine);
         if (!units.length) {
           var one = unitAtLine(host, c.startLine, all);
@@ -474,19 +414,20 @@
           if (!slot) { slot = { el: anchor, list: [] }; slots.set(anchor, slot); }
           slot.list.push(c);
         }
-        // 埋め込みは範囲の最後のユニットの直後に出す（GitHub 風）。ソース表示の
-        // 行レイヤ（.md-src-row）は行ボックスの積み上げで位置を合わせていて、間に
-        // ブロックを挟めないので出さない（raw のコメントはサイドバー一覧で読む）。
+        // 埋め込みは範囲の最後のユニットの直後に出す（GitHub 風）。ソース表示の行も
+        // 本物の要素（1 行 1 <div>）なので、他ユニットと同じ兄弟挿入がそのまま効く。
         if (embedSlots) {
           var tail = units[units.length - 1];
-          if (tail && !tail.classList.contains('md-src-row')) {
+          if (tail) {
             var elist = embedSlots.get(tail);
             if (!elist) { elist = []; embedSlots.set(tail, elist); }
             elist.push(c);
           }
         }
       });
-      slots.forEach(function(slot) {
+      // 💬 バッジはモード外だけ。モード中はインライン埋め込みが同じ場所に出るので
+      // 二重になる（バッジの役割は「モード外の目印とクリック入口」に絞る）。
+      if (!mode) slots.forEach(function(slot) {
         var badge = document.createElement('span');
         badge.className = 'md-cmt-badge';
         badge.setAttribute('contenteditable', 'false');
@@ -1186,9 +1127,9 @@
       // 埋め込みが抜けて本文が縮むぶんはスクロール補正しつつ貼り直す。
       anchorScroll(redraw);
     } else {
-      // raw / ソース表示は行の単位が DOM に無いので、ここで行ユニットを作る（コメントが
-      // 1 件も無いファイルでは redraw 側の条件に掛からないため）。
-      syncSourceRows(hostEl());
+      // 行ユニットは wrapSourceLines が本文の差し替え時に作るので、ここでやることは
+      // 「行数が多すぎて包まれなかったソース」で行を掴めない理由を案内するだけ。
+      notifySrcTooBig(hostEl());
       // 先にサイドバー（コメントタブ）を開いてガター分のリフローを済ませてから
       // 埋め込みを差し込む（redraw が入れて、伸びるぶんはスクロール補正。見えている
       // ユニットへのキーボード・カーソルも redraw 内の initKbCursor が置く）。

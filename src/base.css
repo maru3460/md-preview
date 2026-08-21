@@ -407,8 +407,6 @@ blockquote.markdown-alert-caution {
 .source-main {
     display: flex;
     align-items: stretch;
-    /* 行レイヤ（.md-src-rows）は通常 .code-wrapper に重なるが、Copy ボタンが付かず
-       ラッパが無い場合はここが基準になる。 */
     position: relative;
 }
 .source-gutter {
@@ -443,15 +441,76 @@ blockquote.markdown-alert-caution {
 .source-view pre code.hljs {
     padding: 0;
 }
-/* pre / code の 85% 複合を打ち消し、ガターと同じ絶対サイズに固定して行を揃える。
-   コメント用の行レイヤ（.md-src-rows）も同じ行送りを共有する。ここが揃っている限り、
-   行レイヤは座標計算なしに 1 行 1 段でコード側と重なる。 */
+/* pre / code の 85% 複合を打ち消し、ガターと同じ絶対サイズに固定して行を揃える。 */
 .source-gutter,
-.md-src-rows,
 .source-main pre,
 .source-main pre code {
     font-size: 13px;
     line-height: 1.55;
+}
+
+/* ── ソースビューの 1 行 1 要素（common.js の wrapSourceLines が包む） ──
+   行コメントの埋め込み（カードを行の直後に兄弟挿入）を成立させる構造。行番号は
+   各行の ::before で出す——別カラムのガター（.source-gutter）だと、行間にカードが
+   挟まったとき番号と行がずれる。ガターは包まなかった巨大ファイル専用になる。 */
+/* 横スクロールの主体は code に固定する。sticky（行番号・埋め込みカード）は WebKit
+   ではスクローラの孫以深だと効かないことがあり、pre をスクローラにすると番号が
+   流れてしまう（行は code の直接の子なので、code がスクローラなら効く）。 */
+.source-main pre code[data-src-wrapped] {
+    display: block;
+    overflow-x: auto;
+}
+.source-main .md-src-row {
+    position: relative;
+    /* 全行を最長行と同じ幅に揃える（塗り・帯・選択が右端まで届くように）。
+       最長行の幅は wrapSourceLines が実測して CSS 変数で配る——100% は可視幅
+       （code = スクローラ）にしかならないため。 */
+    width: max-content;
+    min-width: max(100%, var(--md-src-content-w, 100%));
+}
+/* 行番号。テキストではないので選択コピーに混ざらない。sticky で横スクロールに
+   置いていかれない。空行（中身が改行だけ）の高さもこの番号が保証する。 */
+.source-main .md-src-row::before {
+    content: attr(data-src-line);
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    /* border-box にして「ガターの実幅 = この width」を一本の式に保つ。埋め込みカードの
+       left / margin-left（下の .md-cmt-embed）が同じ式でコード開始位置を指せるように。 */
+    box-sizing: border-box;
+    width: calc(var(--md-gutter-ch, 4) * 1ch + 20px);
+    padding-right: 16px;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: color-mix(in srgb, currentColor 30%, transparent);
+    /* 横スクロールでコードが番号の下へ潜るので地色で敷く（実際の背景色は
+       wrapSourceLines が CSS 変数で渡す。取れなければ OS 色）。 */
+    background: var(--md-src-gutter-bg, Canvas);
+    user-select: none;
+    -webkit-user-select: none;
+}
+/* コメント済みの行では、数字はガター扱いでマークの外に置く（GitHub blob 風）。
+   行全体に付く 12% の塗りと左帯は、不透明な番号の地色が数字の上から隠すので、
+   見た目の塗りはコード開始位置から始まる。帯（4px）はガター右端 = コード開始位置に
+   引き直す。カーソル・選択・起点も同じ「コードから」の体系に揃える（下）。 */
+.source-main .md-src-row.md-cmt-marked::before {
+    box-shadow: inset -4px 0 0 var(--md-accent, Highlight);
+}
+/* j/k のカーソル。プレビューの外側 outline は、余白なしで密着するソースの行では
+   上下の行に食い込むので、「濃いめの塗り + コード開始位置の帯」（エディタの
+   現在行ハイライト風）にする。マーク行の 12% と重なっても読めるよう塗りは 24%。 */
+.source-main .md-src-row.md-cmt-kbcursor {
+    outline: none;
+    background: color-mix(in srgb, var(--md-accent, Highlight) 24%, transparent);
+}
+.source-main .md-src-row.md-cmt-kbcursor::before {
+    box-shadow: inset -4px 0 0 var(--md-accent, Highlight);
+}
+/* レンジ選択の起点（破線枠）とパネルホバーの強調（実線枠）は、外へ食み出さない
+   内側の枠にする（外側 offset のままだと隣の行のテキストに重なる）。 */
+.source-main .md-src-row.md-cmt-anchor,
+.source-main .md-src-row.md-cmt-flash {
+    outline-offset: -2px;
 }
 
 /* ── Folder mode layout ─────────────────────────────────────── */
@@ -1293,45 +1352,28 @@ body.md-cmt-mode .source-main {
     -webkit-user-select: none;
 }
 
-/* raw / ソース表示の行ユニット（comment.js が必要な時だけ作る透明な行レイヤ）。
-   <code> を 1 行ずつ包むと hljs のハイライトが壊れるので、code には触れずに重ねる。
-   高さは座標計算ではなく行ボックスの積み上げで合わせる（pre と同じ font-size /
-   line-height を共有し、空の行も ::before の zero-width space で 1 行分になる）。 */
-.md-src-rows {
-    position: absolute;
-    top: 0;
-    /* コードの左に 6px はみ出させる。色帯（左 4px）を行番号ガターとコードの
-       すき間に落として、1 文字目に重ならないようにするため。 */
-    left: -6px;
-    right: 0;
-    z-index: 3;
-    /* 行の高さを決めるのは font-size / line-height だけ（上の共有ルール）。
-       font-family は行送りに影響しないので、ここでは指定しない。 */
-    /* 素の閲覧ではコードのテキスト選択を邪魔しない。掴めるのはコメントモード中だけ。 */
-    pointer-events: none;
+/* raw / ソース表示の行ユニット（1 行 1 要素の構造・行番号は .source-main まわりで
+   定義済み）。ここではコメント UI との取り合いだけを持つ。 */
+/* 💬 バッジは右上に置くと横に長い行（width: max-content）では画面外に出るので、
+   行頭の番号ガターの上に浮かせる（コードブロックの左寄せ回避と同系）。 */
+.md-src-row > .md-cmt-badge {
+    right: auto;
+    left: 2px;
 }
-.md-src-row {
-    position: relative;
+/* 埋め込みカードは行の兄弟として <code>（white-space: pre・横スクロール内容）に
+   入るので、書字を本文向けに戻し、sticky で横スクロールに置いていかれないようにする。
+   左端はコード開始位置（番号ガターの右）に揃える——GitHub の diff コメント風で、
+   数字より左に食み出さない。ch はこの要素も pre のモノスペースを継承しているので、
+   行番号（::before）側と同じ幅に解決される。 */
+.source-main code .md-cmt-embed {
+    position: sticky;
+    left: calc(var(--md-gutter-ch, 4) * 1ch + 20px);
+    margin-left: calc(var(--md-gutter-ch, 4) * 1ch + 20px);
+    /* 幅はブロックの自動幅のまま（code = スクローラの可視幅からガター分を引いた幅）。
+       code の中身は最長行分だけ横に伸びるが、カードは可視幅に収まり sticky で追従する。 */
+    white-space: normal;
 }
-.md-src-row::before {
-    content: "\200B";
-}
-body.md-cmt-mode .md-src-rows {
-    pointer-events: auto;
-    cursor: crosshair;
-}
-/* 💬 バッジはモード外でも押せる／ホバーできる（行レイヤ自体は通り抜ける）。 */
-.md-src-row .md-cmt-badge {
-    pointer-events: auto;
-}
-/* 先頭の 2 行だけは、右上に浮く Copy ボタンとぶつかるので左へずらす
-   （コードブロックの .code-wrapper.md-cmt-marked と同じ回避を、行レイヤ版で行う）。 */
-.md-src-row[data-src-line="1"] .md-cmt-badge,
-.md-src-row[data-src-line="2"] .md-cmt-badge {
-    right: 64px;
-}
-/* コメントモード中は行レイヤが全面を覆うので、Copy ボタンだけ上に出して押せるままにする
-   （ホバーで出てくるのに反応しない、という状態を作らない）。 */
+/* Copy ボタンはコメントの色帯・バッジより上に出して押せるままにする。 */
 body.md-cmt-mode .source-main .copy-btn {
     z-index: 4;
 }

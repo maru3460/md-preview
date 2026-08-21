@@ -73,7 +73,12 @@
       btn.setAttribute('aria-label', 'Copy code');
       btn.textContent = 'Copy';
       btn.addEventListener('click', function() {
-        navigator.clipboard.writeText(code.innerText).then(function() {
+        // コメントのバッジ/埋め込みカードは <code> の中に入ることがある（ソースビューの
+        // 行構造）ので、複製から取り除いてから読む。行包みは textContent を不変に保つ
+        // ため、コード本文はこれで元ソースのまま取れる。
+        var clone = code.cloneNode(true);
+        clone.querySelectorAll('.md-cmt-badge, .md-cmt-embed, .md-cmt-badge-holder').forEach(function(n) { n.remove(); });
+        navigator.clipboard.writeText(clone.textContent).then(function() {
           btn.textContent = 'Copied';
           btn.classList.add('copied');
           setTimeout(function() {
@@ -91,12 +96,14 @@
 
   // .source-view（.md 以外のソース表示）に行番号ガターを付ける。多重付与は防ぐ。
   // ガターは .source-main 内で <pre> の兄弟として置くので hljs のハイライトには触れない。
+  // 行包み済み（wrapSourceLines）のソースは各行の ::before が番号を出すので付けない——
+  // 行間にコメントカードが挟まると、別カラムのガターでは番号が行とずれるため。
   function addLineNumbers(scope) {
     var root = scope || document;
     root.querySelectorAll('.source-main').forEach(function(main) {
       if (main.querySelector(':scope > .source-gutter')) return;
       var code = main.querySelector('code');
-      if (!code) return;
+      if (!code || (code.dataset && code.dataset.srcWrapped)) return;
       // 末尾の改行は「余分な空行」なので数えない（textContent は hljs 適用後も不変）。
       var text = code.textContent.replace(/\n$/, '');
       var count = text.split('\n').length;
@@ -107,6 +114,83 @@
       gutter.setAttribute('aria-hidden', 'true');
       gutter.textContent = nums.join('\n');
       main.insertBefore(gutter, main.firstChild);
+    });
+  }
+
+  // ── ソースビューの 1 行 1 要素化 ──────────────────────────────
+  // hljs は複数行にまたがる <span>（文字列・ブロックコメント）を出すので、出力を単純に
+  // \n で切ると開き/閉じタグの対応が壊れる。行末で開いているタグを全部閉じ、次の行頭で
+  // 同じタグを開き直す。hljs の出力は <span class="…"> / </span> / エスケープ済み
+  // テキストだけの安全なサブセットなので、正規表現トークナイザ + スタックで足りる。
+  function splitHighlightedLines(html) {
+    var lines = [];
+    var stack = [];   // 開いている <span …> の開きタグ文字列
+    var buf = '';
+    var re = /(<span[^>]*>)|(<\/span>)|(\n)|([^<\n]+)|(<)/g;
+    var m;
+    while ((m = re.exec(html)) !== null) {
+      if (m[1]) { stack.push(m[1]); buf += m[1]; }
+      else if (m[2]) { stack.pop(); buf += m[2]; }
+      else if (m[3]) {                              // 改行 = 行境界
+        buf += '</span>'.repeat(stack.length);      // 行末で全部閉じる
+        lines.push(buf);
+        buf = stack.join('');                       // 次の行頭で開き直す
+      }
+      else buf += m[0];                             // テキスト（または裸の '<'）
+    }
+    buf += '</span>'.repeat(stack.length);
+    lines.push(buf);
+    return lines;
+  }
+
+  // ソースビュー（raw トグル・非 md ファイル）の <code> を「1 行 = 1 <div>」に包み直す。
+  // 行コメントの埋め込み（カードを行の直後に兄弟挿入する）を成立させるための構造で、
+  // comment.js の行ユニット（[data-src-line]）がそのまま乗る。
+  //
+  // - 各行の末尾に実際の改行をテキストとして残す。「<code> の textContent は元ソースの
+  //   まま」という既存の前提（引用・選択コピー・検索・ガターの行数え）を保つため。
+  //   空行も改行 + 行番号の ::before で 1 行分の高さを持つ。
+  // - 行数が閾値を超えるソースは包まない（従来の 1 本 pre + ガターのまま。行コメント
+  //   不可）。閾値はサーバ（request.rs の HIGHLIGHT_MAX_LINES = 10,000）と同じ規模。
+  //   バイト側の閾値はここには持ち込まない——1MB 超でも行数が少ないファイル（ログ等）は
+  //   色なしで包めば行コメントできる。
+  var SRC_WRAP_MAX_LINES = 10000;
+
+  function wrapSourceLines(scope) {
+    var root = scope || document;
+    root.querySelectorAll('.source-main').forEach(function(main) {
+      var code = main.querySelector('pre code');
+      if (!code || (code.dataset && code.dataset.srcWrapped)) return;
+      var text = code.textContent;
+      var hadTrailingNL = /\n$/.test(text);
+      // 行数の先読み。閾値超過なら innerHTML の分割ごとスキップする。
+      var count = 0;
+      for (var p = -1; (p = text.indexOf('\n', p + 1)) !== -1;) count++;
+      if (count + (hadTrailingNL ? 0 : 1) > SRC_WRAP_MAX_LINES) return;
+      var parts = splitHighlightedLines(code.innerHTML);
+      // 末尾改行の後ろの空要素は行ではない（ガターと同じ数え方に揃える）。
+      if (hadTrailingNL) parts.pop();
+      var out = [];
+      for (var i = 0; i < parts.length; i++) {
+        // 最終行の改行は元ソースにあった時だけ付ける（textContent 不変を守る）。
+        var nl = (i < parts.length - 1 || hadTrailingNL) ? '\n' : '';
+        out.push('<div class="md-src-row" data-src-line="' + (i + 1) + '">' + parts[i] + nl + '</div>');
+      }
+      code.innerHTML = out.join('');
+      code.dataset.srcWrapped = '1';
+      // 行番号（::before）の桁数と、横スクロール時に番号の下へ敷く地色を CSS 変数で渡す。
+      code.style.setProperty('--md-gutter-ch', String(String(parts.length).length));
+      // 最長行の幅も配る。行の塗り・帯を全行この幅（min-width）に揃えるため——
+      // CSS の 100% は可視幅（code = スクローラ）にしかならず、横スクロールすると
+      // 短い行の塗りが途中で切れる。コンテンツ幅はフォント固定なのでリサイズ不変。
+      code.style.setProperty('--md-src-content-w', code.scrollWidth + 'px');
+      for (var n = main; n; n = n.parentElement) {
+        var c = getComputedStyle(n).backgroundColor;
+        if (c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)') {
+          code.style.setProperty('--md-src-gutter-bg', c);
+          break;
+        }
+      }
     });
   }
 
@@ -144,6 +228,7 @@
     var root = scope || document;
     ensureHeadingIds(root);
     highlightIn(root);
+    wrapSourceLines(root);
     addCopyButtons(root);
     addLineNumbers(root);
     runMermaid(root);
@@ -518,6 +603,7 @@
     addCopyButtons: addCopyButtons,
     addLineNumbers: addLineNumbers,
     highlightIn: highlightIn,
+    wrapSourceLines: wrapSourceLines,
     hydrate: hydrate,
     bodyGen: function() { return bodySwaps; },
     runMermaid: runMermaid,
