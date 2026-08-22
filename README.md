@@ -197,7 +197,7 @@ draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGrap
 
 信頼できないMarkdownを開くことを前提に、ページ全体にContent Security Policy (CSP) を適用しています。本文に埋め込まれた `<script>` は実行されません。右クリックメニューからのパス操作（絶対パスのコピー・Finderで表示・デフォルトアプリで開く）はRust側でパスを検証し、実行系の拡張子（`.app` / `.command` / `.jar` 等）は弾きます。
 
-ただし `.html` / `.htm` ファイルは「手元のローカルファイルを忠実に見る」用途のため、sandbox なしの iframe で描画します。この場合 **`.html` 内の JavaScript はそのまま実行され、上記の CSP による保護は効きません**（`.md` とは信頼モデルが異なります）。信頼できない `.html` を開くのは避けてください。詳細は [`docs/security-model.md`](docs/security-model.md) を参照。
+ただし `.html` / `.htm` ファイルは「手元のローカルファイルを忠実に見る」用途のため、sandbox なしの iframe で描画します。この場合 **`.html` 内の JavaScript はそのまま実行され、上記の CSP による保護は効きません**（`.md` とは信頼モデルが異なります）。iframe は同一オリジンなので、`.html` 内の JavaScript は開いているフォルダ配下のファイルを読んで外部へ送信することもできます。**信頼できない `.html` を開くのは避けてください。** また `.md` 本文の HTML はサニタイズしていないため、`<script>` は CSP で止まりますが CSS による見た目の細工やリモート画像の読み込みは通ります。
 
 ## 制限事項
 
