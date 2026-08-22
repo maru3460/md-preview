@@ -16,9 +16,3 @@ node_modules/
 package-lock.json
 test-results/
 playwright-report/
-
-# cargo-fuzz の成果物（コーパス・クラッシュ入力・ビルド）
-fuzz/target/
-fuzz/corpus/
-fuzz/artifacts/
-fuzz/coverage/

@@ -956,7 +956,7 @@ mod tests {
 
     #[test]
     fn embedding_is_off_without_base_dir() {
-        // base_dir が無ければ（fuzz や単体テストの render_body 経路）展開しない。
+        // base_dir が無ければ（単体テストの render_body 経路）展開しない。
         let body = render_body("[f](./f.txt#L2)\n");
         assert!(body.contains("<a href=\"./f.txt#L2\">"), "{body}");
         assert!(!body.contains("code-embed"), "{body}");
