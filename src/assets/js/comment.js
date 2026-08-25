@@ -1143,6 +1143,13 @@
   var lastMouseX = null;
   var lastMouseY = null;
   var wired = false;
+  // コメント UI 自身。モード中でもクリックはそのまま通す。
+  var CMT_UI_SEL = '.md-cmt-popover, .md-cmt-panel, .md-cmt-handle, .md-cmt-badge, .md-cmt-embed';
+  // 本文の中に置かれた「読むための UI」。ユニット（[data-src-line]）の子なので closest
+  // では本文と区別できず、素通しにするとコピーや折りたたみのつもりがコメント付与になる。
+  // モード中もコメントではなく本来の動作を通す。
+  var BODY_UI_SEL = '.copy-btn, .code-embed-expand, .code-embed-fold';
+  function hits(t, sel) { return !!(t && t.closest && t.closest(sel)); }
   function wireOnce() {
     if (wired) return;
     wired = true;
@@ -1151,9 +1158,7 @@
     document.addEventListener('mousedown', function(e) {
       if (!mode) return;
       if (e.button !== 0) return;   // 右/中クリックは選択に使わない（右クリックはメニューへ）
-      if (e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-panel') ||
-          e.target.closest('.md-cmt-handle') || e.target.closest('.md-cmt-badge') ||
-          e.target.closest('.md-cmt-embed')) return;
+      if (hits(e.target, CMT_UI_SEL) || hits(e.target, BODY_UI_SEL)) return;
       var host = hostEl();
       if (!host || !host.contains(e.target)) return;
       var u = e.target.closest('[data-src-line]');
@@ -1168,11 +1173,11 @@
 
     // モード中は本文クリックのデフォルト遷移（リンク/アンカー）を止め、コメント付与と
     // ナビゲーションの二重発火を防ぐ。バッジ/パネル/ポップオーバーのクリックは通す。
+    // capture で止めるのでボタン自身の click リスナーにも届かない——Copy ボタンや
+    // 埋め込みの折りたたみは BODY_UI_SEL で先に抜けて、本来の動作を残す。
     document.addEventListener('click', function(e) {
       if (!mode) return;
-      if (e.target.closest('.md-cmt-badge') || e.target.closest('.md-cmt-panel') ||
-          e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-handle') ||
-          e.target.closest('.md-cmt-embed')) return;
+      if (hits(e.target, CMT_UI_SEL) || hits(e.target, BODY_UI_SEL)) return;
       var host = hostEl();
       if (host && host.contains(e.target)) { e.preventDefault(); e.stopPropagation(); }
     }, true);
