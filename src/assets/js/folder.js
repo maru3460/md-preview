@@ -201,7 +201,12 @@
 
   function loadPreview(relPath, preserveScroll) {
     var pane = document.getElementById('preview-pane');
-    var savedScroll = preserveScroll ? pane.scrollTop : 0;
+    // タブ（tabs.js）はこの関数を唯一の入口として状態を持つ。ホットリロードは
+    // ファイル切替ではないので通さない（タブが増えたり読み位置が動いたりしない）。
+    if (!preserveScroll && window.MdTabs) MdTabs.onOpen(relPath);
+    // 一度開いたタブへ戻る時は、そのタブに残した読み位置から再開する。
+    var savedScroll = preserveScroll ? pane.scrollTop
+      : (window.MdTabs ? MdTabs.scrollFor(relPath) : 0);
     currentFilePath = relPath;
     // ファイル切替（ホットリロード以外）では本文ペインへフォーカスを戻し、直後から
     // スクロール素キー(j/k 等)が効くようにする。ホットリロードは現在のフォーカスを保つ。
@@ -221,8 +226,9 @@
     // ソース / 差分を表示する（本文レンダリングには戻さない）。
     var mode = window.MdViewModes && window.MdViewModes.active();
     if (mode) {
-      // ファイル切替（preserveScroll=false）は先頭から、ホットリロードは位置維持。
-      if (!preserveScroll) pane.scrollTop = 0;
+      // ファイル切替（preserveScroll=false）はタブの読み位置から、
+      // ホットリロードは現在位置を維持。show() が今の scrollTop を保存して戻す。
+      if (!preserveScroll) pane.scrollTop = savedScroll;
       mode.refresh();
       return;
     }
@@ -508,6 +514,10 @@
     if (window.MdToc) {
       window.MdToc.init(document.getElementById('preview-pane'));
     }
+    if (window.MdTabs) {
+      // タブ切替の実体は通常のファイル切替と同じ経路（loadPreview）。
+      window.MdTabs.init({ openFile: function(rel) { loadPreview(rel); } });
+    }
     if (window.MdPalette) {
       // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。
       window.MdPalette.init({ openFile: function(rel) { loadPreview(rel); } });
@@ -542,8 +552,12 @@
       .then(function(r) { return r.json(); })
       .then(function(items) {
         renderItems(items, sidebar, 0);
-        if (typeof INITIAL_FILE === 'string' && INITIAL_FILE) {
-          loadPreview(INITIAL_FILE); // 内部で focusPreview 済み
+        // 起動時に開くファイル（`md a.md b.md` なら 2 枚のタブ。先頭が最初に見える）。
+        var initial = (typeof INITIAL_FILES !== 'undefined' && INITIAL_FILES) || [];
+        if (initial.length && window.MdTabs) {
+          window.MdTabs.openInitial(initial); // 内部で loadPreview → focusPreview 済み
+        } else if (initial.length) {
+          loadPreview(initial[0]); // 内部で focusPreview 済み
         } else {
           // ファイル未指定でも本文ペインにフォーカスを置き、スクロール素キーの初期ターゲットにする。
           focusPreview();
@@ -563,7 +577,7 @@
       });
   });
 
-  // ⌘W と ⌘A は common.js が keymap 経由で処理する。
+  // ⌘A は common.js が keymap 経由で処理する（⌘W はフォルダモードでは tabs.js）。
   document.addEventListener('click', function(e) {
     var a = e.target.closest('a[href]');
     if (!a) return;

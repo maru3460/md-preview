@@ -159,6 +159,17 @@
       id: spec.id,
       isActive: isActive,
       deactivate: deactivate,
+      // 状態だけ ON にする（取得も表示もしない）。タブ切替のように、この直後に
+      // 呼び出し側が本文を出し直す場面で使う（deactivate の対）。
+      //
+      // ここで available を見てはいけない。available が指すのは**まだ切り替える前の**
+      // ファイルの可否で、新しいファイルの分は直後の loadPreview が setAvailable で
+      // 入れ直す。見てしまうと「非 md を経由してから raw のタブへ戻ると raw が
+      // 復元されない」になる。開けない組み合わせはその setAvailable が畳む。
+      activate: function() {
+        activeId = spec.id;
+        updateButton();
+      },
       setAvailable: setAvailable,
       // 表示中に（現在ファイルに対して）再取得する。ファイル切替・監視リロード・
       // 明示更新のいずれからも使う。バッジも合わせて更新する。
@@ -204,6 +215,18 @@
     active: function() {
       for (var i = 0; i < modes.length; i++) if (modes[i].isActive()) return modes[i];
       return null;
+    },
+    // いま出ているモードの id（無ければ null）。タブが保存する値。
+    currentId: function() { return activeId; },
+    // 保存しておいた id へ状態だけ戻す。表示の更新は呼び出し側（loadPreview）が行う。
+    // 対象が現在のファイルで意味を持たない（raw が無効など）なら OFF のままになる。
+    restore: function(id) {
+      if (id === activeId) return;
+      deactivateOthers(id || '');
+      if (!id) return;
+      for (var i = 0; i < modes.length; i++) {
+        if (modes[i].id === id) { modes[i].activate(); return; }
+      }
     }
   };
 })();

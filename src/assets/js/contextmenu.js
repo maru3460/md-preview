@@ -2,6 +2,7 @@
 // init.js（単一/stdin）と folder.js（フォルダ）の両モードで共有する。
 //
 // 対象の決まり方:
+//  - タブ（.md-tab）を右クリック → そのタブを対象（開閉の項目が増える）。
 //  - サイドバーのツリー項目（.tree-item）を右クリック → その項目を対象（VS Code の
 //    Explorer 的な操作）。プレビューに何も開いていなくても効く。
 //  - それ以外（プレビュー領域など）→ 現在プレビュー中のファイル。
@@ -26,6 +27,11 @@
   //   relOk … 「相対パスをコピー」が意味を持つか
   //   has   … パス系の操作（絶対/Finder/開く）が可能か
   function resolveContext(e) {
+    // タブを右クリック → そのタブが対象（開閉の操作が増える）。
+    var tab = e.target.closest && e.target.closest('.md-tab');
+    if (tab && tab.dataset && tab.dataset.path) {
+      return { rel: tab.dataset.path, relOk: true, has: true, tab: tab.dataset.path };
+    }
     var ti = e.target.closest && e.target.closest('.tree-item');
     if (ti && ti.dataset && ti.dataset.path) {
       return { rel: ti.dataset.path, relOk: true, has: true };
@@ -77,6 +83,12 @@
       case 'open':
         window.ipc.postMessage('menu:open:' + ctx.rel);
         break;
+      case 'tab-close':
+        if (window.MdTabs) MdTabs.closeByPath(ctx.tab);
+        break;
+      case 'tab-close-others':
+        if (window.MdTabs) MdTabs.closeOthers(ctx.tab);
+        break;
       case 'reload':
         if (window.MdReload) window.MdReload();
         break;
@@ -109,6 +121,14 @@
     var items = [];
     if (selection) {
       items.push({ label: 'コピー', action: 'copy-selection', enabled: true });
+      items.push({ sep: true });
+    }
+    if (ctx.tab) {
+      items.push({ label: '閉じる (⌘W)', action: 'tab-close', enabled: true });
+      items.push({
+        label: '他のタブを閉じる', action: 'tab-close-others',
+        enabled: !!(window.MdTabs && MdTabs.count() > 1)
+      });
       items.push({ sep: true });
     }
     // stdin はファイルが無くサイドバーも無いので、パス系グループごと出さない。

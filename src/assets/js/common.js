@@ -617,6 +617,8 @@
     isFieldEl: isFieldEl,
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,
-    cornerStack: cornerStack
+    cornerStack: cornerStack,
+    // ⌘W の従来の意味。タブ（tabs.js）が最後の 1 枚を閉じる時にも使う。
+    closeWindow: closeWindow
   };
 })();

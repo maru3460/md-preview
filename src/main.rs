@@ -38,7 +38,7 @@ const DETACHED_ENV: &str = "MD_DETACHED";
 /// 自分自身を別のプロセスグループで起動し直す。子の起動に成功したら true を返し、
 /// 親はそのまま終了する。自分の実行ファイルが辿れないなど切り離せない事情がある
 /// ときは false を返し、前景での表示に落とす（何も出ないより開いた方がよい）。
-fn detach_self(stdin_mode: bool, target: Option<&str>) -> bool {
+fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBuf>) -> bool {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
@@ -47,9 +47,16 @@ fn detach_self(stdin_mode: bool, target: Option<&str>) -> bool {
         }
     };
 
-    // 開けないパスのエラーは、標準エラー出力を持っている親のうちに出しておく。
-    if let Some(arg) = target {
-        let _ = app_config::resolve_arg_path(arg);
+    // 引数のエラーは、標準エラー出力を持っている親のうちに出しておく。子は stderr を
+    // 持たないので、ここを素通りさせると「窓も出ずエラーも出ず終了コード 0」になる。
+    if targets.len() > 1 {
+        // 複数指定はフォルダ混在と root の広がりも弾く（本体の from_paths と同じ関門を通す）。
+        let paths = app_config::resolve_multi_file_args(targets);
+        let _ = app_config::multi_file_root(&paths, current_dir);
+    } else {
+        for arg in targets {
+            let _ = app_config::resolve_arg_path(arg);
+        }
     }
 
     let mut cmd = Command::new(exe);
@@ -143,10 +150,13 @@ fn main() {
 
     let stdin_mode = args.len() == 1 && !std::io::stdin().is_terminal();
 
-    if !stdin_mode && args.len() != 2 {
+    // ファイルは何個でも受ける（2 つ以上ならタブとして並べて開く）。
+    if !stdin_mode && args.len() < 2 {
         eprintln!("{}", cli::USAGE);
         std::process::exit(1);
     }
+
+    let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
     // ここから先はウィンドウを開く経路。コマンドを終了せずに待たせると、
     // 待ち時間に上限のある呼び出し元（エージェントのコマンド実行ツールなど）が
@@ -155,7 +165,8 @@ fn main() {
     // 端末から人が叩いたときは前景のままにして、Ctrl-C で閉じられる形を保つ。
     if std::env::var_os(DETACHED_ENV).is_none() {
         let detach = detach_flag.unwrap_or_else(|| !std::io::stdout().is_terminal());
-        if detach && detach_self(stdin_mode, args.get(1).map(String::as_str)) {
+        let targets: &[String] = if args.len() > 1 { &args[1..] } else { &[] };
+        if detach && detach_self(stdin_mode, targets, &current_dir) {
             return;
         }
     }
@@ -164,12 +175,10 @@ fn main() {
     let (theme_paint, appearance) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
-    let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
-
     let config = if stdin_mode {
         AppConfig::from_stdin(&theme_css, &custom_css, &current_dir)
     } else {
-        AppConfig::from_path(&args[1], &theme_css, &custom_css, &current_dir)
+        AppConfig::from_paths(&args[1..], &theme_css, &custom_css, &current_dir)
     };
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。

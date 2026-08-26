@@ -49,6 +49,8 @@
   function cmdAnywhere(e) { return (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey; }
   // ⌘ のみ（Ctrl は含めない）。⌃W は入力欄で「単語削除」の意味を持つので巻き込まない。
   function metaOnly(e) { return e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey; }
+  // ⌘⇧+文字（タブ操作）。metaOnly が Shift を弾くので、両者は自動的に排他になる。
+  function metaShift(e) { return e.metaKey && !e.ctrlKey && e.shiftKey && !e.altKey; }
 
   // ── キーの一致判定 ──────────────────────────────────────────
   // e.key を厳密に見る（'g' と 'G' を区別する必要があるため）。
@@ -62,12 +64,15 @@
       return (e.key || '').toLowerCase() === ch || e.code === 'Key' + ch.toUpperCase();
     };
   }
+  // ⌘1..⌘9 の数字キー。
+  function digit19(e) { return /^[1-9]$/.test(e.key); }
 
   // ── 表 ───────────────────────────────────────────────────────
   // scope（ヘルプに出す範囲）:
   //   'all'     … 全モード（stdin / single / folder）
   //   'nostdin' … stdin 以外（ファイル/git がある single・folder）
   //   'folder'  … folder モードのみ（サイドバーとファイル移動がある時）
+  //   'nofolder'… folder 以外（同じキーが folder では別の意味を持つ時に使う）
   // run: ハンドラ名。複数の行が同じハンドラを共有してよい（表示は分けたいが処理は
   //      1 本、というものがある。スクロール系とツリー操作がそれ）。
   var BINDS = [
@@ -119,8 +124,21 @@
     // ── ファイル移動（folder.js） ──
     { cat: 'files', keys: '] / [', desc: '次 / 前のファイルへ（表示中のファイルを巡回）', scope: 'folder',
       run: 'file-cycle', match: keys('[', ']'), when: bare },
+    // Tab と ⇧Tab は同じキーを shift の有無で分ける。when が互いに排他なので
+    // 表の順序には依存しない。
     { cat: 'files', keys: 'Tab', desc: '本文 ⇄ ファイルツリー のフォーカス切替', scope: 'folder',
-      run: 'focus-toggle', match: keys('Tab'), when: bare },
+      run: 'focus-toggle', match: keys('Tab'),
+      when: function(e) { return bare(e) && !e.shiftKey; } },
+
+    // ── タブ（tabs.js） ──
+    { cat: 'files', keys: '⇧Tab', desc: '次のタブへ（端まで行ったら先頭へ折り返す）', scope: 'folder',
+      run: 'tab-cycle', match: keys('Tab'),
+      when: function(e) { return bare(e) && e.shiftKey; } },
+    // 入力欄とオーバーレイ表示中は譲る。⌘P のパレットを開いたまま裏のファイルだけが
+    // 切り替わると、別ファイルの上にオーバーレイが残って何が起きたか分からなくなる。
+    { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）', scope: 'folder',
+      run: 'tab-goto', match: digit19,
+      when: function(e) { return cmd(e) && !overlayOpen(); } },
 
     // ── ファイルツリー（folder.js） ──
     { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉', scope: 'folder',
@@ -136,7 +154,13 @@
       run: 'select-body', match: letter('a'), when: cmd },
     // JS を通らない（macOS のメニュー項目が処理する）。表示のためだけの行。
     { cat: 'app', keys: '⌃⌘F', desc: 'フルスクリーンを切り替え（緑ボタンと同じ）', scope: 'all' },
-    { cat: 'app', keys: '⌘W', desc: 'ウィンドウを閉じる', scope: 'all',
+    // フォルダモードの ⌘W はタブを閉じる（VSCode と同じ）。最後の 1 枚まで閉じたら
+    // 従来どおりウィンドウが閉じるので、押し続けた時の終端は変わらない。
+    { cat: 'app', keys: '⌘W', desc: 'タブを閉じる（最後の 1 枚ならウィンドウを閉じる）', scope: 'folder',
+      run: 'tab-close', match: letter('w'), when: metaOnly },
+    { cat: 'app', keys: '⌘⇧W', desc: 'ウィンドウを閉じる', scope: 'folder',
+      run: 'window-close', match: letter('w'), when: metaShift },
+    { cat: 'app', keys: '⌘W', desc: 'ウィンドウを閉じる', scope: 'nofolder',
       run: 'window-close', match: letter('w'), when: metaOnly },
     { cat: 'app', keys: '⌘Q', desc: '終了', scope: 'all' },
     { cat: 'app', keys: '右クリック', desc: 'コンテキストメニュー', scope: 'all' },
@@ -157,6 +181,7 @@
     var mode = window.MD_MENU_MODE;
     if (scope === 'nostdin') return mode !== 'stdin';
     if (scope === 'folder') return mode === 'folder';
+    if (scope === 'nofolder') return mode !== 'folder';
     return true; // 'all' と未指定
   }
 

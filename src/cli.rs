@@ -17,6 +17,7 @@ md - 高速Markdownプレビュー
 
 使い方:
   md <file.md|dir>    ファイルかディレクトリをプレビュー表示します
+  md <a.md> <b.md>…   複数のファイルをタブで開きます（先頭が最初に見えるタブ）
   cat file.md | md    標準入力（パイプ）からMarkdownを読みます
   md theme [<name>]   テーマ一覧を表示、または <name> に切り替えます
   md --sample         サンプルのMarkdownを標準出力に出します

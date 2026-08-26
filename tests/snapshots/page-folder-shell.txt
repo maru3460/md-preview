@@ -19,12 +19,16 @@
 <script nonce="NONCE">…</script>
 <script nonce="NONCE">…</script>
 <script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
 </head>
 <body class="folder-mode">
 <div class="folder-layout">
   <div id="sidebar" tabindex="-1"></div>
   <div id="resizer"></div>
-  <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
+  <div id="main-col">
+    <div id="tabbar"></div>
+    <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
+  </div>
 </div>
 </body>
 </html>

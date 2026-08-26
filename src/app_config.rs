@@ -66,15 +66,16 @@ impl AppConfig {
         )
     }
 
-    /// ツリー付きのフォルダモード。`initial_file` は最初に開く root 相対パス。
+    /// ツリー付きのフォルダモード。`initial_files` は起動時にタブとして開く
+    /// root 相対パス（先頭が最初に表示される。空なら何も開かない）。
     fn folder(
         root: PathBuf,
         title: String,
         theme_css: &str,
         custom_css: &str,
-        initial_file: Option<&str>,
+        initial_files: &[String],
     ) -> Self {
-        let html = build_folder_html(&title, theme_css, custom_css, initial_file);
+        let html = build_folder_html(&title, theme_css, custom_css, initial_files);
         AppConfig {
             title,
             init_script: FOLDER_JS,
@@ -121,6 +122,28 @@ impl AppConfig {
         Self::single_page("stdin".to_string(), html, root, None, "stdin", Some("(stdin)".to_string()))
     }
 
+    /// 引数で渡されたパス（1 つ以上）から設定を組み立てる。
+    /// 2 つ以上なら全部をタブとして開く（先頭が最初に見えるタブ）。
+    pub fn from_paths(
+        args: &[String],
+        theme_css: &str,
+        custom_css: &str,
+        current_dir: &Option<PathBuf>,
+    ) -> Self {
+        if let [only] = args {
+            return Self::from_path(only, theme_css, custom_css, current_dir);
+        }
+
+        let paths = resolve_multi_file_args(args);
+        let root = multi_file_root(&paths, current_dir);
+        let rels: Vec<String> = paths
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap_or(p).to_string_lossy().into_owned())
+            .collect();
+        let title = dir_name(&root);
+        Self::folder(root, title, theme_css, custom_css, &rels)
+    }
+
     /// 引数で渡されたパスを解決し、フォルダ / cwd 内ファイル / 単一ファイルの
     /// いずれかに応じた設定を組み立てる。
     pub fn from_path(
@@ -130,12 +153,11 @@ impl AppConfig {
         current_dir: &Option<PathBuf>,
     ) -> Self {
         let path = resolve_arg_path(arg);
-        let dir_name = |p: &Path| p.file_name().and_then(|n| n.to_str()).unwrap_or(".").to_string();
 
         if path.is_dir() {
             // フォルダ指定: root はそのフォルダ。初期表示するファイルは無い。
             let title = dir_name(&path);
-            return Self::folder(path, title, theme_css, custom_css, None);
+            return Self::folder(path, title, theme_css, custom_css, &[]);
         }
 
         // cwd 配下のファイル: cwd を root にしたフォルダモードで開き、その 1 枚を初期表示。
@@ -143,7 +165,7 @@ impl AppConfig {
         if let Some(cwd) = in_cwd {
             let rel = path.strip_prefix(cwd).unwrap().to_string_lossy().into_owned();
             let title = dir_name(cwd);
-            return Self::folder(cwd.clone(), title, theme_css, custom_css, Some(&rel));
+            return Self::folder(cwd.clone(), title, theme_css, custom_css, &[rel]);
         }
 
         // cwd 外の単一ファイル: 1 枚もの表示。親ディレクトリを root にして監視する。
@@ -168,6 +190,74 @@ impl AppConfig {
         let base_dir = path.parent().unwrap_or(&path).to_path_buf();
         Self::single_page(title, html, base_dir, Some(path), "single", Some(rel))
     }
+}
+
+/// ウィンドウのタイトルに使うディレクトリ名。
+fn dir_name(p: &Path) -> String {
+    p.file_name().and_then(|n| n.to_str()).unwrap_or(".").to_string()
+}
+
+/// 複数ファイル指定の引数を絶対パスへ解決する。重複は 1 つにまとめる。
+///
+/// **デタッチする親と本体の両方から呼ぶこと。** 子プロセスは標準エラー出力を
+/// 持たないので、ここで落ちる条件を親で通しておかないと「ウィンドウも出ず、
+/// エラーも出ず、終了コード 0」という無反応になる。
+pub fn resolve_multi_file_args(args: &[String]) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for arg in args {
+        let path = resolve_arg_path(arg);
+        // フォルダは root を決める側なので、複数指定には混ぜられない
+        // （2 つのツリーを同時に出す作りになっていない）。
+        if path.is_dir() {
+            eprintln!("md: 複数指定できるのはファイルだけです（'{}' はフォルダ）", arg);
+            std::process::exit(1);
+        }
+        // タブの識別子はパスなので、同じファイルを 2 回渡されても 1 枚にまとめる。
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+/// 複数ファイル指定で使う root を決める。
+///
+/// タブに乗せるファイルは全部 root の下に無ければならない（サーバが root 外を弾く）。
+/// 全部が cwd 配下ならこれまでどおり cwd を root にし、そうでなければ指定された
+/// ファイルたちの共通の親まで広げる。
+///
+/// `resolve_multi_file_args` と同じく、**親と本体の両方から呼ぶこと**。
+pub fn multi_file_root(paths: &[PathBuf], current_dir: &Option<PathBuf>) -> PathBuf {
+    let root = current_dir
+        .clone()
+        .filter(|cwd| paths.iter().all(|p| p.starts_with(cwd)))
+        .or_else(|| common_ancestor(paths))
+        .unwrap_or_else(|| PathBuf::from("/"));
+    // root がファイルシステムの根まで広がったら開かない。フォルダモードは root を
+    // 再帰監視し、ツリーは各ディレクトリに has_md を投げて全走査するので、`/` を
+    // 掴むと `/System` などを舐めて固まる。
+    if root.parent().is_none() {
+        eprintln!("md: 指定されたファイルに共通の親フォルダがありません（root が '/' になります）");
+        eprintln!("    同じフォルダのファイルを指定するか、フォルダごと開いてください");
+        std::process::exit(1);
+    }
+    root
+}
+
+/// 渡されたファイルを全部含む、いちばん深いディレクトリ。
+/// 共通の祖先を持たない（別ボリュームなど）なら None。
+fn common_ancestor(paths: &[PathBuf]) -> Option<PathBuf> {
+    let mut acc = paths.first()?.parent()?.to_path_buf();
+    for p in paths.iter().skip(1) {
+        let parent = p.parent()?;
+        // acc を親方向へ削っていき、この 1 つも収まる深さまで戻す。
+        while !parent.starts_with(&acc) {
+            if !acc.pop() {
+                return None;
+            }
+        }
+    }
+    Some(acc)
 }
 
 /// 引数のパスを絶対パスへ解決する。開けないパスはここで終わる。
@@ -198,4 +288,42 @@ pub fn read_stdin_source() -> String {
         std::process::exit(1);
     }
     markdown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(list: &[&str]) -> Vec<PathBuf> {
+        list.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn common_ancestor_is_the_deepest_shared_dir() {
+        // 複数ファイル指定の root を決める要。ここが浅すぎるとツリーが巨大になり、
+        // 深すぎると root 外のファイルが開けなくなる。
+        assert_eq!(
+            common_ancestor(&paths(&["/a/b/x.md", "/a/b/y.md"])),
+            Some(PathBuf::from("/a/b"))
+        );
+        assert_eq!(
+            common_ancestor(&paths(&["/a/b/x.md", "/a/c/d/y.md"])),
+            Some(PathBuf::from("/a"))
+        );
+        // 片方がもう片方の祖先にあるときは、浅い方まで戻る。
+        assert_eq!(
+            common_ancestor(&paths(&["/a/b/c/x.md", "/a/y.md"])),
+            Some(PathBuf::from("/a"))
+        );
+        // 共通が root しか無いなら root。
+        assert_eq!(
+            common_ancestor(&paths(&["/a/x.md", "/b/y.md"])),
+            Some(PathBuf::from("/"))
+        );
+    }
+
+    #[test]
+    fn common_ancestor_of_nothing_is_none() {
+        assert_eq!(common_ancestor(&[]), None);
+    }
 }

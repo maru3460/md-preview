@@ -217,8 +217,21 @@ fn html_iframe_page() {
 
 #[test]
 fn folder_shell_page() {
-    let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, Some("kitchen-sink.md"));
+    let files = vec!["kitchen-sink.md".to_string()];
+    let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &files);
     assert_snapshot("page-folder-shell", &html);
+}
+
+/// 複数ファイル指定（`md a.md b.md`）は、その全部が INITIAL_FILES に順番どおり乗る。
+/// 先頭が最初に見えるタブになるので、順序が入れ替わると開くファイルが変わる。
+#[test]
+fn folder_shell_page_lists_every_initial_file() {
+    let files = vec!["kitchen-sink.md".to_string(), "code/sample.rs".to_string()];
+    let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &files);
+    assert!(
+        html.contains(r#"var INITIAL_FILES = ["kitchen-sink.md","code/sample.rs"];"#),
+        "INITIAL_FILES が期待どおりでない"
+    );
 }
 
 // ── フラグメント（フォルダモードの ?file= 経路） ────────────────────

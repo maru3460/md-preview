@@ -9,6 +9,9 @@
     color-scheme: light dark;
     /* 見出しナビ(TOC)サイドバーの幅。開いている間は右ガターをこの幅ぶん空ける。 */
     --md-toc-w: 300px;
+    /* タブバーの高さ。ビューポート高から本文の高さを引く計算（.html-frame）が
+       参照するので、タブが出ていない時は 0 でなければならない。 */
+    --md-tabbar-h: 0px;
 }
 
 body {
@@ -361,7 +364,7 @@ blockquote.markdown-alert-caution {
 .html-frame {
     display: block;
     width: 100%;
-    height: calc(100vh - 96px);
+    height: calc(100vh - 96px - var(--md-tabbar-h));
     border: 0;
     /* アプリのテーマ(dracula 等)の color-scheme に引きずられず OS 準拠で描画する
        （ブラウザでファイルを直接開いたときに寄せる）。実際の地色は読込後に JS が
@@ -569,12 +572,110 @@ body.sidebar-closed #resizer::before {
     right: -6px;
 }
 
+/* タブバーと本文を縦に積む右カラム。min-width:0 が無いと、長い行を持つ本文が
+   flex アイテムの最小幅を押し上げてサイドバーを潰す。 */
+#main-col {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
 #preview-pane {
     flex: 1;
-    height: 100%;
+    min-height: 0;
     overflow-y: auto;
     padding: 48px;
     box-sizing: border-box;
+}
+
+/* ── Folder mode: タブバー ──────────────────────────────────
+   色はテーマ側に増やさず、本文の文字色(currentColor)と --md-accent の混色で組む
+   （テーマを 1 つ足すたびにタブの配色まで書かせない、というのがここの方針）。
+   非アクティブは opacity で沈めるので、地色が明るくても暗くても破綻しない。 */
+#tabbar {
+    display: none;
+    flex-shrink: 0;
+    height: var(--md-tabbar-h);
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* タブが 1 枚も無い間（起動直後にファイル未指定）はバーごと畳む。 */
+body.has-tabs #tabbar {
+    display: flex;
+}
+
+body.has-tabs {
+    --md-tabbar-h: 34px;
+}
+
+#tabbar::-webkit-scrollbar {
+    display: none;
+}
+
+.md-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    max-width: 220px;
+    padding: 0 8px 0 12px;
+    font-size: 12.5px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    opacity: 0.6;
+    border-right: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.md-tab:hover {
+    opacity: 0.85;
+}
+
+.md-tab.active {
+    opacity: 1;
+    background-color: color-mix(in srgb, var(--md-accent, Highlight) 10%, transparent);
+    box-shadow: inset 0 2px 0 var(--md-accent, Highlight);
+}
+
+.md-tab-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 同名ファイルが並んだ時だけ出る親ディレクトリ名。 */
+.md-tab-dir {
+    font-size: 11px;
+    opacity: 0.55;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 閉じるボタンは常時出すと賑やかなので、hover と現在タブだけに出す。
+   場所は空けたままにする（出た瞬間に文字が詰まって見えるのを防ぐ）。 */
+.md-tab-close {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    line-height: 15px;
+    text-align: center;
+    border-radius: 4px;
+    font-size: 13px;
+    visibility: hidden;
+}
+
+.md-tab:hover .md-tab-close,
+.md-tab.active .md-tab-close {
+    visibility: visible;
+}
+
+.md-tab-close:hover {
+    background-color: color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .tree-item {
@@ -809,6 +910,12 @@ body.folder-mode.md-toc-open {
 }
 body.folder-mode.md-toc-open #preview-pane {
     padding-right: calc(var(--md-toc-w) + 48px);
+}
+
+/* タブバーも TOC パネルの下に潜らせない。横スクロールするので padding ではなく
+   margin で幅そのものを詰める（padding だと右端のタブがパネルの裏に隠れる）。 */
+body.folder-mode.md-toc-open #tabbar {
+    margin-right: var(--md-toc-w);
 }
 
 /* chrome UI（⌘F 検索バー・⌘D diff / ⌘R raw ボタン）は fixed で右端に出るため、
