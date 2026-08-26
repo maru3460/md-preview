@@ -5,8 +5,11 @@
 //! これは「UI の回帰テストのための足場」であって、ユーザー向けの機能ではない。
 //!
 //! ```sh
-//! cargo run --example serve -- <dir|file> [port]   # 既定ポート 7878
+//! cargo run --example serve -- [--port <port>] <dir|file>...   # 既定ポート 7878
 //! ```
+//!
+//! ファイルを 2 つ以上渡すと製品の `md a.md b.md` と同じ複数タブ起動になる
+//! （ポートを位置引数から `--port` に追い出したのはこのため）。
 //!
 //! ウィンドウ表示との違い:
 //!   - 起動スクリプト（`MD_*` グローバル＋ init.js / folder.js）は WKUserScript が
@@ -24,19 +27,20 @@ use md_preview::request::{handle_request, percent_decode, RequestContext};
 use md_preview::theme;
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("使い方: cargo run --example serve -- <dir|file> [port]");
+    let (port, paths) = parse_args(std::env::args().skip(1).collect());
+    if paths.is_empty() {
+        eprintln!("使い方: cargo run --example serve -- [--port <port>] <dir|file>...");
         std::process::exit(1);
     }
-    let port: u16 = args.get(2).and_then(|p| p.parse().ok()).unwrap_or(7878);
 
     let custom_css = md_preview::user_style_css();
     let (paint, appearance) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &paint);
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
-    let config = AppConfig::from_path(&args[1], &theme_css, &custom_css, &current_dir);
+    // 1 つなら from_path、2 つ以上なら全部をタブに乗せる。製品の main.rs と同じ入口。
+    let config = AppConfig::from_paths(&paths, &theme_css, &custom_css, &current_dir);
+
     let boot = format!("{}\n{}\n{}", IPC_STUB, config.page_globals(appearance), config.init_script);
     let index = inject_boot_script(&config.html_bytes, &boot);
 
@@ -61,6 +65,26 @@ fn main() {
         let ctx = ctx.clone();
         std::thread::spawn(move || serve_one(stream, &ctx));
     }
+}
+
+/// `--port <port>` を取り出し、残りをパスとして返す。ポートを位置引数のままに
+/// すると複数ファイル指定と区別が付かないので、フラグに切ってある。
+fn parse_args(args: Vec<String>) -> (u16, Vec<String>) {
+    let mut port = 7878;
+    let mut paths = Vec::new();
+    let mut rest = args.into_iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--port" => {
+                port = rest.next().and_then(|p| p.parse().ok()).unwrap_or_else(|| {
+                    eprintln!("--port には数字を渡してください");
+                    std::process::exit(1);
+                });
+            }
+            _ => paths.push(arg),
+        }
+    }
+    (port, paths)
 }
 
 /// `window.ipc` のスタブ。ウィンドウ側では Rust が受けるものを、ここでは記録だけする

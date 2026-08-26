@@ -214,6 +214,9 @@
     inScope: inScope,
     visible: visible,
     // 実処理を差し込む。同名を複数回呼んだら後勝ち（モジュールは 1 度しか呼ばない）。
-    on: function(run, fn) { handlers[run] = fn; }
+    on: function(run, fn) { handlers[run] = fn; },
+    // この run に担当モジュールが居るか。ディスパッチは居なければ黙って読み飛ばす
+    // （＝キーが無反応になるだけでエラーにならない）ので、テストから覗けるようにしておく。
+    has: function(run) { return typeof handlers[run] === 'function'; }
   };
 })();
