@@ -345,28 +345,15 @@ test('raw / ソース表示でも行にコメントできる', async ({ page }) 
   // 非 md（notes.txt）は通常表示がソースビュー。md の raw トグルと同じ DOM を通る。
   await page.locator('.tree-item', { hasText: 'notes.txt' }).click();
   await expect(page.locator('.source-view')).toBeVisible();
-  // 素の閲覧では行レイヤを作らない（コードのテキスト選択を邪魔しないため）。
-  await expect(page.locator('.md-src-rows')).toHaveCount(0);
-
-  // モードに入ると行ユニットが生える（ソースの行数ぶん）。
-  await page.keyboard.press('c');
+  // ソースは表示した時点で 1 行 1 要素に包まれている（common.js の wrapSourceLines）。
+  // かつてはコメントモード中だけ本文に重ねる別レイヤ（.md-src-rows）だったが、行その
+  // ものを要素にしたので、モードに入る前から行ユニットが揃っている。
   await expect(page.locator('.md-src-row')).toHaveCount(7);
 
-  // モード中もコードの横スクロールは効く（行レイヤがホイールを食べてしまわない）。
-  const scrolled = await page.evaluate(async () => {
-    const main = document.querySelector('.source-main');
-    const code = main.querySelector('pre code');
-    const sc = code.scrollWidth > code.clientWidth ? code : main.querySelector('pre');
-    const before = sc.scrollLeft;
-    const layer = main.querySelector('.md-src-rows');
-    layer.dispatchEvent(new WheelEvent('wheel', { deltaX: 120, bubbles: true }));
-    await new Promise((r) => requestAnimationFrame(r));
-    return { before, after: sc.scrollLeft, scrollable: sc.scrollWidth > sc.clientWidth };
-  });
-  expect(scrolled.scrollable).toBe(true);
-  expect(scrolled.after).toBeGreaterThan(scrolled.before);
+  await page.keyboard.press('c');
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
 
-  // Copy ボタンはモード中も押せる（行レイヤの下に隠れない）。
+  // Copy ボタンはモード中も押せる（行ユニットやその装飾の下に隠れない）。
   const copyHit = await page.evaluate(() => {
     const btn = document.querySelector('.source-main .copy-btn');
     const r = btn.getBoundingClientRect();
@@ -375,43 +362,10 @@ test('raw / ソース表示でも行にコメントできる', async ({ page }) 
   });
   expect(copyHit).toContain('copy-btn');
 
-  // 行レイヤはコード側の行と重なっていること（座標計算ではなく行送りの共有で合わせて
-  // いるので、font-size / line-height の指定が割れたらここで落ちる）。
-  const hits = await page.evaluate(() => {
-    const main = document.querySelector('.source-main');
-    const code = main.querySelector('pre code');
-    // ソース n 行目の先頭文字の矩形を Range で測る（hljs のタグ構造に依存しない）。
-    function lineRect(n) {
-      const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
-      let seen = 1, node;
-      while ((node = walker.nextNode())) {
-        const text = node.nodeValue;
-        for (let i = 0; i < text.length; i++) {
-          if (seen === n) {
-            const r = document.createRange();
-            r.setStart(node, i);
-            r.setEnd(node, i + 1);
-            const rect = r.getClientRects()[0];
-            if (rect) return rect;
-          }
-          if (text[i] === '\n') seen++;
-        }
-      }
-      return null;
-    }
-    // 文字の上下中心が、その行の行ユニットの中に収まっているか
-    // （行ユニットの高さ = 行送り、文字の矩形 = 字の高さなので、上端の差ではなく包含で見る）。
-    return [1, 3, 6].map((n) => {
-      const row = main.querySelector('.md-src-row[data-src-line="' + n + '"]');
-      const rect = lineRect(n);
-      if (!row || !rect) return null;
-      const box = row.getBoundingClientRect();
-      const mid = rect.top + rect.height / 2;
-      return { line: n, inside: mid > box.top && mid < box.bottom };
-    });
-  });
-  for (const h of hits) expect(h).not.toBeNull();
-  for (const h of hits) expect(h.inside).toBe(true);
+  // 行ユニットが行の中身をそのまま持っていること（重ねるレイヤだった頃は座標の一致を
+  // 測っていたが、いまは行の実テキストが要素の中身なので、中身で確かめる）。
+  await expect(page.locator('.md-src-row[data-src-line="3"]'))
+    .toContainText('位置合わせを測るための行');
 
   // 3 行目をクリックしてコメントを保存 → 行に色帯が付き、一覧に file:line で載る。
   await page.locator('.md-src-row[data-src-line="3"]').click();
@@ -449,7 +403,7 @@ test('raw / ソース表示でも行にコメントできる', async ({ page }) 
   await expect(page.locator('.md-cmt-preview')).toContainText('ここに質問');
 });
 
-test('md の raw で付けたコメントが、プレビューに戻っても錨を保つ', async ({ page }) => {
+test('md の raw で付けたコメントは、プレビューでは本文に出ず一覧に残る', async ({ page }) => {
   await openFolder(page);
   await page.keyboard.press(']'); // a.md
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
@@ -464,14 +418,18 @@ test('md の raw で付けたコメントが、プレビューに戻っても錨
   await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
   await expect(page.locator('.md-src-row[data-src-line="14"]')).toHaveClass(/md-cmt-marked/);
 
-  // プレビューへ戻す。段落は 13-14 行の 1 ユニットなので、14 行ちょうどのユニットは
-  // 無い——その行を含むユニットへ落として錨を保つ（ここが無いとバッジごと消える）。
+  // プレビューへ戻す。raw の行コメントをプレビュー側のブロック全体（段落・コード・
+  // mermaid）へ落とすと錨として粗いので、本文には描かない（付けた表示にだけ出す）。
   await page.keyboard.press('Meta+r');
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
-  const p = page.locator('p[data-src-line="13"]');
-  await expect(p).toHaveClass(/md-cmt-marked/);
-  await expect(p.locator('.md-cmt-badge')).toHaveCount(1);
+  await expect(page.locator('p[data-src-line="13"]')).not.toHaveClass(/md-cmt-marked/);
+  await expect(page.locator('#preview-pane .md-cmt-badge')).toHaveCount(0);
+  // 一覧は横断インデックスなので消えない。行番号はソースの行のまま。
   await expect(page.locator('.md-cmt-side')).toContainText('a.md:14');
+
+  // raw へ戻せば印も戻る（消えたのではなく、その表示に出していないだけ）。
+  await page.keyboard.press('Meta+r');
+  await expect(page.locator('.md-src-row[data-src-line="14"]')).toHaveClass(/md-cmt-marked/);
 });
 
 test('単一ファイルモードの raw でも行にコメントできる', async ({ page }) => {
@@ -506,9 +464,13 @@ test('フロントマター付き md でも raw とプレビューの行番号�
   await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
   await expect(page.locator('.md-cmt-side')).toContainText('zz-frontmatter.md:6');
 
+  // プレビューへ戻す。印は付けた表示（raw）にだけ出るので見出しには付かないが、
+  // ここで見たいのは行番号の一致——一覧の :6 と、プレビュー側の見出しの
+  // data-src-line が同じ 6 を指していること（フロントマターの 4 行ぶんを含む）。
   await page.keyboard.press('Meta+r');
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('フロントマターの見出し');
-  await expect(page.locator('h1[data-src-line="6"]')).toHaveClass(/md-cmt-marked/);
+  await expect(page.locator('#preview-pane h1[data-src-line="6"]')).toBeVisible();
+  await expect(page.locator('h1[data-src-line="6"]')).not.toHaveClass(/md-cmt-marked/);
 });
 
 test('n / p は付けたときの表示（raw / プレビュー）へ切り替えて飛ぶ', async ({ page }) => {
@@ -609,7 +571,7 @@ test('本文が動いただけの mousemove では n / p の巡回対象を奪�
   await expect(page.locator('.md-cmt-item.review')).toHaveCount(0);
 });
 
-test('raw の別々の行が同じ段落に落ちても 💬 バッジは 1 個にまとまる', async ({ page }) => {
+test('錨が同じユニットに重なった 💬 バッジは 1 個にまとまる', async ({ page }) => {
   await openFolder(page);
   await page.keyboard.press(']'); // a.md
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
@@ -617,20 +579,32 @@ test('raw の別々の行が同じ段落に落ちても 💬 バッジは 1 個�
   await page.keyboard.press('Meta+r');
   await expect(page.locator('.source-view')).toBeVisible();
 
-  // 13-14 行目は、プレビューでは 1 つの段落に溶ける 2 行。raw で 1 行ずつコメントする。
-  for (const line of ['13', '14']) {
-    await page.locator(`.md-src-row[data-src-line="${line}"]`).click();
-    await page.locator('.md-cmt-textarea').fill(`${line} 行目`);
-    await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
-  }
+  // 13 行目そのものへ 1 件と、13-14 行のレンジで 1 件。レンジの錨は範囲の先頭
+  // ユニットなので、どちらも 13 行目の行ユニットに載る。
+  const row13 = page.locator('.md-src-row[data-src-line="13"]');
+  await row13.click();
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+  await page.locator('.md-cmt-textarea').fill('13 行目だけ');
+  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
 
-  await page.keyboard.press('Meta+r');
-  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
-  const p = page.locator('p[data-src-line="13"]');
-  await expect(p).toHaveClass(/md-cmt-marked/);
-  // 錨が同じ要素になるので、バッジは 2 個並ばず「💬2」の 1 個になる。
-  await expect(p.locator('.md-cmt-badge')).toHaveCount(1);
-  await expect(p.locator('.md-cmt-badge')).toHaveText('💬2');
+  const b13 = await row13.boundingBox();
+  const b14 = await page.locator('.md-src-row[data-src-line="14"]').boundingBox();
+  await page.mouse.move(b13.x + 40, b13.y + b13.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b14.x + 40, b14.y + b14.height / 2);
+  await page.mouse.up();
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+  await page.locator('.md-cmt-textarea').fill('13-14 のレンジ');
+  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
+
+  // 💬 バッジはモード外だけに出る（モード中は同じ場所にインライン埋め込みが出るので、
+  // 中に入れると二重になる）。抜けてから数える。
+  await page.keyboard.press('Escape');
+  await expect(page.locator('body')).not.toHaveClass(/md-cmt-mode/);
+  await expect(row13).toHaveClass(/md-cmt-marked/);
+  // 錨が同じ要素なので、バッジは 2 個並ばず「💬2」の 1 個になる。
+  await expect(row13.locator('.md-cmt-badge')).toHaveCount(1);
+  await expect(row13.locator('.md-cmt-badge')).toHaveText('💬2');
 });
 
 test('別ファイルの raw コメントへ飛ぶと、raw のまま着地する', async ({ page }) => {
