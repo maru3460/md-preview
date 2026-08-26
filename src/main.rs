@@ -22,7 +22,7 @@ mod platform;
 use md_preview::app_config::{self, AppConfig};
 use md_preview::cli;
 use md_preview::html::json_string;
-use md_preview::request::{self, handle_request, percent_decode, safe_join};
+use md_preview::request::{self, handle_request, percent_decode};
 use md_preview::theme;
 
 enum AppEvent {
@@ -199,11 +199,15 @@ fn main() {
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    let _watcher = if watch_enabled {
+    let watcher = if watch_enabled {
         spawn_watcher(root_dir.clone(), single_file_path.clone(), proxy.clone())
     } else {
         None
     };
+    // root の外のファイルを開いたときに、そのファイルを監視へ足すため IPC から触る。
+    // 監視は root の再帰監視だけなので、これが無いと root 外はホットリロードが効かない。
+    let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
+    let ipc_watcher = watcher.clone();
 
     let window = WindowBuilder::new()
         .with_title(&title)
@@ -261,6 +265,8 @@ fn main() {
                     if let Some(rest) = body.strip_prefix("menu:") {
                         let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
                         handle_menu(verb, payload, &ipc_root, ipc_single.as_deref());
+                    } else if let Some(abs) = body.strip_prefix("watch:") {
+                        watch_extra(&ipc_watcher, Path::new(abs));
                     }
                 }
             }
@@ -320,15 +326,29 @@ fn handle_menu(verb: &str, payload: &str, root: &Path, single: Option<&Path>) {
     }
 }
 
-/// メニュー操作対象の絶対パスを解決する。`rel` が空なら単一ファイルモードの
-/// single_file_path を、非空なら `safe_join` で root 内に限定して解決する。
-/// root 外（traversal・絶対パス・root 外へ向かう symlink）は None。
-fn resolve_target(rel: &str, root: &Path, single: Option<&Path>) -> Option<PathBuf> {
-    let rel = rel.trim();
-    if rel.is_empty() {
+/// メニュー操作対象の絶対パスを解決する。`id` が空なら単一ファイルモードの
+/// single_file_path を、非空なら `?file=` と同じ識別子として解決する
+/// （root 相対なら root 内に限定、絶対パスなら root の外でも可）。
+fn resolve_target(id: &str, root: &Path, single: Option<&Path>) -> Option<PathBuf> {
+    let id = id.trim();
+    if id.is_empty() {
         single.map(|p| p.to_path_buf())
     } else {
-        safe_join(root, rel)
+        request::id_to_path(root, id)
+    }
+}
+
+/// root の外のファイルを監視対象に足す。エディタの「別ファイルを書いて rename」に
+/// 耐えるよう、単一ファイルモードと同じく親ディレクトリを非再帰で見る。
+/// 既に見ている場所を重ねて watch しても notify 側が畳むので、重複管理はしない。
+fn watch_extra(
+    watcher: &std::sync::Mutex<Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>>>,
+    file: &Path,
+) {
+    let Some(dir) = file.parent() else { return };
+    let Ok(mut guard) = watcher.lock() else { return };
+    if let Some(d) = guard.as_mut() {
+        let _ = d.watcher().watch(dir, RecursiveMode::NonRecursive);
     }
 }
 
@@ -380,10 +400,10 @@ fn spawn_watcher(
             if !request::is_renderable(&path) {
                 continue;
             }
-            let rel = path.strip_prefix(&root_for_cb)
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned());
-            let _ = proxy.send_event(AppEvent::Reload(rel));
+            // JS 側が持っている識別子（root 相対 or 絶対パス）と同じ形で通知する。
+            // 形がズレると「開いているファイルが変わったか」の照合が外れて再読込しない。
+            let id = request::file_id(&root_for_cb, &path);
+            let _ = proxy.send_event(AppEvent::Reload(Some(id)));
         }
     }).ok()?;
 

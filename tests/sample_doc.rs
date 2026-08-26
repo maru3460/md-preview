@@ -13,6 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use md_preview::request::{is_renderable, render_file, ViewMode};
+use md_preview::urlpath::DocBase;
 
 fn sample_md() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/assets/sample.md")
@@ -168,7 +169,8 @@ fn sample_md_local_links_all_resolve() {
 fn sample_md_standalone_links_render_as_embeds() {
     let path = sample_md();
     let md = std::fs::read_to_string(&path).expect("sample.md が読めない");
-    let rendered = render_file(&path, "sample.md", ViewMode::Normal).expect("描画できない");
+    let root = path.parent().expect("親ディレクトリが無い");
+    let rendered = render_file(&path, root, ViewMode::Normal).expect("描画できない");
 
     let links = local_links(&md);
     let expected = links.iter().filter(|l| l.should_embed()).count();
@@ -183,12 +185,16 @@ fn sample_md_standalone_links_render_as_embeds() {
     // 埋め込まれたリンクは href として消え、埋め込まない約束のリンク（文中のリンク・
     // 範囲なしの md）は href のまま残る。同じリンク先が単独行と文中の両方に出ることが
     // あるので（`../lib.rs`）、リンク先ごとに「残るはずの本数」と数を突き合わせる。
+    // href は描画時に「その md がある場所」基準の URL へ畳まれるので、md に書いた
+    // 相対パスのままでは引っかからない（同じ規則で畳んでから探す）。
+    let base = DocBase::new(root, root);
     let mut dests: Vec<&str> = links.iter().map(|l| l.dest.as_str()).collect();
     dests.sort_unstable();
     dests.dedup();
     for dest in dests {
         let want = links.iter().filter(|l| l.dest == dest && !l.should_embed()).count();
-        let got = rendered.html.matches(&format!("href=\"{}\"", dest)).count();
+        let href = base.resolve_url(dest).unwrap_or_else(|| dest.to_string());
+        let got = rendered.html.matches(&format!("href=\"{}\"", href)).count();
         let lines: Vec<String> = links
             .iter()
             .filter(|l| l.dest == dest)

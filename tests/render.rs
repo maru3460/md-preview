@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use md_preview::html::{build_folder_html, build_html, render_full_document};
+use md_preview::urlpath::DocBase;
 use md_preview::request::{handle_request, render_html_iframe, source_view_html, RequestContext};
 
 /// テーマ / ユーザー CSS は中身を固定しておく（テーマ側の変更で落ちないように）。
@@ -185,7 +186,8 @@ fn request(query: &str, single_file: Option<&Path>) -> String {
 fn markdown_full_document() {
     let md = read_fixture("kitchen-sink.md");
     let dir = fixtures();
-    let html = render_full_document(&md, "kitchen-sink.md", THEME_CSS, CUSTOM_CSS, Some(&dir));
+    let base = DocBase::new(&dir, &dir);
+    let html = render_full_document(&md, "kitchen-sink.md", THEME_CSS, CUSTOM_CSS, Some(&base));
     assert_snapshot("page-markdown", &html);
 }
 
@@ -206,7 +208,7 @@ fn source_view_page() {
 #[test]
 fn html_iframe_page() {
     let html = build_html(
-        &render_html_iframe("page.html"),
+        &render_html_iframe("/page.html", "page.html"),
         "page.html",
         THEME_CSS,
         CUSTOM_CSS,

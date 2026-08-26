@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, CowStr, Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use crate::embed;
+use crate::urlpath::DocBase;
 use std::ops::Range;
 
 /// Markdown 中の改行位置を先にインデックス化し、バイトオフセットから 1 始まりの
@@ -165,19 +166,106 @@ pub fn render_body(markdown: &str) -> String {
     render_body_in(markdown, None, 0)
 }
 
-/// `base_dir` は単独行ファイルリンクをコード埋め込みに展開するときの相対パス解決の
-/// 基準ディレクトリ（通常は描画中の md ファイルがある場所）。None なら展開しない。
+/// `base` は相対パスの解決基準（描画中の md ファイルがある場所と配信ルート）。
+/// 単独行ファイルリンクのコード埋め込みと、`src` / `href` の URL 書き換えの両方に使う。
+/// None なら展開も書き換えもしない（素の `render_body` / 単体テスト経路）。
 /// `line_offset` は本文の前に飛ばした行数（フロントマター）。`data-src-line` を
 /// ファイルの行番号に揃えるために足す（`body_line_offset` で求める）。
-pub fn render_body_in(markdown: &str, base_dir: Option<&Path>, line_offset: usize) -> String {
+pub fn render_body_in(markdown: &str, base: Option<&DocBase>, line_offset: usize) -> String {
     let idx = LineIndex::new(markdown, line_offset);
     let parser = Parser::new_ext(markdown, MD_OPTIONS).into_offset_iter();
     // 裸 URL のリンク化を transform_events の前に一段挟む。
     let linkified = linkify_bare_urls(parser);
-    let events = transform_events(linkified.into_iter(), &idx, base_dir);
+    let mut events = transform_events(linkified.into_iter(), &idx, base.map(|b| b.dir));
+    // URL の書き換えは transform_events の**後**。埋め込み（embed）はリンクの
+    // dest を実ファイルのパスとして読むので、先に書き換えると展開が壊れる。
+    if let Some(b) = base {
+        rewrite_urls(&mut events, b);
+    }
     let mut body = String::new();
     html::push_html(&mut body, events.into_iter());
     body
+}
+
+/// 本文中の相対 `src` / `href` を、描画中のファイルの場所を基準にした URL へ畳む。
+///
+/// これをやらないと、ブラウザは document base（フォルダモードでは常に root）を
+/// 基準に解決してしまい、`docs/a.md` の `![](fig.png)` が root 直下の `/fig.png` を
+/// 引きに行って 404 になる。JS 側で後から直すこともできるが、Rust 側でやれば
+/// `md --html` のダンプと実際の表示が同じ HTML になる。
+fn rewrite_urls(events: &mut [Event<'_>], base: &DocBase) {
+    for ev in events.iter_mut() {
+        match ev {
+            Event::Start(Tag::Image { dest_url, .. }) | Event::Start(Tag::Link { dest_url, .. }) => {
+                if let Some(url) = base.resolve_url(dest_url) {
+                    *dest_url = CowStr::from(url);
+                }
+            }
+            // md 中の生 HTML（`<img width=...>` や `<video>`）も同じ理屈で壊れる。
+            // transform_events が自前で組んだ HTML には src / href が無いので、
+            // 出力側を一括で舐めても誤爆しない。
+            Event::Html(raw) | Event::InlineHtml(raw) => {
+                if let Some(html) = rewrite_html_attrs(raw, base) {
+                    *raw = CowStr::from(html);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 生 HTML の `src` / `href` / `poster` 属性値だけを書き換える。書き換えが無ければ None。
+/// HTML を丸ごと構文解析はせず、「空白 + 属性名 + `=` + クォート」の並びだけを見る。
+fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
+    const ATTRS: [&str; 3] = ["src", "href", "poster"];
+    let bytes = src.as_bytes();
+    let mut out = String::new();
+    let mut copied = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-') {
+            j += 1;
+        }
+        let name = &src[i + 1..j];
+        i = j.max(i + 1);
+        if !ATTRS.iter().any(|a| name.eq_ignore_ascii_case(a)) {
+            continue;
+        }
+        let mut k = j;
+        while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+            k += 1;
+        }
+        if k >= bytes.len() || bytes[k] != b'=' {
+            continue;
+        }
+        k += 1;
+        while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+            k += 1;
+        }
+        if k >= bytes.len() || (bytes[k] != b'"' && bytes[k] != b'\'') {
+            continue;
+        }
+        let quote = bytes[k] as char;
+        let value_start = k + 1;
+        let Some(rel_end) = src[value_start..].find(quote) else { break };
+        let value_end = value_start + rel_end;
+        if let Some(url) = base.resolve_url(&src[value_start..value_end]) {
+            out.push_str(&src[copied..value_start]);
+            out.push_str(&url);
+            copied = value_end;
+        }
+        i = value_end + 1;
+    }
+    if copied == 0 {
+        return None;
+    }
+    out.push_str(&src[copied..]);
+    Some(out)
 }
 
 /// fence 直後の Text イベントを CodeBlock の End まで集めて生テキストを返す。
@@ -618,19 +706,19 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 
 /// markdown 文字列を frontmatter 込みで完全な HTML ページに変換する。
 /// stdin / 単一ファイル / アセット直開きの本文生成を 1 本にまとめた共通パス。
-/// `base_dir` は単独行ファイルリンクの展開に使う基準ディレクトリ（None なら展開しない）。
+/// `base` は相対パスの解決基準（None なら埋め込みも URL 書き換えもしない）。
 pub fn render_full_document(
     markdown: &str,
     title: &str,
     theme_css: &str,
     custom_css: &str,
-    base_dir: Option<&Path>,
+    base: Option<&DocBase>,
 ) -> String {
     let (fm_pairs, body) = parse_frontmatter(markdown);
     let offset = body_line_offset(markdown, body);
     let fm_html = render_frontmatter_html(&fm_pairs, offset);
     build_html(
-        &format!("{}{}", fm_html, render_body_in(body, base_dir, offset)),
+        &format!("{}{}", fm_html, render_body_in(body, base, offset)),
         title,
         theme_css,
         custom_css,
@@ -948,7 +1036,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("md-html-embed-{}", name));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "one\ntwo\nthree\n").unwrap();
-        render_body_in(md, Some(&dir), 0)
+        render_body_in(md, Some(&DocBase::new(&dir, &dir)), 0)
     }
 
     #[test]
@@ -965,13 +1053,14 @@ mod tests {
     #[test]
     fn inline_file_link_stays_a_link() {
         let body = render_in_tempdir("見て [f](./f.txt#L2) なのだ。\n", "inline");
-        assert!(body.contains("<a href=\"./f.txt#L2\">"), "{body}");
+        // 展開はされないが、href はドキュメント基準の URL に畳まれる。
+        assert!(body.contains("<a href=\"/f.txt#L2\">"), "{body}");
         assert!(!body.contains("code-embed"), "should not embed inline link: {body}");
     }
 
     #[test]
     fn embedding_is_off_without_base_dir() {
-        // base_dir が無ければ（単体テストの render_body 経路）展開しない。
+        // 基準が無ければ（単体テストの render_body 経路）展開も URL 書き換えもしない。
         let body = render_body("[f](./f.txt#L2)\n");
         assert!(body.contains("<a href=\"./f.txt#L2\">"), "{body}");
         assert!(!body.contains("code-embed"), "{body}");

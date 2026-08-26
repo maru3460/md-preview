@@ -164,8 +164,10 @@ pub fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     let (theme_paint, appearance) = theme::resolve(&theme_name);
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
-    let rel = path.file_name().and_then(|n| n.to_str()).unwrap_or(&title).to_string();
-    let Some(rendered) = request::render_file(path, &rel, ViewMode::Normal) else {
+    // 単体のファイルなので root はその親ディレクトリ。相対 src / href は
+    // ライブプレビュー（単一ファイルモード）と同じ URL に畳まれる。
+    let root = path.parent().unwrap_or(Path::new("."));
+    let Some(rendered) = request::render_file(path, root, ViewMode::Normal) else {
         eprintln!("md: '{}' を読み込めませんでした", arg);
         std::process::exit(1);
     };

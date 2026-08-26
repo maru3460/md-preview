@@ -127,7 +127,10 @@
   }
 
   // root 相対パスのファイルまで祖先フォルダを順に展開し、最後にハイライトする。
+  // root の外のファイル（識別子が絶対パス）はツリーに行が無いので、
+  // 選択を外すだけにする（居場所はタブが示す）。
   function revealFile(relPath) {
+    if (relPath.charAt(0) === '/') { updateActiveItem(relPath); return; }
     var segs = relPath.split('/');
     var ancestors = [];
     for (var i = 0; i < segs.length - 1; i++) {
@@ -150,16 +153,6 @@
     step(0);
   }
 
-  function resolveRelativePath(base, rel) {
-    var parts = base.split('/');
-    parts.pop();
-    rel.split('/').forEach(function(seg) {
-      if (seg === '..') { if (parts.length > 0) parts.pop(); }
-      else if (seg !== '.') { parts.push(seg); }
-    });
-    return parts.join('/');
-  }
-
   // 通常表示がレンダリング結果になるファイル（md / html）。Raw トグルが意味を持つ対象。
   // 拡張子の一覧は Rust 側（request::RENDERABLE_EXT）が定義元で、起動時に
   // window.MD_RENDERABLE_EXT として注入される。ここに書き写さないこと
@@ -178,7 +171,10 @@
     var hashIdx = href.indexOf('#');
     var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
     if (!isRenderablePath(pathPart)) return false;
-    var resolved = currentFilePath ? resolveRelativePath(currentFilePath, pathPart) : pathPart;
+    // iframe の中身はサーバが書き換えていない（そのまま配信した html）ので、
+    // ここだけは相対パスを自前で解決する。
+    var resolved = currentFilePath ? MdCommon.resolvePath(currentFilePath, pathPart)
+      : MdCommon.urlToId(pathPart);
     loadPreview(resolved);
     return true;
   }
@@ -192,7 +188,7 @@
     var p = document.createElement('p');
     p.className = 'md-notice';
     p.textContent = 'このファイルは開けませんでした: ' + name
-      + '（フォルダ外を指すリンク・権限・壊れたファイルなどの可能性）';
+      + '（存在しないパス・権限・壊れたファイルなどの可能性）';
     article.appendChild(p);
     pane.innerHTML = '';
     pane.appendChild(article);
@@ -208,6 +204,9 @@
     var savedScroll = preserveScroll ? pane.scrollTop
       : (window.MdTabs ? MdTabs.scrollFor(relPath) : 0);
     currentFilePath = relPath;
+    // root の外のファイルは root の再帰監視に載らないので、個別に監視を頼む。
+    // 頼まないとホットリロードだけが効かない（開けるのに更新されない）状態になる。
+    if (relPath.charAt(0) === '/' && window.ipc) window.ipc.postMessage('watch:' + relPath);
     // ファイル切替（ホットリロード以外）では本文ペインへフォーカスを戻し、直後から
     // スクロール素キー(j/k 等)が効くようにする。ホットリロードは現在のフォーカスを保つ。
     if (!preserveScroll) focusPreview();
@@ -593,7 +592,9 @@
       // 配信になった今はウィンドウ全体が生ページに化けてサイドバー・トグルが消えてしまう。
       if (isRenderablePath(pathPart)) {
         e.preventDefault();
-        var resolved = currentFilePath ? resolveRelativePath(currentFilePath, pathPart) : pathPart;
+        // 本文の href はサーバが既に「開いているファイルの場所」基準で URL へ畳んで
+        // いる（相対解決をここでやり直すと二重解決になる）。識別子へ戻すだけ。
+        var resolved = MdCommon.urlToId(pathPart);
         loadPreview(resolved);
         if (anchorPart) {
           setTimeout(function() {

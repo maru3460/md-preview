@@ -2,35 +2,9 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
+use crate::urlpath::{asset_url, DocBase, ABS_PREFIX};
+pub use crate::urlpath::{file_id, percent_decode};
 
-pub fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = from_hex(bytes[i + 1]);
-            let lo = from_hex(bytes[i + 2]);
-            if let (Some(h), Some(l)) = (hi, lo) {
-                out.push(h << 4 | l);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn from_hex(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
 
 type Response = wry::http::Response<Cow<'static, [u8]>>;
 
@@ -420,9 +394,12 @@ fn binary_notice(path: &Path) -> String {
 /// ファイルを読んで本文 HTML を組む。**すべての表示経路（初期ページ / フォルダの
 /// `?file=` / 単一ファイルの `?body=1` / `raw` / `--html` ダンプ）がここを通る。**
 ///
-/// `rel` は html を iframe 描画するときの `src` に使う root 相対パス。
+/// `root` は配信ルート。相対 `src` / `href` の書き換え先 URL と、html を iframe 描画
+/// するときの `src` をここから組む（[`crate::urlpath`] 参照）。相対パスの基準は root
+/// ではなく `path` の親であることに注意（root 固定だと `docs/a.md` の `fig.png` が
+/// root 直下を引きに行く）。
 /// 読めなければ None（404 にするか通知を出すかは呼び出し側が決める）。
-pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFile> {
+pub fn render_file(path: &Path, root: &Path, mode: ViewMode) -> Option<RenderedFile> {
     let kind = match mode {
         ViewMode::RawSource => ViewKind::Source,
         ViewMode::Normal => classify_ext(path),
@@ -432,7 +409,7 @@ pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFil
     if kind == ViewKind::HtmlPage {
         return Some(RenderedFile {
             kind,
-            html: render_html_iframe(rel),
+            html: render_html_iframe(&asset_url(root, path), &file_id(root, path)),
             body_class: "html-page",
         });
     }
@@ -453,6 +430,7 @@ pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFil
 
     Some(match kind {
         ViewKind::Markdown => {
+            let dir = path.parent().unwrap_or(root);
             let (fm_pairs, body) = parse_frontmatter(&text);
             // 行番号はファイルの行に揃える（フロントマターぶんを足す）。raw 表示（⌘R）の
             // 行番号や貼り付け先の file:line と一致させるため。
@@ -463,7 +441,7 @@ pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFil
                 html: format!(
                     "{}{}",
                     render_frontmatter_html(&fm_pairs, offset),
-                    render_body_in(body, path.parent(), offset)
+                    render_body_in(body, Some(&DocBase::new(dir, root)), offset)
                 ),
                 body_class: "",
             }
@@ -476,31 +454,18 @@ pub fn render_file(path: &Path, rel: &str, mode: ViewMode) -> Option<RenderedFil
     })
 }
 
-/// root 相対パスを URL パスとして安全にエンコードする（`/` 区切りは残す）。
-/// iframe の `src` に埋め込むため。空白・非ASCII・記号を percent-encode する。
-fn encode_path(rel: &str) -> String {
-    let mut out = String::with_capacity(rel.len());
-    for b in rel.bytes() {
-        match b {
-            b'/' | b'-' | b'_' | b'.' | b'~'
-            | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(b as char),
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    out
-}
-
 /// html ファイルを iframe（ミニブラウザ）で描画するフラグメント（iframe 要素のみ）。
-/// `rel` は root 相対パス。`src` を同一スキームのファイル URL にすることで、
-/// iframe 内の相対リンク・画像・CSS が `mdpreview://localhost/<dir>/` 基準で解決される。
+/// `url` は [`asset_url`] が組んだ絶対 URL パス。`src` を同一スキームのファイル URL に
+/// することで、iframe 内の相対リンク・画像・CSS がその html の場所を基準に解決される。
+/// root の外の html も `/__abs/` 配下で実パスの階層を保つので、同じ理屈で通る。
 /// sandbox は付けない（ローカルファイル閲覧用途。JS 実行・同一オリジンを許可して忠実に描画）。
-pub fn render_html_iframe(rel: &str) -> String {
+pub fn render_html_iframe(url: &str, title: &str) -> String {
     format!(
-        r#"<iframe class="html-frame" src="/{src}" title="{title}" referrerpolicy="no-referrer"></iframe>"#,
-        src = encode_path(rel),
+        r#"<iframe class="html-frame" src="{src}" title="{title}" referrerpolicy="no-referrer"></iframe>"#,
+        src = attr_escape(url),
         // title は属性値なのでクォートも潰す attr_escape を使う（html_escape は " を素通しし、
         // " 入りファイル名で親の信頼ドキュメントへ属性注入できてしまう）。
-        title = attr_escape(rel),
+        title = attr_escape(title),
     )
 }
 
@@ -592,14 +557,28 @@ fn handle_dir(rel: &str, root_dir: &Path) -> Response {
     }
 }
 
+/// URL パス → 実ファイル。`/__abs/` 配下は root の外の実パスをそのまま指す
+/// （画像も html も、root の外にあるものはこちらを通る）。それ以外は root 相対で、
+/// `safe_join` が root の外へ出るものを弾く。
+///
+/// `/__abs/` を置くと、iframe で描画している html の JS が同一オリジンのまま
+/// root の外のファイルを読めるようになる。それでも置いているのは、`../assets/fig.png`
+/// のような日常的な相対参照を表示するのに他の道が無いため（開くファイルを絞っても、
+/// 画像は結局 root の外を引く）。信頼できない html を開かない、が前提。
+fn asset_path(url_path: &str, root_dir: &Path) -> Option<PathBuf> {
+    match url_path.strip_prefix(ABS_PREFIX) {
+        Some(rest) => PathBuf::from(format!("/{}", rest)).canonicalize().ok(),
+        None => safe_join(root_dir, url_path.strip_prefix('/').unwrap_or(url_path)),
+    }
+}
+
 fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &str) -> Response {
-    let relative = url_path.strip_prefix('/').unwrap_or(url_path);
-    let Some(file_path) = safe_join(root_dir, relative) else { return not_found_response() };
+    let Some(file_path) = asset_path(url_path, root_dir) else { return not_found_response() };
     match classify_ext(&file_path) {
         // md を直接開いた場合はページとして描画する（本来のページと同じ経路）。
         ViewKind::Markdown => {
             let title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
-            let Some(r) = render_file(&file_path, relative, ViewMode::Normal) else {
+            let Some(r) = render_file(&file_path, root_dir, ViewMode::Normal) else {
                 return not_found_response();
             };
             let page = build_html(&r.html, title, theme_css, custom_css, r.body_class);
@@ -788,17 +767,24 @@ fn parse_route<'a>(url_path: &'a str, query: &str, has_single: bool) -> Route<'a
     Route::Asset(url_path)
 }
 
-/// 対象を「実パス」と「iframe の `src` に使う root 相対パス」の組へ解決する。
-/// root の外を指すもの・単一ファイルモードでないのに `Single` を指すものは None。
-fn resolve(target: &Target, ctx: &RequestContext) -> Option<(PathBuf, String)> {
+/// `?file=` などの識別子を実ファイルへ解決する。root 相対の識別子は `safe_join` で
+/// root 内に限定し、絶対パス（先頭 `/`）の識別子は root の外でも開く。
+/// 開くのはこの明示ルート（`?file=` / `?raw=` / `?diff=`）と `/__abs/` 配下だけで、
+/// サイドバーのツリー（`?dir=` / `?has_md=`）は root 内に留める。
+pub fn id_to_path(root: &Path, id: &str) -> Option<PathBuf> {
+    if id.starts_with('/') {
+        PathBuf::from(id).canonicalize().ok()
+    } else {
+        safe_join(root, id)
+    }
+}
+
+/// 対象を実パスへ解決する。開けないもの・単一ファイルモードでないのに `Single` を
+/// 指すものは None。
+fn resolve(target: &Target, ctx: &RequestContext) -> Option<PathBuf> {
     match target {
-        Target::Single => {
-            let p = ctx.single()?;
-            // 単一ファイルモードの root は親ディレクトリなので、rel はファイル名。
-            let rel = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            Some((p.to_path_buf(), rel))
-        }
-        Target::Rel(rel) => safe_join(&ctx.root_dir, rel).map(|p| (p, rel.clone())),
+        Target::Single => ctx.single().map(|p| p.to_path_buf()),
+        Target::Rel(id) => id_to_path(&ctx.root_dir, id),
     }
 }
 
@@ -818,21 +804,21 @@ fn respond_fragment(target: &Target, body_class: &str, html: String) -> Response
 }
 
 fn serve_view(ctx: &RequestContext, target: &Target, mode: ViewMode) -> Response {
-    let Some((path, rel)) = resolve(target, ctx) else { return not_found_response() };
-    let Some(r) = render_file(&path, &rel, mode) else { return not_found_response() };
+    let Some(path) = resolve(target, ctx) else { return not_found_response() };
+    let Some(r) = render_file(&path, &ctx.root_dir, mode) else { return not_found_response() };
     respond_fragment(target, r.body_class, r.html)
 }
 
 /// diff はレンダリング結果ではなくソース差分なので、md / 非md を問わず全幅
 /// （`source-page`）で出す。バイナリ・巨大ファイルは diff 側が中で弾く。
 fn serve_diff(ctx: &RequestContext, target: &Target) -> Response {
-    let Some((path, _)) = resolve(target, ctx) else { return not_found_response() };
+    let Some(path) = resolve(target, ctx) else { return not_found_response() };
     respond_fragment(target, "source-page", crate::diff::render_diff_inner(&path))
 }
 
 /// トグルボタンのバッジ用に、追加/削除行数だけを返す（軽量・非ブロッキング用途）。
 fn serve_diffstat(ctx: &RequestContext, target: &Target) -> Response {
-    let Some((path, _)) = resolve(target, ctx) else { return not_found_response() };
+    let Some(path) = resolve(target, ctx) else { return not_found_response() };
     let (add, del) = crate::diff::diff_stat(&path);
     ok_response(
         "application/json; charset=utf-8",
@@ -900,7 +886,7 @@ mod tests {
     #[test]
     fn html_iframe_title_escapes_quotes() {
         // " 入りファイル名で title 属性から脱出できないこと（親ドキュメントへの属性注入防止）。
-        let frag = render_html_iframe(r#"ev"il.html"#);
+        let frag = render_html_iframe("/ev%22il.html", r#"ev"il.html"#);
         assert!(!frag.contains(r#"title="ev"il"#), "title のクォートが素通し: {frag}");
         assert!(frag.contains("&quot;"), "title がエスケープされていない: {frag}");
     }
@@ -935,7 +921,7 @@ mod tests {
         std::fs::write(&file, [0xff, 0xfe, 0x00]).unwrap();
 
         for mode in [ViewMode::Normal, ViewMode::RawSource] {
-            let r = render_file(&file, "blob.bin", mode).unwrap();
+            let r = render_file(&file, &dir, mode).unwrap();
             assert_eq!(r.kind, ViewKind::Binary);
             assert_eq!(r.body_class, "source-page");
             assert!(r.html.contains("md-notice"), "{}", r.html);
@@ -945,12 +931,16 @@ mod tests {
 
     #[test]
     fn html_iframe_fragment_has_encoded_src() {
-        let frag = render_html_iframe("sub dir/page.html");
+        let root = Path::new("/proj");
+        let frag = render_html_iframe(&asset_url(root, Path::new("/proj/sub dir/page.html")), "sub dir/page.html");
         assert!(frag.contains(r#"class="html-frame""#), "{frag}");
         // 空白は %20、`/` は温存されていること。
         assert!(frag.contains(r#"src="/sub%20dir/page.html""#), "{frag}");
         // 引用符を割らない（属性脱出しない）こと。
         assert!(!frag.contains(r#"src="/sub dir"#), "{frag}");
+        // root の外は /__abs/ 配下に、実パスの階層のまま出る。
+        let out = render_html_iframe(&asset_url(root, Path::new("/other/page.html")), "/other/page.html");
+        assert!(out.contains(r#"src="/__abs/other/page.html""#), "{out}");
     }
 
     #[test]
@@ -1009,7 +999,7 @@ mod tests {
         let md = dir.join("doc.md");
         std::fs::write(&md, "[code](./code.txt#L2)\n").unwrap();
 
-        let r = render_file(&md, "doc.md", ViewMode::Normal).unwrap();
+        let r = render_file(&md, &dir, ViewMode::Normal).unwrap();
         assert_eq!(r.kind, ViewKind::Markdown);
         assert!(r.html.contains("code-embed"), "not embedded: {}", r.html);
         assert!(r.html.contains(">two</code>"), "wrong line: {}", r.html);
@@ -1167,12 +1157,13 @@ mod tests {
     fn html_is_rendered_as_iframe_without_reading_the_file() {
         // html は中身を読まずに iframe を返す（描くのは WebView 側）。存在しない
         // パスでも 200 になるのはそのため。
-        let r = render_file(Path::new("/tmp/whatever/foo.html"), "foo.html", ViewMode::Normal).unwrap();
+        let root = Path::new("/tmp/whatever");
+        let r = render_file(Path::new("/tmp/whatever/foo.html"), root, ViewMode::Normal).unwrap();
         assert_eq!(r.kind, ViewKind::HtmlPage);
         assert_eq!(r.body_class, "html-page");
         assert!(r.html.contains(r#"class="html-frame""#), "{}", r.html);
         assert!(r.html.contains(r#"src="/foo.html""#), "{}", r.html);
         // raw トグル時はソース扱いなので、読めなければ None（404）。
-        assert!(render_file(Path::new("/tmp/whatever/foo.html"), "foo.html", ViewMode::RawSource).is_none());
+        assert!(render_file(Path::new("/tmp/whatever/foo.html"), root, ViewMode::RawSource).is_none());
     }
 }

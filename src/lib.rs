@@ -11,6 +11,7 @@ pub mod embed;
 pub mod html;
 pub mod request;
 pub mod theme;
+pub mod urlpath;
 
 /// ユーザーの追加スタイル `~/.config/md-preview/style.css`。無ければ空。
 /// base.css → テーマ → これ、の順に読み込まれる最後の層。

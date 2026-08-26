@@ -8,6 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::html::{build_folder_html, build_html, json_string, render_full_document, FOLDER_JS, INIT_JS};
+use crate::urlpath::DocBase;
 use crate::request::{self, ViewMode};
 
 /// 標準入力から読んだ内容を、自己デタッチした子へ渡すための一時ファイルのパス。
@@ -51,6 +52,9 @@ impl AppConfig {
     ///                       （単一=相対パス / stdin="(stdin)"）。folder は JS 側が現在
     ///                       ファイルを持つので空。
     /// - `MD_RENDERABLE_EXT` レンダリング対象の拡張子。定義元は `request::RENDERABLE_EXT`。
+    /// - `MD_ROOT_DIR`       配信ルートの絶対パス。JS が root 相対の識別子と絶対パスを
+    ///                       行き来するために要る（root の外を指すリンクを、黙って root で
+    ///                       止めずに絶対パスとして開くため）。
     pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
         let renderable = request::RENDERABLE_EXT
             .iter()
@@ -58,11 +62,12 @@ impl AppConfig {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_MENU_MODE = {}; window.MD_FILE_REL = {}; window.MD_RENDERABLE_EXT = [{}];",
+            "window.MD_APPEARANCE = {}; window.MD_MENU_MODE = {}; window.MD_FILE_REL = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {};",
             json_string(appearance.as_str()),
             json_string(self.menu_mode),
             json_string(self.file_rel.as_deref().unwrap_or("")),
             renderable,
+            json_string(&self.root_dir.to_string_lossy()),
         )
     }
 
@@ -116,8 +121,9 @@ impl AppConfig {
     pub fn from_stdin(theme_css: &str, custom_css: &str, current_dir: &Option<PathBuf>) -> Self {
         let markdown = read_stdin_source();
         let root = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-        // stdin にはファイルの居場所が無いので、単独行ファイルリンクは cwd 基準で解決する。
-        let html = render_full_document(&markdown, "stdin", theme_css, custom_css, Some(&root));
+        // stdin にはファイルの居場所が無いので、相対パスは cwd 基準で解決する（root も cwd）。
+        let base = DocBase::new(&root, &root);
+        let html = render_full_document(&markdown, "stdin", theme_css, custom_css, Some(&base));
         // 実体のファイルが無いので、コメントの file:line にはパイプ入力と分かるラベルを使う。
         Self::single_page("stdin".to_string(), html, root, None, "stdin", Some("(stdin)".to_string()))
     }
@@ -177,17 +183,16 @@ impl AppConfig {
             .and_then(|n| n.to_str())
             .unwrap_or("Markdown Preview")
             .to_string();
-        // root=親ディレクトリなので、iframe の src に使う相対パスはファイル名。
-        // コメントの file:line にも同じ basename を使う。
+        // root=親ディレクトリ。コメントの file:line には basename を使う。
         let rel = path.file_name().and_then(|n| n.to_str()).unwrap_or(&title).to_string();
-        let Some(rendered) = request::render_file(&path, &rel, ViewMode::Normal) else {
+        let base_dir = path.parent().unwrap_or(&path).to_path_buf();
+        let Some(rendered) = request::render_file(&path, &base_dir, ViewMode::Normal) else {
             // 読み込み自体の失敗だけ終了扱い（表示できるものは窓を出す方に倒す。
             // GUI 起動では stderr が見えず「無反応」になるため）。
             eprintln!("md: '{}' を読み込めませんでした", path.display());
             std::process::exit(1);
         };
         let html = build_html(&rendered.html, &title, theme_css, custom_css, rendered.body_class);
-        let base_dir = path.parent().unwrap_or(&path).to_path_buf();
         Self::single_page(title, html, base_dir, Some(path), "single", Some(rel))
     }
 }

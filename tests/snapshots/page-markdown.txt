@@ -70,7 +70,7 @@ A--&gt;B
 three</code></pre></div><p data-src-line="61">脚注つきの文<sup class="footnote-reference"><a href="#1">1</a></sup>。</p>
 <div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup><p data-src-line="63">脚注の中身なのだ。</p>
 </div>
-<p data-src-line="65"><del>打ち消し線</del> と <a href="WikiLink">WikiLink</a> 。</p>
+<p data-src-line="65"><del>打ち消し線</del> と <a href="/WikiLink">WikiLink</a> 。</p>
 
 </article>
 </body>

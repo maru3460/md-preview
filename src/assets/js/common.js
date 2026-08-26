@@ -300,6 +300,57 @@
     return true;
   }
 
+  // ── パスと URL ────────────────────────────────────────────────
+  // 「識別子」は ?file= / ?raw= / タブが持つ文字列。root 配下なら root 相対パス、
+  // root の外なら絶対パス（先頭 /）。Rust 側 urlpath.rs と同じ規則で、
+  // 本文中の href / src はサーバが既に URL へ畳んである（相対パスの基準は root では
+  // なく開いているファイルの場所）。ここはその逆変換と、サーバを通らない経路
+  // （iframe 内の相対リンク）のための解決を持つ。
+
+  var ABS_PREFIX = '/__abs/';
+
+  // 絶対パスの `.` / `..` を畳む。
+  function normalizeAbs(abs) {
+    var parts = [];
+    abs.split('/').forEach(function(seg) {
+      if (seg === '' || seg === '.') return;
+      if (seg === '..') { parts.pop(); return; }
+      parts.push(seg);
+    });
+    return '/' + parts.join('/');
+  }
+
+  // 識別子 → 絶対パス。
+  function idToAbs(id) {
+    if (!id) return '';
+    var root = window.MD_ROOT_DIR || '';
+    return normalizeAbs(id.charAt(0) === '/' ? id : root + '/' + id);
+  }
+
+  // 絶対パス → 識別子。root の外なら絶対パスのまま返す（黙って root で止めない）。
+  function absToId(abs) {
+    var root = window.MD_ROOT_DIR || '';
+    if (root && abs.indexOf(root + '/') === 0) return abs.slice(root.length + 1);
+    return abs;
+  }
+
+  // 本文の href / src（サーバが畳んだ絶対 URL）を識別子へ戻す。
+  function urlToId(url) {
+    var p = url;
+    try { p = decodeURIComponent(url); } catch (_) {}
+    if (p.indexOf(ABS_PREFIX) === 0) return '/' + p.slice(ABS_PREFIX.length);
+    return p.replace(/^\//, '');
+  }
+
+  // 開いているファイル（識別子）を基準に、相対パスを識別子へ解決する。
+  // 先頭 `/` は「サイトルート = root」を指す URL なので urlToId と同じ扱い。
+  function resolvePath(baseId, rel) {
+    if (!rel) return baseId;
+    if (rel.charAt(0) === '/') return urlToId(rel);
+    var dir = idToAbs(baseId).replace(/\/[^/]*$/, '');
+    return absToId(normalizeAbs(dir + '/' + rel));
+  }
+
   // 横スクロールする表(.table-wrap)の上でホイールを回すと、横にまだ動かせる間は
   // ブラウザがホイールを横スクロールに吸ってしまい、ページの縦スクロールが止まる。
   // 縦方向主体のホイールは表に吸わせず、実際のスクロール親を自前で縦に動かして回避する。
@@ -617,6 +668,10 @@
     isFieldEl: isFieldEl,
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,
+    idToAbs: idToAbs,
+    absToId: absToId,
+    urlToId: urlToId,
+    resolvePath: resolvePath,
     cornerStack: cornerStack,
     // ⌘W の従来の意味。タブ（tabs.js）が最後の 1 枚を閉じる時にも使う。
     closeWindow: closeWindow

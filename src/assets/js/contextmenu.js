@@ -10,7 +10,8 @@
 // 安全性の考え方:
 //  - 相対パス / 選択テキストのコピーは navigator.clipboard で JS 完結（IPC を介さない）。
 //  - 絶対パスのコピー・Finder表示・既定アプリで開く だけ Rust へ IPC する。
-//    Rust 側は root_dir / single_file_path から safe_join でパスを解決し、
+//    Rust 側は root_dir / single_file_path から `?file=` と同じ規則でパスを解決し
+//    （root 相対は root 内に限定、絶対パスは root の外も可）、
 //    実行系拡張子（.app/.command 等）は弾く。
 //  - ページ全体に CSP がかかっており、本文（untrusted な Markdown）に埋め込まれた
 //    <script> は実行されない。これがドライブバイ IPC の根本的な防御。

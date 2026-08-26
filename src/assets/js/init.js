@@ -69,7 +69,12 @@ window.MdReload = function() {
     if (window.MdDiff && window.MdDiff.isActive()) { window.MdDiff.refresh(); return; }
     loadNormalBody();
 };
-// 単一ファイルモードで扱えるリンクはページ内アンカーだけ（別ファイルへ移る先が無い）。
+// 単一ファイルモードで扱うのはページ内アンカーだけ。別ファイルへのリンクは
+// wry のトップレベル遷移に任せる（本文の href はサーバが「開いているファイルの場所」
+// 基準の URL に畳んであるので、root の外を指すリンクも /__abs/ 経由で開ける）。
+// ただし遷移先はこのページの「開いているファイル」ではないので、raw / diff トグルと
+// コメントの file:line は元のファイルを指したままになる。ここは #12（単一ファイル
+// モードのフォルダモードへの統合）で解消する。
 // ⌘W と ⌘A は common.js が keymap 経由で処理する。
 document.addEventListener('click', function(e) {
     var a = e.target.closest('a[href]');
