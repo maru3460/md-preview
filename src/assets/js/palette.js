@@ -3,8 +3,8 @@
 // システムカラー（Canvas/CanvasText/Highlight）と color-mix で組むので themes/*.css
 // への追記は不要。
 //
-// folder モード専用（folder.js が init する）。単一ファイル / stdin モードには
-// 「別のファイルを開く」入口が無いので初期化しない。keymap.js 側も scope:'folder'。
+// 初期化するのは folder.js（シェルを持つページ）だけ。init されていない間は
+// トグルが no-op になる。
 //
 // ファイル一覧はサーバの `/?files=1`（root 以下を再帰的に走査。node_modules 等は除外）
 // から取る。一度取ったらメモリに持ち、次回以降は即描画してから裏で取り直す
@@ -395,7 +395,7 @@
   }
 
   function open() {
-    if (!opts) return;      // folder モード以外では初期化されていない
+    if (!opts) return;      // シェルの無いページでは初期化されていない
     if (overlay) return;
     // モーダルを重ねない（? のヘルプが開いていたら畳んでから出す）。
     if (window.MdHelp && window.MdHelp.close) window.MdHelp.close();

@@ -12,7 +12,7 @@
   var userClosed = false;
   // 初回の自動表示が未実施か。デフォルトで開くときの「ぴょん」を防ぐため、
   // この 1 回だけスライドイン（transition）を抑止する。手動 ⌘T や
-  // 狭→広での再表示はアニメする。folder モードは本文が非同期ロードで
+  // 狭→広での再表示はアニメする。本文が非同期ロードで
   // 実際に開くのが後になるので、init 後の固定フレームではなく
   // 「実際に開く瞬間」で判定する（単一/フォルダ両モードで一貫）。
   var autoFirstPending = true;
@@ -37,9 +37,8 @@
   // 自動表示のしきい値。見出しがこの数以上あり、かつ本文＋TOC が収まる幅が
   // あるときだけ自動で開く。狭い/見出しが少ないときは引っ込めて本文に被せない。
   var MIN_HEADINGS = 3;
-  // 本文＋TOC が収まる最小幅。単一ファイルは viewport 幅、folder モードは
-  // preview-pane 幅で判定する。デフォルトのウィンドウ幅はこれを上回るよう
-  // main.rs 側で設定してあり、初期表示でサイドバーが出る。
+  // 本文＋TOC が収まる最小幅（availWidth() と比べる）。既定のウィンドウ幅は
+  // これを上回るよう app_config.rs 側で設定してあり、初期表示でサイドバーが出る。
   var MIN_WIDTH = 900;
 
   function buildPanel() {
@@ -175,7 +174,7 @@
   }
 
   // 本文＋TOC が収まるか判定するための利用可能幅。
-  // 単一ファイルは viewport 幅、folder モードは preview-pane の幅を見る。
+  // #preview-pane があればその幅、無ければ viewport 幅を見る。
   function availWidth() {
     if (scrollTarget === window || !scroller) {
       return document.documentElement.clientWidth || window.innerWidth || 0;
@@ -247,7 +246,7 @@
       if (wasOpen && open) build();
     },
     // 幅ベースの自動表示を再判定する。window の resize 以外に幅が変わる経路
-    // （folder モードのファイルツリー リサイズ等）から呼ぶ。
+    // （ファイルツリーのリサイズ等）から呼ぶ。
     reevaluate: autoEvaluate,
     close: closePanel,
     open: openPanel,

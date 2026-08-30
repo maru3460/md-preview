@@ -1,12 +1,12 @@
 // ファイルツリーとファイル移動の導線（folder.js / palette.js）。
 //
 // 「別のファイルを開く」入口（ツリー・[ ]・⌘P）と、サイドバーのフォーカス排他。
-// モード限定のショートカット（⌘P / ⌘B）が単一ファイルモードに漏れていないかも
-// ここで押さえる。
+// 起動時に何が開いていても同じ導線が揃っていること（issue #12 でモードを 1 本に
+// 畳んだので、cwd 外のファイルを 1 つ渡した起動でもツリーとタブが出る）もここ。
 const { test, expect } = require('@playwright/test');
-const { SINGLE_URL, open, openFolder } = require('./helpers');
+const { ONE_FILE_URL, open, openFolder } = require('./helpers');
 
-test('⌘P はフォルダモードでだけ開く', async ({ page }) => {
+test('⌘P でファイル検索が開く', async ({ page }) => {
   await openFolder(page);
   await page.keyboard.press('Meta+p');
   const palette = page.locator('#md-pal-backdrop');
@@ -15,11 +15,24 @@ test('⌘P はフォルダモードでだけ開く', async ({ page }) => {
   await expect(page.locator('.md-pal-row').first()).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(palette).toHaveCount(0);
+});
 
-  // 単一ファイルモードには「別のファイルを開く」入口が無いので初期化されない。
-  await open(page, SINGLE_URL);
+test('cwd の外のファイルを 1 つ渡した起動でも、ツリー・タブ・⌘P が揃う', async ({ page }) => {
+  // かつては「単一ファイルモード」（サイドバー無し・タブ無し・⌘P 無し）だった経路。
+  // root はそのファイルの親フォルダになり、渡したファイルがタブ 1 枚で開く。
+  await open(page, ONE_FILE_URL);
+
+  await expect(page.locator('.md-tab.active')).toHaveAttribute('data-path', 'a.md');
+  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
+  // ツリーは親フォルダ（tests/ui-fixtures）の中身。渡したファイルが選択されている。
+  await expect(page.locator('.tree-item[data-path="b.md"]')).toBeVisible();
+  await expect(page.locator('.tree-item.active')).toHaveText(/a\.md/);
+
+  // 別ファイルへ移る入口もある（] で次のファイル、⌘P でファイル検索）。
+  await page.keyboard.press(']');
+  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し B');
   await page.keyboard.press('Meta+p');
-  await expect(page.locator('#md-pal-backdrop')).toHaveCount(0);
+  await expect(page.locator('#md-pal-backdrop')).toBeVisible();
 });
 
 test('] で次のファイルへ移動する', async ({ page }) => {

@@ -13,9 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
-use md_preview::html::{build_folder_html, build_html, render_full_document};
-use md_preview::urlpath::DocBase;
-use md_preview::request::{handle_request, render_html_iframe, source_view_html, RequestContext};
+use md_preview::html::{build_folder_html, build_html};
+use md_preview::request::{handle_request, render_file, render_html_iframe, source_view_html, RequestContext, ViewMode};
 
 /// テーマ / ユーザー CSS は中身を固定しておく（テーマ側の変更で落ちないように）。
 const THEME_CSS: &str = "/* theme */";
@@ -155,7 +154,7 @@ fn assert_snapshot(name: &str, actual: &str) {
 }
 
 /// `handle_request` を叩いて本文を取り出す。ステータスも一緒に固定する。
-fn request(query: &str, single_file: Option<&Path>) -> String {
+fn request(query: &str) -> String {
     let (url_path, query) = match query.strip_prefix('/') {
         Some(_) => (query, ""),
         None => ("/", query),
@@ -165,7 +164,6 @@ fn request(query: &str, single_file: Option<&Path>) -> String {
         index_html: b"<!-- index -->".to_vec(),
         theme_css: THEME_CSS.to_string(),
         custom_css: CUSTOM_CSS.to_string(),
-        single_file: single_file.map(|p| p.to_path_buf()),
     };
     let resp = handle_request(&ctx, url_path, query);
     let status = resp.status().as_u16();
@@ -184,10 +182,11 @@ fn request(query: &str, single_file: Option<&Path>) -> String {
 
 #[test]
 fn markdown_full_document() {
-    let md = read_fixture("kitchen-sink.md");
+    // md を直接開いたとき（`/__abs/` などのアセット経路）に返るページ 1 枚。
     let dir = fixtures();
-    let base = DocBase::new(&dir, &dir);
-    let html = render_full_document(&md, "kitchen-sink.md", THEME_CSS, CUSTOM_CSS, Some(&base));
+    let path = dir.join("kitchen-sink.md");
+    let r = render_file(&path, &dir, ViewMode::Normal).expect("描画できない");
+    let html = build_html(&r.html, "kitchen-sink.md", THEME_CSS, CUSTOM_CSS, r.body_class);
     assert_snapshot("page-markdown", &html);
 }
 
@@ -236,89 +235,63 @@ fn folder_shell_page_lists_every_initial_file() {
     );
 }
 
-// ── フラグメント（フォルダモードの ?file= 経路） ────────────────────
+// ── フラグメント（?file= 経路） ──────────────────────────────────
 
 #[test]
 fn fragment_markdown() {
-    assert_snapshot("fragment-markdown", &request("file=kitchen-sink.md", None));
+    assert_snapshot("fragment-markdown", &request("file=kitchen-sink.md"));
 }
 
 #[test]
 fn fragment_html_is_iframe() {
-    assert_snapshot("fragment-html", &request("file=page.html", None));
+    assert_snapshot("fragment-html", &request("file=page.html"));
 }
 
 #[test]
 fn fragment_source() {
-    assert_snapshot("fragment-source", &request("file=code%2Fsample.rs", None));
+    assert_snapshot("fragment-source", &request("file=code%2Fsample.rs"));
 }
 
 #[test]
 fn fragment_binary() {
-    assert_snapshot("fragment-binary", &request("file=blob.bin", None));
+    assert_snapshot("fragment-binary", &request("file=blob.bin"));
 }
 
 #[test]
 fn fragment_raw() {
-    assert_snapshot("fragment-raw", &request("raw=kitchen-sink.md", None));
+    assert_snapshot("fragment-raw", &request("raw=kitchen-sink.md"));
 }
 
 #[test]
 fn fragment_not_found() {
-    assert_snapshot("fragment-not-found", &request("file=nope.md", None));
-}
-
-// ── フラグメント（単一ファイルモードの番兵経路） ────────────────────
-
-#[test]
-fn single_file_body_markdown() {
-    let f = fixtures().join("kitchen-sink.md");
-    assert_snapshot("single-body-markdown", &request("body=1", Some(&f)));
-}
-
-#[test]
-fn single_file_body_source() {
-    let f = fixtures().join("code/sample.rs");
-    assert_snapshot("single-body-source", &request("body=1", Some(&f)));
-}
-
-#[test]
-fn single_file_body_html() {
-    let f = fixtures().join("page.html");
-    assert_snapshot("single-body-html", &request("body=1", Some(&f)));
-}
-
-#[test]
-fn single_file_raw() {
-    let f = fixtures().join("kitchen-sink.md");
-    assert_snapshot("single-raw", &request("raw=1", Some(&f)));
+    assert_snapshot("fragment-not-found", &request("file=nope.md"));
 }
 
 // ── JSON エンドポイント ─────────────────────────────────────────────
 
 #[test]
 fn dir_listing_json() {
-    assert_snapshot("json-dir", &request("dir=", None));
+    assert_snapshot("json-dir", &request("dir="));
 }
 
 #[test]
 fn file_list_json() {
-    assert_snapshot("json-files", &request("files=1", None));
+    assert_snapshot("json-files", &request("files=1"));
 }
 
 // ── アセット配信 ────────────────────────────────────────────────────
 
 #[test]
 fn asset_html_gets_style_gate() {
-    assert_snapshot("asset-html", &request("/page.html", None));
+    assert_snapshot("asset-html", &request("/page.html"));
 }
 
 #[test]
 fn asset_plain_text() {
-    assert_snapshot("asset-text", &request("/embed.txt", None));
+    assert_snapshot("asset-text", &request("/embed.txt"));
 }
 
 #[test]
 fn index_is_served_verbatim() {
-    assert_snapshot("asset-index", &request("/", None));
+    assert_snapshot("asset-index", &request("/"));
 }

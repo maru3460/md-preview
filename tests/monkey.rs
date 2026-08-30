@@ -1,4 +1,4 @@
-//! モンキーテスト: フォルダモードのユーザー操作（ツリー展開・ファイルオープン・
+//! モンキーテスト: ユーザー操作（ツリー展開・ファイルオープン・
 //! raw/diff 切替）を、シード固定の乱数でランダムな操作列として `handle_request`
 //! 相当に叩き込み、(1) パニックが起きないこと、(2) どの操作も一定時間内に返る
 //! （＝固まらない）ことを確認する。
@@ -83,7 +83,7 @@ fn run_guarded<F: FnOnce() + Send + 'static>(f: F, freeze: Duration) -> Outcome 
     }
 }
 
-/// フォルダモードで発生しうる操作。実際のフロントエンド（folder.js）が投げる
+/// 発生しうる操作。実際のフロントエンド（folder.js）が投げる
 /// リクエストに 1 対 1 で対応させている。`rel` は root からの相対パス。
 #[derive(Clone, Debug)]
 enum Action {
@@ -112,7 +112,6 @@ fn perform(action: &Action, root: &Path) {
         index_html: Vec::new(),
         theme_css: String::new(),
         custom_css: String::new(),
-        single_file: None,
     };
     match action {
         Action::ListDir(rel) => drop(handle_request(&ctx, "/", &format!("dir={}", rel))),

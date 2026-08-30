@@ -4,9 +4,9 @@
 // 越しに開いて叩く。ブラウザは WebKit を使う——本番の実行環境が WKWebView なので、
 // キーイベントの扱いや CSS Custom Highlight API の有無を一番忠実に再現できる。
 //
-// フォルダモードと単一ファイルモードで挙動が違うショートカット（⌘P など）があるので、
-// サーバは 3 つ立てる。3 つめは `md a.md b.md` 相当の複数ファイル起動で、
-// タブが最初から 2 枚並んだ状態を再現するためだけに要る。
+// 起動モードはフォルダ 1 本だが、「起動時に何が開いているか」で通る道が違うので
+// サーバは 3 つ立てる。`md <dir>`（タブ 0 枚）・`md <cwd 外の 1 ファイル>`（タブ 1 枚。
+// root はそのファイルの親フォルダ）・`md a.md b.md`（タブ 2 枚）の 3 つ。
 //
 // ── このスイートが守れないもの ──────────────────────────────────
 // Playwright の WebKit は本番の WKWebView とは別のビルドで、macOS には WKWebView
@@ -29,14 +29,14 @@ const os = require('os');
 const { defineConfig, devices } = require('@playwright/test');
 
 const FOLDER_PORT = 7878;
-const SINGLE_PORT = 7879;
+const ONE_FILE_PORT = 7879;
 const MULTI_PORT = 7880;
 
 const ROOT = __dirname;
-// 単一ファイルモードは「cwd の外にあるファイル」を開いたときのモードなので、
-// cwd を一時ディレクトリにしてサーバを起動する（cwd 配下のファイルを渡すと、
-// 製品の仕様どおりフォルダモードで開いてしまう）。cargo は --manifest-path で
-// どこからでも動かせる。
+// ファイルを渡す 2 つのサーバは cwd を一時ディレクトリにして起動する。cwd 配下の
+// ファイルを渡すと root が cwd（＝リポジトリ全体）になってツリーが巨大になるため、
+// 「cwd の外のファイル」として渡して root をそのファイルの居場所へ寄せる。
+// cargo は --manifest-path でどこからでも動かせる。
 const CARGO = ['cargo', 'run', '-q', '--manifest-path', path.join(ROOT, 'Cargo.toml'), '--example', 'serve'];
 
 module.exports = defineConfig({
@@ -59,9 +59,11 @@ module.exports = defineConfig({
       timeout: 180000,
     },
     {
-      command: `${CARGO.join(' ')} -- --port ${SINGLE_PORT} ${path.join(ROOT, 'tests/ui-fixtures/a.md')}`,
+      // 1 ファイル起動。root はそのファイルの親（tests/ui-fixtures）で、タブが 1 枚
+      // 開いた状態で始まる。かつての「単一ファイルモード」がここへ畳まれた。
+      command: `${CARGO.join(' ')} -- --port ${ONE_FILE_PORT} ${path.join(ROOT, 'tests/ui-fixtures/a.md')}`,
       cwd: os.tmpdir(),
-      url: `http://127.0.0.1:${SINGLE_PORT}/`,
+      url: `http://127.0.0.1:${ONE_FILE_PORT}/`,
       reuseExistingServer: !process.env.CI,
       timeout: 180000,
     },
@@ -78,5 +80,5 @@ module.exports = defineConfig({
 });
 
 module.exports.FOLDER_PORT = FOLDER_PORT;
-module.exports.SINGLE_PORT = SINGLE_PORT;
+module.exports.ONE_FILE_PORT = ONE_FILE_PORT;
 module.exports.MULTI_PORT = MULTI_PORT;

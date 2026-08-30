@@ -2,7 +2,7 @@
 //!
 //! 元の壊れ方（issue #10 / #11）:
 //!   - `docs/a.md` の `![](fig.png)` が root 直下の `/fig.png` を引きに行って 404 になる
-//!     （フォルダモードのページ URL は常に root なので、ブラウザが root 基準で解決する）
+//!     （ページの URL は常に root なので、ブラウザが root 基準で解決する）
 //!   - root の外を指すリンクが開けない（`safe_join` が `..` と root 外を二重で弾く）
 //!
 //! ここでは実際に一時ディレクトリを掘り、`handle_request` を叩いて確かめる。
@@ -63,7 +63,6 @@ fn get(root: &Path, url_path: &str, query: &str) -> Resp {
         index_html: b"<!-- index -->".to_vec(),
         theme_css: String::new(),
         custom_css: String::new(),
-        single_file: None,
     };
     let resp = handle_request(&ctx, url_path, query);
     Resp {

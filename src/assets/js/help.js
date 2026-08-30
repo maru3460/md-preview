@@ -2,7 +2,7 @@
 // window.MdHelp を公開する。`?`（Shift+/）で開閉、Esc / 背景クリックで閉じる。
 // 右クリックメニューの「ショートカット一覧」からも MdHelp.open() で開ける。
 //
-// 表示する内容（キー・説明・表示範囲）は keymap.js の MdKeymap が単一の定義元。
+// 表示する内容（キー・説明）は keymap.js の MdKeymap が単一の定義元。
 // ここは描画だけを持つ。ショートカットの追加・変更は keymap.js 側で行う。
 //
 // 配色は context-menu / diff-toggle と同じくシステムカラー（Canvas/CanvasText/…）と
@@ -38,7 +38,7 @@
     // 並び順は MdKeymap の定義順（＝カテゴリ順）そのまま。見出しは出さず平坦に流す。
     var rows = document.createElement('div');
     rows.className = 'md-help-rows';
-    window.MdKeymap.visible().forEach(function(b) {
+    window.MdKeymap.binds.forEach(function(b) {
       var row = document.createElement('div');
       row.className = 'md-help-row';
       var key = document.createElement('kbd');

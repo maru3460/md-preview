@@ -3,7 +3,7 @@
 // プレビューと raw / ソース表示で行の数え方が違う（フロントマターぶんずれる、
 // 非 md はソースしか無い）ので、どの表示で付けたかを覚えて戻れるかが要。
 const { test, expect } = require('@playwright/test');
-const { SINGLE_URL, open, openFolder, nextFrames } = require('./helpers');
+const { openFolder, nextFrames } = require('./helpers');
 
 test('c でコメントモードに入り、Esc で抜ける', async ({ page }) => {
   await openFolder(page);
@@ -164,22 +164,6 @@ test('md の raw で付けたコメントは、プレビューでは本文に出
   // raw へ戻せば印も戻る（消えたのではなく、その表示に出していないだけ）。
   await page.keyboard.press('Meta+r');
   await expect(page.locator('.md-src-row[data-src-line="14"]')).toHaveClass(/md-cmt-marked/);
-});
-
-test('単一ファイルモードの raw でも行にコメントできる', async ({ page }) => {
-  await open(page, SINGLE_URL);
-  await page.keyboard.press('Meta+r');
-  await expect(page.locator('.source-view')).toBeVisible();
-
-  await page.keyboard.press('c');
-  await page.locator('.md-src-row[data-src-line="1"]').click();
-  await expect(page.locator('#md-cmt-popover')).toBeVisible();
-  await page.locator('.md-cmt-textarea').fill('見出しの表記');
-  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
-
-  // 単一ファイルモードのパスは MD_FILE_REL（cwd の外なので basename）。
-  await expect(page.locator('.md-cmt-side')).toContainText('a.md:1');
-  await expect(page.locator('.md-src-row[data-src-line="1"]')).toHaveClass(/md-cmt-marked/);
 });
 
 test('フロントマター付き md でも raw とプレビューの行番号が一致する', async ({ page }) => {

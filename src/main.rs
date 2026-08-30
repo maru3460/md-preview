@@ -28,7 +28,9 @@ use md_preview::theme;
 enum AppEvent {
     Close,
     Ready,
-    Reload(Option<String>),
+    /// 変更されたファイルの識別子（root 相対パス、または root の外なら絶対パス）。
+    /// ページ側は「いま開いているファイルか」を照合して再読込するかを決める。
+    Reload(String),
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -49,14 +51,9 @@ fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBu
 
     // 引数のエラーは、標準エラー出力を持っている親のうちに出しておく。子は stderr を
     // 持たないので、ここを素通りさせると「窓も出ずエラーも出ず終了コード 0」になる。
-    if targets.len() > 1 {
-        // 複数指定はフォルダ混在と root の広がりも弾く（本体の from_paths と同じ関門を通す）。
-        let paths = app_config::resolve_multi_file_args(targets);
-        let _ = app_config::multi_file_root(&paths, current_dir);
-    } else {
-        for arg in targets {
-            let _ = app_config::resolve_arg_path(arg);
-        }
+    // 本体の from_paths と同じ関門（開けないパス・フォルダ混在・root の広がり）を通す。
+    if !targets.is_empty() {
+        let _ = app_config::plan_paths(targets, current_dir);
     }
 
     let mut cmd = Command::new(exe);
@@ -66,14 +63,10 @@ fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBu
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // パイプで渡された markdown は子の標準入力には届かないので、親が読んで渡す。
+    // パイプで渡された markdown は子の標準入力には届かないので、親が読んで
+    // 一時ファイルへ置き、その場所を渡す。後片付けは子（＝本体）が行う。
     if stdin_mode {
-        let path = std::env::temp_dir().join(format!("md-stdin-{}.md", std::process::id()));
-        if let Err(e) = std::fs::write(&path, app_config::read_stdin_source()) {
-            eprintln!("md: 標準入力を一時ファイルへ書き出せませんでした: {}", e);
-            std::process::exit(1);
-        }
-        cmd.env(app_config::STDIN_FILE_ENV, &path);
+        cmd.env(app_config::STDIN_FILE_ENV, app_config::spool_stdin());
     }
 
     // 端末のプロセスグループから外す。呼び出し元がグループごと畳んでも巻き込まれない。
@@ -182,15 +175,12 @@ fn main() {
     };
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
-    let init_script = format!("{}\n{}", config.page_globals(appearance), config.init_script);
+    let init_script = format!("{}\n{}", config.page_globals(appearance), md_preview::html::FOLDER_JS);
     let AppConfig {
         title,
         html_bytes,
-        window_width,
         root_dir,
-        single_file_path,
-        watch_enabled,
-        ..
+        stdin_dir,
     } = config;
 
     #[cfg(target_os = "macos")]
@@ -199,11 +189,7 @@ fn main() {
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    let watcher = if watch_enabled {
-        spawn_watcher(root_dir.clone(), single_file_path.clone(), proxy.clone())
-    } else {
-        None
-    };
+    let watcher = spawn_watcher(root_dir.clone(), proxy.clone());
     // root の外のファイルを開いたときに、そのファイルを監視へ足すため IPC から触る。
     // 監視は root の再帰監視だけなので、これが無いと root 外はホットリロードが効かない。
     let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
@@ -211,7 +197,7 @@ fn main() {
 
     let window = WindowBuilder::new()
         .with_title(&title)
-        .with_inner_size(LogicalSize::new(window_width, app_config::WINDOW_HEIGHT))
+        .with_inner_size(LogicalSize::new(app_config::WINDOW_WIDTH, app_config::WINDOW_HEIGHT))
         .with_visible(false)
         .build(&event_loop)
         .expect("Failed to create window");
@@ -219,7 +205,6 @@ fn main() {
     // 下のカスタムプロトコルのクロージャが `root_dir` をムーブするので、IPC
     // ハンドラが必要とするもの（copy-abs/reveal/open のパス解決用）を先に clone する。
     let ipc_root = root_dir.clone();
-    let ipc_single = single_file_path.clone();
 
     let webview = WebViewBuilder::new()
         .with_initialization_script(&init_script)
@@ -245,7 +230,6 @@ fn main() {
                 index_html: html_bytes,
                 theme_css,
                 custom_css,
-                single_file: single_file_path.clone(),
             });
             move |_webview_id, request, responder: RequestAsyncResponder| {
                 let url_path = percent_decode(request.uri().path());
@@ -264,7 +248,7 @@ fn main() {
                 _ => {
                     if let Some(rest) = body.strip_prefix("menu:") {
                         let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
-                        handle_menu(verb, payload, &ipc_root, ipc_single.as_deref());
+                        handle_menu(verb, payload, &ipc_root);
                     } else if let Some(abs) = body.strip_prefix("watch:") {
                         watch_extra(&ipc_watcher, Path::new(abs));
                     }
@@ -287,6 +271,13 @@ fn main() {
                 ..
             }
             | Event::UserEvent(AppEvent::Close) => {
+                // stdin を実体化した一時ファイルはウィンドウと寿命を揃える
+                // （表示中はドキュメントそのものなので、読んだ直後には消せない）。
+                // ⌘Q（AppKit の terminate）はここを通らないので取り残しうるが、
+                // 置き場所が $TMPDIR なので OS の掃除に任せる。
+                if let Some(dir) = &stdin_dir {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
                 #[cfg(target_os = "macos")]
                 if let Some(pid) = launcher_pid {
                     platform::activate_pid(pid);
@@ -296,12 +287,8 @@ fn main() {
             Event::UserEvent(AppEvent::Ready) => {
                 window.set_visible(true);
             }
-            Event::UserEvent(AppEvent::Reload(rel)) => {
-                let arg = match rel {
-                    Some(r) => json_string(&r),
-                    None => "null".to_string(),
-                };
-                let script = format!("window.MdReload && window.MdReload({});", arg);
+            Event::UserEvent(AppEvent::Reload(id)) => {
+                let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
                 let _ = webview.evaluate_script(&script);
             }
             _ => {}
@@ -312,8 +299,8 @@ fn main() {
 /// 右クリックメニュー由来の IPC（`menu:<verb>:<payload>`）を処理する。
 /// 相対パス・選択テキストのコピーは JS 側で完結するので、ここに来るのは
 /// 絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つだけ。
-fn handle_menu(verb: &str, payload: &str, root: &Path, single: Option<&Path>) {
-    let Some(path) = resolve_target(payload, root, single) else { return };
+fn handle_menu(verb: &str, payload: &str, root: &Path) {
+    let Some(path) = resolve_target(payload, root) else { return };
     match verb {
         "abs" => platform::copy_to_clipboard(&path.to_string_lossy()),
         "reveal" => platform::reveal_in_finder(&path),
@@ -326,20 +313,19 @@ fn handle_menu(verb: &str, payload: &str, root: &Path, single: Option<&Path>) {
     }
 }
 
-/// メニュー操作対象の絶対パスを解決する。`id` が空なら単一ファイルモードの
-/// single_file_path を、非空なら `?file=` と同じ識別子として解決する
+/// メニュー操作対象の絶対パスを解決する。`id` は `?file=` と同じ識別子
 /// （root 相対なら root 内に限定、絶対パスなら root の外でも可）。
-fn resolve_target(id: &str, root: &Path, single: Option<&Path>) -> Option<PathBuf> {
+/// プレビューに何も開いていないときは空で来るので、その場合は何もしない。
+fn resolve_target(id: &str, root: &Path) -> Option<PathBuf> {
     let id = id.trim();
     if id.is_empty() {
-        single.map(|p| p.to_path_buf())
-    } else {
-        request::id_to_path(root, id)
+        return None;
     }
+    request::id_to_path(root, id)
 }
 
 /// root の外のファイルを監視対象に足す。エディタの「別ファイルを書いて rename」に
-/// 耐えるよう、単一ファイルモードと同じく親ディレクトリを非再帰で見る。
+/// 耐えるよう、ファイルそのものではなく親ディレクトリを非再帰で見る。
 /// 既に見ている場所を重ねて watch しても notify 側が畳むので、重複管理はしない。
 fn watch_extra(
     watcher: &std::sync::Mutex<Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>>>,
@@ -375,11 +361,9 @@ fn is_blocked_ext(path: &Path) -> bool {
 
 fn spawn_watcher(
     root: PathBuf,
-    single_file: Option<PathBuf>,
     proxy: tao::event_loop::EventLoopProxy<AppEvent>,
 ) -> Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>> {
     let root_for_cb = root.clone();
-    let single_for_cb = single_file.clone();
     let mut debouncer = new_debouncer(Duration::from_millis(80), move |res: notify_debouncer_mini::DebounceEventResult| {
         let Ok(events) = res else { return };
         for ev in events {
@@ -388,12 +372,6 @@ fn spawn_watcher(
                 Ok(p) => p,
                 Err(_) => ev.path.clone(),
             };
-            if let Some(ref sf) = single_for_cb {
-                if path == *sf {
-                    let _ = proxy.send_event(AppEvent::Reload(None));
-                }
-                continue;
-            }
             // レンダリング対象（md / html）の変更だけをホットリロードに回す。
             // 判定は request::is_renderable（RENDERABLE_EXT）に委ねる。以前はここで
             // 拡張子を書き並べており、.markdown が漏れる回帰を起こしていた。
@@ -403,14 +381,12 @@ fn spawn_watcher(
             // JS 側が持っている識別子（root 相対 or 絶対パス）と同じ形で通知する。
             // 形がズレると「開いているファイルが変わったか」の照合が外れて再読込しない。
             let id = request::file_id(&root_for_cb, &path);
-            let _ = proxy.send_event(AppEvent::Reload(Some(id)));
+            let _ = proxy.send_event(AppEvent::Reload(id));
         }
     }).ok()?;
 
-    let (watch_path, mode): (PathBuf, RecursiveMode) = match single_file.as_deref() {
-        Some(f) => (f.parent().unwrap_or(Path::new(".")).to_path_buf(), RecursiveMode::NonRecursive),
-        None => (root.clone(), RecursiveMode::Recursive),
-    };
-    debouncer.watcher().watch(&watch_path, mode).ok()?;
+    // root 配下は再帰で見る。root の外のファイルはページから watch: が飛んでくるので
+    // watch_extra が個別に足す。
+    debouncer.watcher().watch(&root, RecursiveMode::Recursive).ok()?;
     Some(debouncer)
 }

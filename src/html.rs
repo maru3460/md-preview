@@ -90,8 +90,6 @@ pub const HLJS_JS: &str = include_str!("assets/vendor/highlight.min.js");
 pub const MERMAID_JS: &str = include_str!("assets/vendor/mermaid.min.js");
 pub const DRAWIO_JS: &str = include_str!("assets/vendor/drawio-viewer.min.js");
 
-pub const INIT_JS: &str = include_str!("assets/js/init.js");
-
 /// ページの `<head>` に inline する自前スクリプト。**この配列の順序が読み込み順**で、
 /// モジュールを足すときはここに 1 行加えるだけでよい。
 ///
@@ -104,8 +102,8 @@ pub const INIT_JS: &str = include_str!("assets/js/init.js");
 ///                   `MdCommon.registerOverlay` を呼ぶモジュールより前に置く。
 /// 残りは互いに依存しない（初期化は DOMContentLoaded 後に走る）。
 ///
-/// モードごとの起動スクリプト（`INIT_JS` / `FOLDER_JS`）はここには含めない。
-/// あちらは `<head>` ではなく初期化スクリプトとして注入される。
+/// 起動スクリプト（`FOLDER_JS`）はここには含めない。あちらは `<head>` ではなく
+/// 初期化スクリプトとして注入される。
 const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("keymap.js", include_str!("assets/js/keymap.js")),
     ("common.js", include_str!("assets/js/common.js")),
@@ -142,8 +140,9 @@ pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
 
 pub const FOLDER_JS: &str = include_str!("assets/js/folder.js");
 
-/// タブ（フォルダモード限定）。`PAGE_SCRIPTS` に入れると単一 / stdin にも配られるので、
-/// `build_folder_html` の `<head>` へフォルダモードの時だけ差し込む。
+/// タブ。`PAGE_SCRIPTS` ではなく `build_folder_html` の `<head>` へ差し込む。
+/// タブバーはシェル（`#tabbar`）が居るページだけのもので、`build_html` で出す
+/// 1 枚もの（md の直開き・`--html` ダンプ）には置き場所が無い。
 const TABS_JS: &str = include_str!("assets/js/tabs.js");
 
 const ICON_NOTE: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
@@ -189,7 +188,7 @@ pub fn render_body_in(markdown: &str, base: Option<&DocBase>, line_offset: usize
 
 /// 本文中の相対 `src` / `href` を、描画中のファイルの場所を基準にした URL へ畳む。
 ///
-/// これをやらないと、ブラウザは document base（フォルダモードでは常に root）を
+/// これをやらないと、ブラウザは document base（ページの URL は常に root）を
 /// 基準に解決してしまい、`docs/a.md` の `![](fig.png)` が root 直下の `/fig.png` を
 /// 引きに行って 404 になる。JS 側で後から直すこともできるが、Rust 側でやれば
 /// `md --html` のダンプと実際の表示が同じ HTML になる。
@@ -701,28 +700,6 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
         custom_css = custom_css,
         scripts = scripts,
         extra_head = extra_head,
-    )
-}
-
-/// markdown 文字列を frontmatter 込みで完全な HTML ページに変換する。
-/// stdin / 単一ファイル / アセット直開きの本文生成を 1 本にまとめた共通パス。
-/// `base` は相対パスの解決基準（None なら埋め込みも URL 書き換えもしない）。
-pub fn render_full_document(
-    markdown: &str,
-    title: &str,
-    theme_css: &str,
-    custom_css: &str,
-    base: Option<&DocBase>,
-) -> String {
-    let (fm_pairs, body) = parse_frontmatter(markdown);
-    let offset = body_line_offset(markdown, body);
-    let fm_html = render_frontmatter_html(&fm_pairs, offset);
-    build_html(
-        &format!("{}{}", fm_html, render_body_in(body, base, offset)),
-        title,
-        theme_css,
-        custom_css,
-        "",
     )
 }
 

@@ -2,12 +2,12 @@
 // diff（git 差分）の 2 つで、右下ボタン or ⌘R / ⌘D で切り替える。
 //
 // モードは維持される。ON のまま別ファイルへ移ると、そのファイルのソース / 差分が出る
-// （フォルダモードの loadPreview 側が isActive() を見て分岐する）。同時に active に
+// （folder.js の loadPreview 側が isActive() を見て分岐する）。同時に active に
 // なれるのは 1 つで、排他はこのファイルの activeId が持つ（以前は diff.js と raw.js が
 // 互いの isActive()/deactivate() を名指しで呼び合っており、3 つ目を足すと組み合わせが
 // 増える形だった）。
 //
-// init.js（単一ファイル）と folder.js（フォルダ）が initAll() でモード固有の入出力を渡す。
+// 入出力（対象ファイルの URL・コンテナ・スクロール主体）は folder.js が initAll() で渡す。
 (function() {
   // モードの定義。ここに 1 行足せば、ボタン・ショートカット・排他・再取得が揃う。
   // CSS は `.md-<id>-toggle` / `.md-<id>-count` を見る（並び順は base.css の order）。
@@ -59,10 +59,10 @@
       btn.setAttribute('aria-pressed', isActive() ? 'true' : 'false');
     }
 
-    // ソース / 差分は本文の 720px 制約を外して全幅で見せる。単一ファイルモードでは
-    // コンテナ（.markdown-body 記事）に source-page を付ける。フォルダモードでは
-    // Rust 側フラグメントが source-page を持つため、#preview-pane への付与は実質 no-op。
-    // 自分で付けた時だけ外す（非md記事が恒久的に持つ source-page を剥がさないため）。
+    // ソース / 差分は本文の 720px 制約を外して全幅で見せる。フラグメント側
+    // （Rust の respond_fragment）が .markdown-body に source-page を付けるので、
+    // コンテナ（#preview-pane）への付与は実質 no-op。自分で付けた時だけ外す
+    // （非md記事が恒久的に持つ source-page を剥がさないため）。
     function applyWidth(el) {
       if (el && !el.classList.contains('source-page')) {
         el.classList.add('source-page');
@@ -121,7 +121,7 @@
         opts.reloadNormal();
         return;
       }
-      // 表示できるファイルが無ければ何もしない（フォルダモードで未選択のとき等）。
+      // 表示できるファイルが無ければ何もしない（`md .` で起動して未選択のとき等）。
       if (!opts.url(spec.id)) return;
       // 他モードとは排他。出ていたら先に畳む（本文には戻さず、こちらで上書きする）。
       deactivateOthers(spec.id);
@@ -206,7 +206,7 @@
       SPECS.forEach(function(spec) {
         var mode = createMode(spec);
         modes.push(mode);
-        // 既存の呼び出し側（init.js / folder.js / MdReload）が使う名前で公開する。
+        // 呼び出し側（folder.js / MdReload）が使う名前で公開する。
         window[spec.global] = mode;
       });
       attachShortcuts();

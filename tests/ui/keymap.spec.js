@@ -5,26 +5,21 @@
 // window.MdX 越しのモジュール間契約は型が無いので、ここだけは実際に起動した
 // ページへ訊きに行って照合する。
 const { test, expect } = require('@playwright/test');
-const { SINGLE_URL, open, openFolder } = require('./helpers');
+const { openFolder } = require('./helpers');
 
-/// そのモードで出るはずの run のうち、担当モジュールが居ないもの。
+/// 表に載っている run のうち、担当モジュールが居ないもの。
 function orphanRuns(page) {
   return page.evaluate(() =>
     window.MdKeymap.binds
-      .filter((b) => b.run && window.MdKeymap.inScope(b.scope))
+      .filter((b) => b.run)
       .map((b) => b.run)
       .filter((run) => !window.MdKeymap.has(run)));
 }
 
-test('フォルダモードのキーが全部ハンドラを持っている', async ({ page }) => {
+test('表のキーが全部ハンドラを持っている', async ({ page }) => {
   await openFolder(page);
+  // 起動モードは 1 本なので、表に載っているキーはどれも担当モジュールが居ること。
   // タブ・ツリー・パレットまで初期化された状態で照合する。
-  expect(await orphanRuns(page)).toEqual([]);
-});
-
-test('単一ファイルモードのキーが全部ハンドラを持っている', async ({ page }) => {
-  await open(page, SINGLE_URL);
-  // folder スコープのキー（⌘P / ⌘B / タブ）はそもそも出ないので対象外になる。
   expect(await orphanRuns(page)).toEqual([]);
 });
 

@@ -1,6 +1,6 @@
 // プレビューにコメント → まとめてコピーして Claude Code へ貼る機能。<head> に inline され
-// window.MdComment を公開する。init.js（単一/stdin）と folder.js（フォルダ）の両方から
-// init() で使う。コメントの真実は JS 配列 comments[] が持ち、DOM のマーカーは表示のための
+// window.MdComment を公開する。folder.js が init() で入出力を渡す。
+// コメントの真実は JS 配列 comments[] が持ち、DOM のマーカーは表示のための
 // 派生物（ホットリロードで消えても配列から redraw() で貼り直す）。
 //
 // 対象ユニットは html.rs が振った [data-src-line] を持つ要素（見出し・段落・リスト項目・
@@ -267,14 +267,14 @@
     if (u && viewSettled(c, u)) { landOn(u); return; }
     next();
   }
-  // コメントの file:line へ飛ぶ。別ファイルは folder モードなら開いてから、
-  // 付けた表示（raw / 通常）が違えば切り替えてから着地する。
+  // コメントの file:line へ飛ぶ。別ファイルは開いてから、付けた表示
+  // （raw / 通常）が違えば切り替えてから着地する。
   function gotoComment(c) {
     if (!c.startLine) return;
     jumpGen++;
     var st = { waitGen: null, switched: false };
     if (c.file && c.file !== currentFile()) {
-      // single / stdin は別ファイルへ移れないので何もしない。
+      // 開く入口を渡されていない呼び出し元からは移れないので何もしない。
       if (!opts || typeof opts.openFile !== 'function') return;
       st.waitGen = bodyGen();   // 目的ファイルの本文が届くまで待つ
       opts.openFile(c.file);
@@ -341,7 +341,7 @@
         if (a && viewSettled(c, a)) { openEditPopover(a, c); return; }
       }
       if (tries-- > 0) { setTimeout(waitEdit, 60); return; }
-      // 待っても錨が出ないとき（別ファイルへ移れない single / 巨大ファイル）は
+      // 待っても錨が出ないとき（行コメントを出さない巨大ファイルなど）は
       // 錨無しで開く。編集そのものはできる。
       openEditPopover(null, c);
     })();

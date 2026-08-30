@@ -5,10 +5,10 @@
 // 3 つ立てていて、URL の使い分けだけをここで持つ。
 const { expect } = require('@playwright/test');
 
-/// フォルダモード（root = tests/ui-fixtures）。baseURL なので '/' で足りる。
+/// フォルダ起動（`md tests/ui-fixtures`。タブ 0 枚）。baseURL なので '/' で足りる。
 const FOLDER_URL = '/';
-/// 単一ファイルモード（cwd 外の a.md を 1 枚もので開いた状態）。
-const SINGLE_URL = 'http://127.0.0.1:7879/';
+/// 1 ファイル起動（`md <cwd 外の a.md>` 相当。root はその親で、タブが 1 枚）。
+const ONE_FILE_URL = 'http://127.0.0.1:7879/';
 /// 複数ファイル起動（`md a.md b.md` 相当。タブが 2 枚並んだ状態で始まる）。
 const MULTI_URL = 'http://127.0.0.1:7880/';
 
@@ -19,11 +19,11 @@ async function open(page, url) {
     try { localStorage.setItem('md-help-onboarded', '1'); } catch (e) {}
   });
   await page.goto(url || FOLDER_URL);
-  // 初期描画の完了（init.js / folder.js が ready を投げたところ）を待つ。
+  // 初期描画の完了（folder.js が ready を投げたところ）を待つ。
   await page.waitForFunction(() => window.__mdIpc && window.__mdIpc.includes('ready'));
 }
 
-/// フォルダモードで、ツリーが描かれるのを待つ。
+/// フォルダ起動で、ツリーが描かれるのを待つ。
 async function openFolder(page) {
   await open(page, FOLDER_URL);
   await expect(page.locator('.tree-item').first()).toBeVisible();
@@ -34,4 +34,4 @@ async function nextFrames(page) {
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
 
-module.exports = { FOLDER_URL, SINGLE_URL, MULTI_URL, open, openFolder, nextFrames };
+module.exports = { FOLDER_URL, ONE_FILE_URL, MULTI_URL, open, openFolder, nextFrames };

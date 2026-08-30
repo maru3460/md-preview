@@ -12,8 +12,8 @@
 //! （ポートを位置引数から `--port` に追い出したのはこのため）。
 //!
 //! ウィンドウ表示との違い:
-//!   - 起動スクリプト（`MD_*` グローバル＋ init.js / folder.js）は WKUserScript が
-//!     無いので、配信する index HTML の `<head>` 直後へ差し込む。CSP を緩めないよう、
+//!   - 起動スクリプト（`MD_*` グローバル＋ folder.js）は WKUserScript が無いので、
+//!     配信する index HTML の `<head>` 直後へ差し込む。CSP を緩めないよう、
 //!     ページが持っている nonce を読み出して使い回す。
 //!   - IPC（`window.ipc`）が無いので、`ready` / `close` / メニュー操作を捨てる
 //!     スタブを置く。これが無いと初回描画の最後で例外になり、以降が動かない。
@@ -41,7 +41,12 @@ fn main() {
     // 1 つなら from_path、2 つ以上なら全部をタブに乗せる。製品の main.rs と同じ入口。
     let config = AppConfig::from_paths(&paths, &theme_css, &custom_css, &current_dir);
 
-    let boot = format!("{}\n{}\n{}", IPC_STUB, config.page_globals(appearance), config.init_script);
+    let boot = format!(
+        "{}\n{}\n{}",
+        IPC_STUB,
+        config.page_globals(appearance),
+        md_preview::html::FOLDER_JS
+    );
     let index = inject_boot_script(&config.html_bytes, &boot);
 
     let ctx = Arc::new(RequestContext {
@@ -49,7 +54,6 @@ fn main() {
         index_html: index,
         theme_css,
         custom_css,
-        single_file: config.single_file_path.clone(),
     });
 
     let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {

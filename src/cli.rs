@@ -165,7 +165,7 @@ pub fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
     // 単体のファイルなので root はその親ディレクトリ。相対 src / href は
-    // ライブプレビュー（単一ファイルモード）と同じ URL に畳まれる。
+    // ライブプレビューでそのファイルを開いたときと同じ URL に畳まれる。
     let root = path.parent().unwrap_or(Path::new("."));
     let Some(rendered) = request::render_file(path, root, ViewMode::Normal) else {
         eprintln!("md: '{}' を読み込めませんでした", arg);

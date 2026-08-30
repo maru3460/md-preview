@@ -4,7 +4,7 @@
 // ヘルプが keymap から作られていること、iframe 越しのクリックでメニューが閉じること。
 // どれも「本文にフォーカスがある」という前提が崩れると一斉に死ぬ部分。
 const { test, expect } = require('@playwright/test');
-const { SINGLE_URL, open, openFolder } = require('./helpers');
+const { openFolder } = require('./helpers');
 
 test('Esc は最前面のオーバーレイを 1 つずつ閉じる', async ({ page }) => {
   await openFolder(page);
@@ -33,18 +33,11 @@ test('? のヘルプが開き、Esc で閉じる（キー一覧は keymap から
   await page.keyboard.press('?');
   const help = page.locator('#md-help-backdrop');
   await expect(help).toBeVisible();
-  // フォルダモード限定のキー（⌘P / ⌘B）が一覧に出ていること。
+  // 表の行がそのまま並ぶ（出し分けは無い）。
   await expect(help).toContainText('⌘P');
   await expect(help).toContainText('⌘B');
   await page.keyboard.press('Escape');
   await expect(help).toHaveCount(0);
-
-  // 単一ファイルモードでは ⌘P / ⌘B は一覧に出ない（scope: folder）。
-  await open(page, SINGLE_URL);
-  await page.keyboard.press('?');
-  await expect(page.locator('#md-help-backdrop')).toBeVisible();
-  await expect(page.locator('#md-help-backdrop')).not.toContainText('⌘P');
-  await expect(page.locator('#md-help-backdrop')).not.toContainText('⌘B');
 });
 
 test('j / k で本文がスクロールする', async ({ page }) => {

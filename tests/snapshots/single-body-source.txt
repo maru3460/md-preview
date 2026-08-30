@@ -1,9 +1,0 @@
-status: 200
-content-type: text/html; charset=utf-8
-----
-<div class="source-view"><div class="source-titlebar"><span class="source-fname">sample.rs</span><span class="source-lang">Rust</span></div><div class="source-main"><pre><code class="language-rust">// スナップショットのソースビュー用。テストターゲットとしては拾われない
-// （cargo が見るのは tests/*.rs と tests/*/main.rs だけ）。
-fn main() {
-    println!("hello");
-}
-</code></pre></div></div>

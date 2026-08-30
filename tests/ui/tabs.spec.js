@@ -1,4 +1,4 @@
-// タブ（tabs.js）。フォルダモードで複数ファイルを開いたまま行き来する。
+// タブ（tabs.js）。複数ファイルを開いたまま行き来する。
 //
 // 状態（パス・読み位置・ビューモード）は tabs.js だけが持っていて、Rust 側は
 // 起動時の INITIAL_FILES しか知らない。つまりここが唯一の砦なので、実装中に
@@ -173,7 +173,7 @@ test('最後の 1 枚とタブ 0 枚の ⌘W はウィンドウを閉じる', as
   const ipc = () => page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length);
 
   // タブが 1 枚も無い状態（`md .` で起動してまだ何も開いていない）。ここで
-  // 抜けてしまうと、フォルダモードは keymap に window-close を持たないので
+  // 抜けてしまうと、⌘W に割り当てられているのは tab-close だけなので
   // ⌘W が完全に無反応になる。
   expect(await page.locator('.md-tab').count()).toBe(0);
   await page.keyboard.press('Meta+w');

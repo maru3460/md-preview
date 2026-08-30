@@ -104,8 +104,9 @@ table {
    幅を calc(50vw + 312px) にすると右端がちょうど画面右端-48px に届く
    (= (50vw-360) + (50vw+312) = 100vw-48)。左端は動かさないので、表は本文と
    左揃えのまま右方向へだけ広がる。狭い表は width:auto で縮み左寄せのまま。
-   ※ この 50vw 基準は「markdown-body が viewport 中央」の単一ファイル表示専用。
-   　 folder モードは markdown-body が preview-pane 内でサイドバーぶんズレるため、
+   ※ この 50vw 基準は「markdown-body が viewport 中央」の 1 枚もの表示専用
+   　 （md の直開き / --html ダンプ）。アプリのシェル（folder-mode）は
+   　 markdown-body が preview-pane 内でサイドバーぶんズレるため、
    　 また TOC を開いている間(md-toc-open)は本文が右ガターぶん左へ寄り中央でなくなるため、
    　 どちらも除外する。除外時は width:auto のまま markdown-body(720px) 内に収め、
    　 はみ出しは .table-wrap 内で横スクロールさせる。 */
@@ -354,8 +355,8 @@ blockquote.markdown-alert-caution {
 
 /* html ファイルは iframe（ミニブラウザ）で描画する。source-page と同様に本文の
    720px 中央制約を外し、iframe はビューポート高から本文パディング(48px×2)を引いた
-   分を満たして内部スクロールする。単一ファイル/フォルダ両モードとも縦パディングは
-   48px なので calc(100vh - 96px) で揃う（folder モードは preview-pane の padding）。 */
+   分を満たして内部スクロールする。1 枚もの / シェルのどちらも縦パディングは
+   48px なので calc(100vh - 96px) で揃う（シェルでは preview-pane の padding）。 */
 .markdown-body.html-page {
     max-width: none;
     margin: 0;

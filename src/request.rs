@@ -391,8 +391,8 @@ fn binary_notice(path: &Path) -> String {
     notice_html(&format!("バイナリファイルは表示できません: {}", name))
 }
 
-/// ファイルを読んで本文 HTML を組む。**すべての表示経路（初期ページ / フォルダの
-/// `?file=` / 単一ファイルの `?body=1` / `raw` / `--html` ダンプ）がここを通る。**
+/// ファイルを読んで本文 HTML を組む。**すべての表示経路（`?file=` / `?raw=` /
+/// md の直開き / `--html` ダンプ）がここを通る。**
 ///
 /// `root` は配信ルート。相対 `src` / `href` の書き換え先 URL と、html を iframe 描画
 /// するときの `src` をここから組む（[`crate::urlpath`] 参照）。相対パスの基準は root
@@ -674,36 +674,6 @@ pub struct RequestContext {
     pub index_html: Vec<u8>,
     pub theme_css: String,
     pub custom_css: String,
-    /// 単一ファイルモードで開いているファイル。フォルダモードでは None。
-    /// `?body=1` などの「引数なし番兵」クエリの対象になる。
-    pub single_file: Option<PathBuf>,
-}
-
-impl RequestContext {
-    fn single(&self) -> Option<&Path> {
-        self.single_file.as_deref()
-    }
-}
-
-/// 操作対象のファイルの指し方。
-///
-/// 単一ファイルモードは開いているファイルが決まっているので `?raw=1` のように
-/// 引数を取らない。フォルダモードは `?raw=<rel>` で相対パスを渡す。この 2 通りを
-/// ここで吸収することで、配信側は「単一用」と「フォルダ用」を 2 本持たなくてよくなる。
-#[derive(Debug, PartialEq, Eq)]
-enum Target {
-    /// 単一ファイルモードで開いているファイル。
-    Single,
-    /// root 相対パス（percent-decode 済み）。
-    Rel(String),
-}
-
-impl Target {
-    /// プレビュー枠を丸ごと差し替えるか（＝`.markdown-body` ラッパを付けるか）。
-    /// 単一ファイルモードは既存の `.markdown-body` の中へ差し込むので付けない。
-    fn wrapped(&self) -> bool {
-        matches!(self, Target::Rel(_))
-    }
 }
 
 /// URL とクエリが指す処理。
@@ -712,6 +682,10 @@ impl Target {
 /// 拾わないことや `diff=1` を `diff=<rel>` より先に見ることが、**判定の順序**によって
 /// 保たれていた（そのためのテストまであった）。キーで厳密に分けることで、
 /// エンドポイントを足しても前方一致の衝突が起きえなくなる。
+///
+/// 対象を持つルートが載せているのは識別子（root 相対パス、または root の外なら
+/// 絶対パス）。以前は 1 枚もの表示用の「引数なし番兵」（`?body=1` など）も
+/// あったが、起動モードがフォルダ 1 本になったので指し方も 1 通りになった。
 #[derive(Debug, PartialEq, Eq)]
 enum Route<'a> {
     BuiltinLib(&'a str),
@@ -719,30 +693,19 @@ enum Route<'a> {
     HasMd(String),
     Files,
     Changed,
-    /// 通常表示（フォルダの `?file=` / 単一の `?body=1`）。
-    View(Target),
+    /// 通常表示。
+    View(String),
     /// raw（ソース）表示。
-    Raw(Target),
-    Diff(Target),
-    DiffStat(Target),
+    Raw(String),
+    Diff(String),
+    DiffStat(String),
     /// 起動時に組み立てた初期ページ。
     Index,
     /// 画像・CSS・フォントなどの実ファイル配信。
     Asset(&'a str),
 }
 
-/// `?raw=1` 形式の「引数なし番兵」を解釈する。単一ファイルモードでは開いている
-/// ファイルが対象。フォルダモードに番兵は無いので `"1"` という名前の相対パス指定
-/// として扱う（従来どおり。実際には該当ファイルが無く 404 になる）。
-fn sentinel_target(value: &str, has_single: bool) -> Target {
-    if has_single && value == "1" {
-        Target::Single
-    } else {
-        Target::Rel(percent_decode(value))
-    }
-}
-
-fn parse_route<'a>(url_path: &'a str, query: &str, has_single: bool) -> Route<'a> {
+fn parse_route<'a>(url_path: &'a str, query: &str) -> Route<'a> {
     if let Some(name) = url_path.strip_prefix("/__lib/") {
         return Route::BuiltinLib(name);
     }
@@ -753,11 +716,10 @@ fn parse_route<'a>(url_path: &'a str, query: &str, has_single: bool) -> Route<'a
             "has_md" => return Route::HasMd(percent_decode(value)),
             "files" => return Route::Files,
             "changed" => return Route::Changed,
-            "file" => return Route::View(Target::Rel(percent_decode(value))),
-            "body" => return Route::View(Target::Single),
-            "raw" => return Route::Raw(sentinel_target(value, has_single)),
-            "diff" => return Route::Diff(sentinel_target(value, has_single)),
-            "diffstat" => return Route::DiffStat(sentinel_target(value, has_single)),
+            "file" => return Route::View(percent_decode(value)),
+            "raw" => return Route::Raw(percent_decode(value)),
+            "diff" => return Route::Diff(percent_decode(value)),
+            "diffstat" => return Route::DiffStat(percent_decode(value)),
             _ => {}
         }
     }
@@ -779,46 +741,35 @@ pub fn id_to_path(root: &Path, id: &str) -> Option<PathBuf> {
     }
 }
 
-/// 対象を実パスへ解決する。開けないもの・単一ファイルモードでないのに `Single` を
-/// 指すものは None。
-fn resolve(target: &Target, ctx: &RequestContext) -> Option<PathBuf> {
-    match target {
-        Target::Single => ctx.single().map(|p| p.to_path_buf()),
-        Target::Rel(id) => id_to_path(&ctx.root_dir, id),
-    }
-}
-
-/// 本文 HTML を、対象に応じてラッパ有り / 無しで返す。
-fn respond_fragment(target: &Target, body_class: &str, html: String) -> Response {
-    let body = if target.wrapped() {
-        let class = if body_class.is_empty() {
-            "markdown-body".to_string()
-        } else {
-            format!("markdown-body {}", body_class)
-        };
-        format!(r#"<div class="{}">{}</div>"#, class, html)
+/// 本文 HTML をプレビュー枠ごと差し替えるフラグメントにして返す。
+/// プレビュー枠の中身は `.markdown-body` ラッパから丸ごと入れ替わるので、
+/// 記事側のクラス（ソース表示の `source-page` など）もここで付ける。
+fn respond_fragment(body_class: &str, html: String) -> Response {
+    let class = if body_class.is_empty() {
+        "markdown-body".to_string()
     } else {
-        html
+        format!("markdown-body {}", body_class)
     };
+    let body = format!(r#"<div class="{}">{}</div>"#, class, html);
     ok_response("text/html; charset=utf-8", body.into_bytes())
 }
 
-fn serve_view(ctx: &RequestContext, target: &Target, mode: ViewMode) -> Response {
-    let Some(path) = resolve(target, ctx) else { return not_found_response() };
+fn serve_view(ctx: &RequestContext, id: &str, mode: ViewMode) -> Response {
+    let Some(path) = id_to_path(&ctx.root_dir, id) else { return not_found_response() };
     let Some(r) = render_file(&path, &ctx.root_dir, mode) else { return not_found_response() };
-    respond_fragment(target, r.body_class, r.html)
+    respond_fragment(r.body_class, r.html)
 }
 
 /// diff はレンダリング結果ではなくソース差分なので、md / 非md を問わず全幅
 /// （`source-page`）で出す。バイナリ・巨大ファイルは diff 側が中で弾く。
-fn serve_diff(ctx: &RequestContext, target: &Target) -> Response {
-    let Some(path) = resolve(target, ctx) else { return not_found_response() };
-    respond_fragment(target, "source-page", crate::diff::render_diff_inner(&path))
+fn serve_diff(ctx: &RequestContext, id: &str) -> Response {
+    let Some(path) = id_to_path(&ctx.root_dir, id) else { return not_found_response() };
+    respond_fragment("source-page", crate::diff::render_diff_inner(&path))
 }
 
 /// トグルボタンのバッジ用に、追加/削除行数だけを返す（軽量・非ブロッキング用途）。
-fn serve_diffstat(ctx: &RequestContext, target: &Target) -> Response {
-    let Some(path) = resolve(target, ctx) else { return not_found_response() };
+fn serve_diffstat(ctx: &RequestContext, id: &str) -> Response {
+    let Some(path) = id_to_path(&ctx.root_dir, id) else { return not_found_response() };
     let (add, del) = crate::diff::diff_stat(&path);
     ok_response(
         "application/json; charset=utf-8",
@@ -827,7 +778,7 @@ fn serve_diffstat(ctx: &RequestContext, target: &Target) -> Response {
 }
 
 pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Response {
-    match parse_route(url_path, query, ctx.single().is_some()) {
+    match parse_route(url_path, query) {
         Route::BuiltinLib(name) => serve_builtin_lib(name),
         Route::Dir(rel) => handle_dir(&rel, &ctx.root_dir),
         // サイドバーの「md を含むフォルダ」の点。深さ無制限の全走査になりうるが、
@@ -835,10 +786,10 @@ pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Resp
         Route::HasMd(rel) => handle_has_md(&rel, &ctx.root_dir),
         Route::Files => handle_files(&ctx.root_dir),
         Route::Changed => handle_changed(&ctx.root_dir),
-        Route::View(t) => serve_view(ctx, &t, ViewMode::Normal),
-        Route::Raw(t) => serve_view(ctx, &t, ViewMode::RawSource),
-        Route::Diff(t) => serve_diff(ctx, &t),
-        Route::DiffStat(t) => serve_diffstat(ctx, &t),
+        Route::View(id) => serve_view(ctx, &id, ViewMode::Normal),
+        Route::Raw(id) => serve_view(ctx, &id, ViewMode::RawSource),
+        Route::Diff(id) => serve_diff(ctx, &id),
+        Route::DiffStat(id) => serve_diffstat(ctx, &id),
         Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html.clone()),
         Route::Asset(p) => handle_asset(p, &ctx.root_dir, &ctx.theme_css, &ctx.custom_css),
     }
@@ -991,7 +942,7 @@ mod tests {
 
     #[test]
     fn md_fragment_embeds_file_link_relative_to_the_md_file() {
-        // フォルダモードの ?file= 経路でも、単独行ファイルリンクが
+        // ?file= の配信経路でも、単独行ファイルリンクが
         // 「その md ファイルがある場所」基準で展開されること。
         let dir = std::env::temp_dir().join("md-req-embed-test/sub");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1096,47 +1047,45 @@ mod tests {
     #[test]
     fn routes_are_keyed_not_prefix_matched() {
         // 似た名前のキーが互いを食わないこと（以前は strip_prefix の順序で守っていた）。
-        assert_eq!(parse_route("/", "files=1", false), Route::Files);
-        assert_eq!(parse_route("/", "changed=1", false), Route::Changed);
-        assert_eq!(
-            parse_route("/", "file=a.md", false),
-            Route::View(Target::Rel("a.md".to_string()))
-        );
-        assert_eq!(parse_route("/", "diffstat=1", true), Route::DiffStat(Target::Single));
+        assert_eq!(parse_route("/", "files=1"), Route::Files);
+        assert_eq!(parse_route("/", "changed=1"), Route::Changed);
+        assert_eq!(parse_route("/", "file=a.md"), Route::View("a.md".to_string()));
+        assert_eq!(parse_route("/", "diffstat=a.md"), Route::DiffStat("a.md".to_string()));
         // 値は percent-decode される。
         assert_eq!(
-            parse_route("/", "file=sub%20dir%2Fa.md", false),
-            Route::View(Target::Rel("sub dir/a.md".to_string()))
+            parse_route("/", "file=sub%20dir%2Fa.md"),
+            Route::View("sub dir/a.md".to_string())
         );
     }
 
     #[test]
-    fn sentinel_only_applies_in_single_file_mode() {
-        // 単一ファイルモードの `=1` は「開いているファイル」。
-        assert_eq!(parse_route("/", "raw=1", true), Route::Raw(Target::Single));
-        assert_eq!(parse_route("/", "diff=1", true), Route::Diff(Target::Single));
-        // フォルダモードには番兵が無いので "1" という名前の相対パス指定になる。
-        assert_eq!(parse_route("/", "raw=1", false), Route::Raw(Target::Rel("1".to_string())));
-        assert_eq!(parse_route("/", "diff=1", false), Route::Diff(Target::Rel("1".to_string())));
-        // body=1 は常に単一ファイル向け（フォルダモードでは resolve が失敗して 404）。
-        assert_eq!(parse_route("/", "body=1", false), Route::View(Target::Single));
+    fn every_target_route_takes_an_identifier() {
+        // 対象の指し方は識別子 1 通りだけ（番兵クエリ `?raw=1` はもう無い）。
+        // root 相対でも絶対パスでも、そのまま id_to_path へ渡る。
+        assert_eq!(parse_route("/", "raw=a.md"), Route::Raw("a.md".to_string()));
+        assert_eq!(parse_route("/", "diff=/out/a.md"), Route::Diff("/out/a.md".to_string()));
+        // かつて番兵だった "1" は、いまはそういう名前のファイル指定（無ければ 404）。
+        assert_eq!(parse_route("/", "raw=1"), Route::Raw("1".to_string()));
+        // `?body=1` は消えたので、知らないキーとしてアセット配信に落ちる。
+        assert_eq!(parse_route("/x.png", "body=1"), Route::Asset("/x.png"));
     }
 
     #[test]
     fn non_query_routes() {
-        assert_eq!(parse_route("/__lib/mermaid.min.js", "", false), Route::BuiltinLib("mermaid.min.js"));
-        assert_eq!(parse_route("/", "", false), Route::Index);
-        assert_eq!(parse_route("/img/a.png", "", false), Route::Asset("/img/a.png"));
+        assert_eq!(parse_route("/__lib/mermaid.min.js", ""), Route::BuiltinLib("mermaid.min.js"));
+        assert_eq!(parse_route("/", ""), Route::Index);
+        assert_eq!(parse_route("/img/a.png", ""), Route::Asset("/img/a.png"));
         // 知らないキーはアセット配信に落ちる（クエリ付きの画像 URL 等）。
-        assert_eq!(parse_route("/img/a.png", "v=2", false), Route::Asset("/img/a.png"));
+        assert_eq!(parse_route("/img/a.png", "v=2"), Route::Asset("/img/a.png"));
     }
 
     #[test]
-    fn single_target_is_not_wrapped_but_rel_is() {
-        // 単一ファイルは既存の .markdown-body の中へ差し込むのでラッパ無し、
-        // フォルダはプレビュー枠を丸ごと差し替えるのでラッパ有り。
-        assert!(!Target::Single.wrapped());
-        assert!(Target::Rel("a.md".to_string()).wrapped());
+    fn fragments_always_carry_the_markdown_body_wrapper() {
+        // プレビュー枠は丸ごと差し替わるので、ラッパはフラグメント側が必ず付ける。
+        let body = String::from_utf8_lossy(respond_fragment("", "x".into()).body()).into_owned();
+        assert_eq!(body, r#"<div class="markdown-body">x</div>"#);
+        let src = String::from_utf8_lossy(respond_fragment("source-page", "x".into()).body()).into_owned();
+        assert_eq!(src, r#"<div class="markdown-body source-page">x</div>"#);
     }
 
     #[test]

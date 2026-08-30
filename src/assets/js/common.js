@@ -1,7 +1,7 @@
-// init.js / folder.js / toc.js から共有するヘルパ群。<head> に inline され、
+// folder.js / toc.js などから共有するヘルパ群。<head> に inline され、
 // window.MdCommon として公開する。各関数は scope（省略時は document）を受け取り、
-// 単一ファイル表示（init: document 全体）とフォルダ表示（folder: #preview-pane）の
-// 両方を 1 つの実装で賄う。
+// シェル（#preview-pane を持つアプリのページ）と、build_html で出す 1 枚もの
+// （md の直開き・`--html` ダンプ）の両方を 1 つの実装で賄う。
 (function() {
   // 遅延ロードした <script> を URL 単位でメモ化する。mermaid/drawio の巨大ライブラリを
   // 必要になった時に 1 度だけ読み込むためのもの。
@@ -290,8 +290,7 @@
   }
 
   // `#id` 形式のリンクをページ内スクロールに変える。該当する形なら true を返し、
-  // イベントを渡していれば preventDefault する。init.js / folder.js が同じ処理を
-  // 書き写していたのでここへ寄せた。
+  // イベントを渡していれば preventDefault する。
   function scrollToAnchor(href, e) {
     if (!href || href.charAt(0) !== '#') return false;
     if (e) e.preventDefault();
@@ -361,7 +360,7 @@
     // 横あふれが無い表は問題が起きないので一切介入しない(ネイティブの慣性を保つ)。
     if (wrap.scrollWidth <= wrap.clientWidth) return;
     if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-    // スクロール主体は単一ファイル表示では window、folder モードでは #preview-pane。
+    // スクロール主体はシェルでは #preview-pane、1 枚ものでは document。
     var sc = wrap.closest('#preview-pane') || document.scrollingElement || document.documentElement;
     var unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? sc.clientHeight : 1);
     sc.scrollTop += e.deltaY * unit;
@@ -373,7 +372,7 @@
   // のショートカット（Cmd+W/R/F 等）が届かなくなる。iframe は同一オリジン（sandbox 無し）
   // なので、内部の keydown を親へ転送して既存のグローバルハンドラを効かせる。
   // 相対リンクは opts.onLinkClick に委ね、true が返れば iframe 内遷移を止める
-  // （フォルダモードは親のプレビュー遷移に回してサイドバー等の状態を同期させる）。
+  // （親のプレビュー遷移に回してサイドバー等の状態を同期させる）。
   // "rgb(r, g, b)" の明度がしきい値超え（＝明るい色）か。パースできなければ false。
   function isLightColor(c) {
     var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || '');
@@ -525,14 +524,14 @@
   // ── キーボードナビ用の共有述語（keyscroll.js と folder.js が同じ判定を使う） ──
   // 別実装にするとフォーカス判定がズレて二重発火/無反応が出るため、必ずここに一本化する。
 
-  // スクロール主体。folder モードは #preview-pane、単一ファイル/stdin は document。
+  // スクロール主体。シェルは #preview-pane、1 枚もの（md の直開き）は document。
   function getScroller() {
     return document.querySelector('#preview-pane')
       || document.scrollingElement
       || document.documentElement;
   }
 
-  // ファイルツリー（サイドバー）にフォーカスがあるか。folder モードのツリー操作の起点判定。
+  // ファイルツリー（サイドバー）にフォーカスがあるか。ツリー操作の起点判定。
   function isSidebarFocused() {
     var s = document.getElementById('sidebar');
     return !!(s && s.contains(document.activeElement));

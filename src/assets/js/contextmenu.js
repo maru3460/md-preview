@@ -1,5 +1,4 @@
 // 右クリック コンテキストメニュー。<head> に inline され window.MdMenu を公開する。
-// init.js（単一/stdin）と folder.js（フォルダ）の両モードで共有する。
 //
 // 対象の決まり方:
 //  - タブ（.md-tab）を右クリック → そのタブを対象（開閉の項目が増える）。
@@ -10,21 +9,19 @@
 // 安全性の考え方:
 //  - 相対パス / 選択テキストのコピーは navigator.clipboard で JS 完結（IPC を介さない）。
 //  - 絶対パスのコピー・Finder表示・既定アプリで開く だけ Rust へ IPC する。
-//    Rust 側は root_dir / single_file_path から `?file=` と同じ規則でパスを解決し
+//    Rust 側は root_dir から `?file=` と同じ規則でパスを解決し
 //    （root 相対は root 内に限定、絶対パスは root の外も可）、
 //    実行系拡張子（.app/.command 等）は弾く。
 //  - ページ全体に CSP がかかっており、本文（untrusted な Markdown）に埋め込まれた
 //    <script> は実行されない。これがドライブバイ IPC の根本的な防御。
 (function() {
-  // 'folder' | 'single' | 'stdin'。init_script で注入される。
-  var mode = window.MD_MENU_MODE || 'single';
-  // フォルダモードで現在プレビュー中ファイルの相対パス。未ロード時は null。
+  // 現在プレビュー中ファイルの識別子（root 相対パス、または root の外なら絶対パス）。
+  // 何も開いていない（`md .` で起動した直後など）間は null。
   var currentRel = null;
   var menuEl = null;
 
   // 右クリック位置から操作対象を決める。
-  //   rel   … IPC / コピーに使う相対パス（単一ファイルモードは '' で Rust が
-  //           single_file_path を使う）
+  //   rel   … IPC / コピーに使う識別子（何も開いていなければ ''）
   //   relOk … 「相対パスをコピー」が意味を持つか
   //   has   … パス系の操作（絶対/Finder/開く）が可能か
   function resolveContext(e) {
@@ -37,8 +34,7 @@
     if (ti && ti.dataset && ti.dataset.path) {
       return { rel: ti.dataset.path, relOk: true, has: true };
     }
-    if (mode === 'single') return { rel: '', relOk: false, has: true };
-    if (mode === 'folder' && currentRel) return { rel: currentRel, relOk: true, has: true };
+    if (currentRel) return { rel: currentRel, relOk: true, has: true };
     return { rel: '', relOk: false, has: false };
   }
 
@@ -132,26 +128,21 @@
       });
       items.push({ sep: true });
     }
-    // stdin はファイルが無くサイドバーも無いので、パス系グループごと出さない。
-    if (mode !== 'stdin') {
-      items.push({ label: '相対パスをコピー', action: 'copy-rel', enabled: ctx.relOk });
-      items.push({ label: '絶対パスをコピー', action: 'copy-abs', enabled: ctx.has });
-      items.push({ sep: true });
-      items.push({ label: 'Finderで表示', action: 'reveal', enabled: ctx.has });
-      items.push({ label: 'デフォルトアプリで開く', action: 'open', enabled: ctx.has });
-      items.push({ sep: true });
-    }
-    // ファイル検索はフォルダモードだけの機能（別ファイルを開く入口があるのがそこだけ）。
-    if (mode === 'folder') {
-      items.push({ label: 'ファイル検索 (⌘P)', action: 'palette', enabled: true });
-      var treeOpen = !window.MdSidebar || window.MdSidebar.isOpen();
-      items.push({
-        label: (treeOpen ? 'ファイルツリーを隠す' : 'ファイルツリーを表示') + ' (⌘B)',
-        action: 'sidebar-toggle',
-        enabled: true
-      });
-      items.push({ sep: true });
-    }
+    // パス系。対象が無いとき（何も開いていない本文の右クリック）は disabled で残す。
+    items.push({ label: '相対パスをコピー', action: 'copy-rel', enabled: ctx.relOk });
+    items.push({ label: '絶対パスをコピー', action: 'copy-abs', enabled: ctx.has });
+    items.push({ sep: true });
+    items.push({ label: 'Finderで表示', action: 'reveal', enabled: ctx.has });
+    items.push({ label: 'デフォルトアプリで開く', action: 'open', enabled: ctx.has });
+    items.push({ sep: true });
+    items.push({ label: 'ファイル検索 (⌘P)', action: 'palette', enabled: true });
+    var treeOpen = !window.MdSidebar || window.MdSidebar.isOpen();
+    items.push({
+      label: (treeOpen ? 'ファイルツリーを隠す' : 'ファイルツリーを表示') + ' (⌘B)',
+      action: 'sidebar-toggle',
+      enabled: true
+    });
+    items.push({ sep: true });
     items.push({ label: '再読み込み', action: 'reload', enabled: true });
     items.push({ sep: true });
     items.push({ label: 'ショートカット一覧 (?)', action: 'help', enabled: true });

@@ -68,127 +68,107 @@
   function digit19(e) { return /^[1-9]$/.test(e.key); }
 
   // ── 表 ───────────────────────────────────────────────────────
-  // scope（ヘルプに出す範囲）:
-  //   'all'     … 全モード（stdin / single / folder）
-  //   'nostdin' … stdin 以外（ファイル/git がある single・folder）
-  //   'folder'  … folder モードのみ（サイドバーとファイル移動がある時）
-  //   'nofolder'… folder 以外（同じキーが folder では別の意味を持つ時に使う）
+  // 起動モードはフォルダ 1 本なので、ここに出る行はどの起動の仕方でも全部効く
+  // （以前は single / stdin 用に scope で出し分けていた）。
   // run: ハンドラ名。複数の行が同じハンドラを共有してよい（表示は分けたいが処理は
   //      1 本、というものがある。スクロール系とツリー操作がそれ）。
   var BINDS = [
     // ── 読み進める（keyscroll.js） ──
-    { cat: 'scroll', keys: 'j / k', desc: '1 行スクロール 下 / 上', scope: 'all',
+    { cat: 'scroll', keys: 'j / k', desc: '1 行スクロール 下 / 上',
       run: 'scroll', match: keys('j', 'k'),
       when: function(e) { return body(e) && !inTree() && !inCommentMode(); } },
-    { cat: 'scroll', keys: 'd / u', desc: '半ページ 下 / 上', scope: 'all',
+    { cat: 'scroll', keys: 'd / u', desc: '半ページ 下 / 上',
       run: 'scroll', match: keys('d', 'u'),
       when: function(e) { return body(e) && !inTree(); } },
-    { cat: 'scroll', keys: 'Space', desc: '1 ページ送り（Shift+Space で戻る）', scope: 'all',
+    { cat: 'scroll', keys: 'Space', desc: '1 ページ送り（Shift+Space で戻る）',
       run: 'scroll', match: keys(' '),
       when: function(e) { return body(e) && !inTree(); } },
-    { cat: 'scroll', keys: 'g / G', desc: '冒頭 / 末尾へ', scope: 'all',
+    { cat: 'scroll', keys: 'g / G', desc: '冒頭 / 末尾へ',
       run: 'scroll', match: keys('g', 'G'),
       when: function(e) { return body(e) && !inTree(); } },
 
     // ── 探す・飛ぶ（search.js / toc.js / palette.js） ──
     // `/` と `?` はどのフォーカスでも開けるようにする（ツリー内でも効く）。
-    { cat: 'find', keys: '/', desc: '検索を開く（開くだけ。閉じるのは Esc / ⌘F）', scope: 'all',
+    { cat: 'find', keys: '/', desc: '検索を開く（開くだけ。閉じるのは Esc / ⌘F）',
       run: 'search-open', match: keys('/'), when: bare },
-    { cat: 'find', keys: '⌘F', desc: '検索を開閉', scope: 'all',
+    { cat: 'find', keys: '⌘F', desc: '検索を開閉',
       run: 'search-toggle', match: letter('f'),
       // ⌃⌘F は macOS 標準のフルスクリーン（下の表示専用行）なので譲る。WKWebView は
       // ⌘ 系を先に web へ流すので、ここで preventDefault するとメニュー項目に届かない。
       when: function(e) { return cmdAnywhere(e) && !(e.metaKey && e.ctrlKey); } },
-    { cat: 'find', keys: '⌘T', desc: 'アウトライン（見出しナビ）を開閉', scope: 'all',
+    { cat: 'find', keys: '⌘T', desc: 'アウトライン（見出しナビ）を開閉',
       run: 'toc-toggle', match: letter('t'), when: cmdAnywhere },
-    { cat: 'find', keys: '⌘P', desc: 'ファイル検索（あいまい検索。未入力なら git 変更ファイルが先頭）', scope: 'folder',
+    { cat: 'find', keys: '⌘P', desc: 'ファイル検索（あいまい検索。未入力なら git 変更ファイルが先頭）',
       run: 'palette-toggle', match: letter('p'), when: cmdAnywhere },
 
     // ── 表示を切り替える（viewmode.js） ──
-    { cat: 'view', keys: '⌘D', desc: 'git 差分表示を切り替え', scope: 'nostdin',
+    { cat: 'view', keys: '⌘D', desc: 'git 差分表示を切り替え',
       run: 'view-diff', match: letter('d'), when: cmd },
-    { cat: 'view', keys: '⌘R', desc: 'raw（ソース）表示を切り替え', scope: 'nostdin',
+    { cat: 'view', keys: '⌘R', desc: 'raw（ソース）表示を切り替え',
       run: 'view-raw', match: letter('r'), when: cmd },
 
     // ── コメント（comment.js） ──
-    { cat: 'comment', keys: 'c', desc: 'コメントモード開始/終了', scope: 'all',
+    { cat: 'comment', keys: 'c', desc: 'コメントモード開始/終了',
       run: 'comment-toggle', match: keys('c'),
       when: function(e) { return body(e) && !inTree(); } },
-    { cat: 'comment', keys: 'j / k / Enter', desc: 'コメント中: 移動（Shift+j/k でレンジ）/ Enter で付与', scope: 'all',
+    { cat: 'comment', keys: 'j / k / Enter', desc: 'コメント中: 移動（Shift+j/k でレンジ）/ Enter で付与',
       run: 'comment-mode', match: keys('j', 'J', 'k', 'K', 'Enter', 'ArrowDown', 'ArrowUp'),
       when: function(e) { return body(e) && !inTree() && inCommentMode(); } },
-    { cat: 'comment', keys: 'n / p / e / x / y', desc: 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全部コピー', scope: 'all',
+    { cat: 'comment', keys: 'n / p / e / x / y', desc: 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全部コピー',
       run: 'comment-mode', match: keys('n', 'p', 'e', 'x', 'y', 'Delete'),
       when: function(e) { return body(e) && !inTree() && inCommentMode(); } },
 
     // ── ファイル移動（folder.js） ──
-    { cat: 'files', keys: '] / [', desc: '次 / 前のファイルへ（表示中のファイルを巡回）', scope: 'folder',
+    { cat: 'files', keys: '] / [', desc: '次 / 前のファイルへ（表示中のファイルを巡回）',
       run: 'file-cycle', match: keys('[', ']'), when: bare },
     // Tab と ⇧Tab は同じキーを shift の有無で分ける。when が互いに排他なので
     // 表の順序には依存しない。
-    { cat: 'files', keys: 'Tab', desc: '本文 ⇄ ファイルツリー のフォーカス切替', scope: 'folder',
+    { cat: 'files', keys: 'Tab', desc: '本文 ⇄ ファイルツリー のフォーカス切替',
       run: 'focus-toggle', match: keys('Tab'),
       when: function(e) { return bare(e) && !e.shiftKey; } },
 
     // ── タブ（tabs.js） ──
-    { cat: 'files', keys: '⇧Tab', desc: '次のタブへ（端まで行ったら先頭へ折り返す）', scope: 'folder',
+    { cat: 'files', keys: '⇧Tab', desc: '次のタブへ（端まで行ったら先頭へ折り返す）',
       run: 'tab-cycle', match: keys('Tab'),
       when: function(e) { return bare(e) && e.shiftKey; } },
     // 入力欄とオーバーレイ表示中は譲る。⌘P のパレットを開いたまま裏のファイルだけが
     // 切り替わると、別ファイルの上にオーバーレイが残って何が起きたか分からなくなる。
-    { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）', scope: 'folder',
+    { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）',
       run: 'tab-goto', match: digit19,
       when: function(e) { return cmd(e) && !overlayOpen(); } },
 
     // ── ファイルツリー（folder.js） ──
-    { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉', scope: 'folder',
+    { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉',
       run: 'sidebar-toggle', match: letter('b'), when: cmdAnywhere },
     // 以下はツリーにフォーカスがある時だけ。
-    { cat: 'tree', keys: 'ツリー内', desc: 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ', scope: 'folder',
+    { cat: 'tree', keys: 'ツリー内', desc: 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ',
       run: 'tree', match: keys('j', 'k', 'g', 'G', 'l', 'h', 'Enter',
                                'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'),
       when: function(e) { return bare(e) && inTree(); } },
 
     // ── ウィンドウ・ヘルプ ──
-    { cat: 'app', keys: '⌘A', desc: '本文を全選択', scope: 'all',
+    { cat: 'app', keys: '⌘A', desc: '本文を全選択',
       run: 'select-body', match: letter('a'), when: cmd },
     // JS を通らない（macOS のメニュー項目が処理する）。表示のためだけの行。
-    { cat: 'app', keys: '⌃⌘F', desc: 'フルスクリーンを切り替え（緑ボタンと同じ）', scope: 'all' },
-    // フォルダモードの ⌘W はタブを閉じる（VSCode と同じ）。最後の 1 枚まで閉じたら
-    // 従来どおりウィンドウが閉じるので、押し続けた時の終端は変わらない。
-    { cat: 'app', keys: '⌘W', desc: 'タブを閉じる（最後の 1 枚ならウィンドウを閉じる）', scope: 'folder',
+    { cat: 'app', keys: '⌃⌘F', desc: 'フルスクリーンを切り替え（緑ボタンと同じ）' },
+    // ⌘W はタブを閉じる（VSCode と同じ）。最後の 1 枚まで閉じたらウィンドウが
+    // 閉じるので、押し続けた時の終端は変わらない。
+    { cat: 'app', keys: '⌘W', desc: 'タブを閉じる（最後の 1 枚ならウィンドウを閉じる）',
       run: 'tab-close', match: letter('w'), when: metaOnly },
-    { cat: 'app', keys: '⌘⇧W', desc: 'ウィンドウを閉じる', scope: 'folder',
+    { cat: 'app', keys: '⌘⇧W', desc: 'ウィンドウを閉じる',
       run: 'window-close', match: letter('w'), when: metaShift },
-    { cat: 'app', keys: '⌘W', desc: 'ウィンドウを閉じる', scope: 'nofolder',
-      run: 'window-close', match: letter('w'), when: metaOnly },
-    { cat: 'app', keys: '⌘Q', desc: '終了', scope: 'all' },
-    { cat: 'app', keys: '右クリック', desc: 'コンテキストメニュー', scope: 'all' },
-    { cat: 'app', keys: '?', desc: 'このヘルプを開閉', scope: 'all',
+    { cat: 'app', keys: '⌘Q', desc: '終了' },
+    { cat: 'app', keys: '右クリック', desc: 'コンテキストメニュー' },
+    { cat: 'app', keys: '?', desc: 'このヘルプを開閉',
       run: 'help-toggle', match: keys('?'),
       // ヘルプ自身が開いている時も ? で閉じられるよう、オーバーレイ判定は使わない。
       when: function(e) { return !e.metaKey && !e.ctrlKey && !e.altKey && !inField(e); } },
     // Esc は common.js のオーバーレイ レジストリが一括で受ける（最前面の 1 つを閉じる）。
-    { cat: 'app', keys: 'Esc', desc: '検索 / メニュー / ヘルプ / コメントを閉じる', scope: 'all' }
+    { cat: 'app', keys: 'Esc', desc: '検索 / メニュー / ヘルプ / コメントを閉じる' }
   ];
 
   // ── ディスパッチ ─────────────────────────────────────────────
   var handlers = {};
-
-  // 現在のモードでこの scope を表示するか。MD_MENU_MODE は起動時に決まるが、
-  // 参照は呼び出し時に行う（スクリプトの評価順に依存しないため）。
-  function inScope(scope) {
-    var mode = window.MD_MENU_MODE;
-    if (scope === 'nostdin') return mode !== 'stdin';
-    if (scope === 'folder') return mode === 'folder';
-    if (scope === 'nofolder') return mode !== 'folder';
-    return true; // 'all' と未指定
-  }
-
-  // 現在のモードで表示すべきバインドを、定義順（＝カテゴリ順）で返す。
-  function visible() {
-    return BINDS.filter(function(b) { return inScope(b.scope); });
-  }
 
   document.addEventListener('keydown', function(e) {
     // オーバーレイ内の入力欄など、より内側のハンドラが既に処理したキーは触らない
@@ -197,7 +177,6 @@
     for (var i = 0; i < BINDS.length; i++) {
       var b = BINDS[i];
       if (!b.run || !b.match) continue;          // 表示専用の行
-      if (!inScope(b.scope)) continue;           // そのモードに無いキー
       var fn = handlers[b.run];
       if (!fn) continue;                         // 担当モジュールが未初期化
       if (!b.match(e)) continue;
@@ -211,8 +190,6 @@
   window.MdKeymap = {
     categories: CATEGORIES,
     binds: BINDS,
-    inScope: inScope,
-    visible: visible,
     // 実処理を差し込む。同名を複数回呼んだら後勝ち（モジュールは 1 度しか呼ばない）。
     on: function(run, fn) { handlers[run] = fn; },
     // この run に担当モジュールが居るか。ディスパッチは居なければ黙って読み飛ばす

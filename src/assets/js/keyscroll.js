@@ -1,7 +1,7 @@
 // 本文スクロールの素キー（vim/less 流）の実処理。キーの割り当てと「どの文脈で効くか」は
 // keymap.js の表が持つので、ここは「どこをスクロールするか」だけを決める。
 //
-// スクロール主体は MdCommon.getScroller()（folder=#preview-pane / 単一ファイル=document）。
+// スクロール主体は MdCommon.getScroller()（シェル=#preview-pane / 1 枚もの=document）。
 // ツリーにフォーカスがある間・コメントモード中の j/k は keymap.js 側の when で除外済み。
 (function() {
   // html を iframe 描画している時、スクロールすべき対象は iframe 内の文書である。

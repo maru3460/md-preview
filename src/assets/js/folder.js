@@ -248,16 +248,17 @@
       .catch(function() { showLoadError(pane, relPath); });
   }
 
+  // ファイル監視（main.rs）から呼ばれる唯一の入口。引数は変更されたファイルの識別子。
   window.MdReload = function(relPath) {
     if (!currentFilePath) return;
-    if (relPath && relPath !== currentFilePath) return;
+    if (relPath !== currentFilePath) return;
     // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
     var mode = window.MdViewModes && window.MdViewModes.active();
     if (mode) { mode.refresh(); return; }
     loadPreview(currentFilePath, true);
   };
 
-  // ── キーボードナビ（folder モード限定） ──────────────────────────
+  // ── キーボードナビ ────────────────────────────────────────────
   // ・[ / ] : 表示中の描画可能ファイルを巡回して即プレビュー
   // ・Tab   : 本文ペイン ⇄ ファイルツリー のフォーカス切替
   // ・ツリーにフォーカス時: j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ
@@ -526,8 +527,7 @@
       window.MdViewModes.initAll({
         getContainer: previewPane,
         getScroller: previewPane,
-        // フォルダモードは対象ファイルを相対パスで渡す（単一ファイルモードの `=1` 番兵
-        // と違い、開いているファイルがサーバ側に無いため）。
+        // 対象ファイルは識別子で渡す（サーバは「開いているファイル」を持たない）。
         url: function(id) {
           return currentFilePath ? '/?' + id + '=' + encodeURIComponent(currentFilePath) : null;
         },
@@ -576,7 +576,7 @@
       });
   });
 
-  // ⌘A は common.js が keymap 経由で処理する（⌘W はフォルダモードでは tabs.js）。
+  // ⌘A は common.js が、⌘W は tabs.js が keymap 経由で処理する。
   document.addEventListener('click', function(e) {
     var a = e.target.closest('a[href]');
     if (!a) return;
