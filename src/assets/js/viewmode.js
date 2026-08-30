@@ -92,13 +92,16 @@
       if (opts) opts.reloadNormal();
     }
 
-    function show() {
+    // scrollTo に数値を渡すと、取得後にその位置へ着地する（省略時は今の位置を保つ）。
+    // 呼び出し側が値で渡せないと、まだ前のファイルの中身が入っているスクローラへ
+    // 代入するしかなく、前が短いとブラウザに clamp されて読み位置が消える。
+    function show(scrollTo) {
       if (!opts) return;
       var url = opts.url(spec.id);
       var el = container();
       if (!url || !el) { fail(); return; }
       var sc = scroller();
-      var savedScroll = sc ? sc.scrollTop : 0;
+      var savedScroll = typeof scrollTo === 'number' ? scrollTo : (sc ? sc.scrollTop : 0);
       var myReq = ++reqSeq;
       fetch(url, { cache: 'no-store' })
         .then(function(r) { return r.ok ? r.text() : null; })
@@ -173,7 +176,8 @@
       setAvailable: setAvailable,
       // 表示中に（現在ファイルに対して）再取得する。ファイル切替・監視リロード・
       // 明示更新のいずれからも使う。バッジも合わせて更新する。
-      refresh: function() { if (isActive()) show(); refreshStat(); },
+      // scrollTo は着地させたい位置（省略で現在位置を維持）。
+      refresh: function(scrollTo) { if (isActive()) show(scrollTo); refreshStat(); },
       // バッジだけ更新する。通常表示の経路（ファイル切替・ホットリロード）から使う。
       refreshStat: refreshStat,
       toggle: toggle,

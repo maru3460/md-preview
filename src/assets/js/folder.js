@@ -225,10 +225,11 @@
     // ソース / 差分を表示する（本文レンダリングには戻さない）。
     var mode = window.MdViewModes && window.MdViewModes.active();
     if (mode) {
-      // ファイル切替（preserveScroll=false）はタブの読み位置から、
-      // ホットリロードは現在位置を維持。show() が今の scrollTop を保存して戻す。
-      if (!preserveScroll) pane.scrollTop = savedScroll;
-      mode.refresh();
+      // ファイル切替（preserveScroll=false）はタブの読み位置へ着地させ、
+      // ホットリロードは現在位置を維持する（refresh の引数を省くとそうなる）。
+      // ここでペインへ直に代入してはいけない。中身はまだ前のファイルなので、
+      // 前が短いと clamp されて読み位置が 0 に落ちる。
+      mode.refresh(preserveScroll ? undefined : savedScroll);
       return;
     }
 

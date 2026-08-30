@@ -108,6 +108,29 @@ test('タブごとに Raw / 差分の状態が復元される', async ({ page })
   await expect(raw).not.toHaveClass(/active/);
 });
 
+test('raw 表示のままタブを移っても読み位置が復元される', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'long.md');
+  await page.keyboard.press('Meta+r');
+  await expect(page.locator('.md-raw-toggle')).toHaveClass(/active/);
+  // ソースが出て縦に伸びるまで待つ（伸びる前に測ると復元先が作れない）。
+  await expect.poll(() => page.evaluate(() => {
+    const el = document.getElementById('preview-pane');
+    return el.scrollHeight - el.clientHeight;
+  })).toBeGreaterThan(600);
+  await page.evaluate(() => { document.getElementById('preview-pane').scrollTop = 600; });
+  expect(await pane(page)).toBe(600);
+
+  // 読み位置より短いファイルを経由する。ここが 0 になるのが復元を壊す条件だった。
+  await openFile(page, 'a.md');
+  await expect.poll(() => pane(page)).toBe(0);
+
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('long.md');
+  await expect(page.locator('.md-raw-toggle')).toHaveClass(/active/);
+  await expect.poll(() => pane(page)).toBe(600);
+});
+
 test('⇧Tab の巡回は端で先頭へ折り返す', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');
