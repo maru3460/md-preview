@@ -52,19 +52,15 @@
   // ソース表示（raw トグル・非 md ファイル）は common.js の wrapSourceLines が本文の
   // 差し替え時に常時「1 行 = 1 <div>（[data-src-line] 付き）」へ包み直すので、既存の
   // ユニット処理がそのまま raw にも効く。行が本物の要素なので、埋め込み（カードの
-  // 兄弟挿入）も他のユニットと同じに動く。ここに残るのは「行数が多すぎて包まれなかった
-  // ソース」の案内だけ。
-  var tooBigNotified = -1;   // 案内トーストを出した本文の差し替え世代（重複表示を防ぐ）
-  function notifySrcTooBig(host) {
-    if (!host || !mode) return;
-    var main = host.querySelector('.source-main');
-    if (!main || main.querySelector('.md-src-row')) return;
-    // なぜ行を掴めないのかを伝える。モードに入った時だけでなく、モード中に巨大ファイルへ
-    // 移った時にも出す（同じ本文で何度も出さないよう世代で抑える）。
-    if (tooBigNotified === bodyGen()) return;
-    tooBigNotified = bodyGen();
-    toast('大きなファイルなので行コメントは使えません');
-  }
+  // 兄弟挿入）も他のユニットと同じに動く。掴めない表示（行数が多すぎて包まれなかった
+  // ソース）の案内はサイドバーの常設ヒント（renderSide）が持つ。
+
+  // 本文に錨れる行ユニットがあるか。表示の種類を名指しせず「ユニットの有無」で見る。
+  function hasAnchor(host) { return !!(host && host.querySelector('[data-src-line]')); }
+
+  // モード中かつ錨れるか。html の iframe 表示・git 差分・巨大ソースはユニットが
+  // 1 個も無いのでここが false になり、keymap の j / k がスクロールへ戻る。
+  function canAnchor() { return mode && hasAnchor(hostEl()); }
 
   // ── ユニット/引用の抽出 ───────────────────────────────────────
   function unitStart(u) { return parseInt(u.dataset.srcLine, 10); }
@@ -393,7 +389,6 @@
       // 付けたコメントが、プレビューでは同じ段落へ落ちることがあるため（💬 が 2 個並ぶ）。
       var slots = new Map();
       var file = currentFile();
-      notifySrcTooBig(host);
       var fileComments = comments.filter(function(c) { return c.file === file && inCurrentView(c); });
       // 素の閲覧（モード外・このファイルにコメント 0 件）ではユニットの全走査をしない。
       // ソースビューは常時 1 行 1 要素なので、1 万行なら 1 万ユニットの走査になるため。
@@ -718,6 +713,23 @@
     return sideEl;
   }
 
+  // 行ユニットが 1 個も無い表示のとき、その理由を返す（無ければ null）。
+  // トーストではなく居座るヒントで出す——「なぜ付けられないか」はモードに居る間ずっと
+  // 効いている事情なので、1.5 秒で消えるものより常設の方が合う。
+  function noAnchorHint() {
+    var host = hostEl();
+    if (!host || hasAnchor(host)) return null;
+    if (host.querySelector('iframe.html-frame')) {
+      return 'HTML にコメントはできません（j / k はスクロール。n / p の巡回と全部コピーは使えます）';
+    }
+    if (host.querySelector('.diff-source')) return 'git 差分にコメントはできません';
+    if (host.querySelector('.source-main')) return '大きなファイルなので行コメントはできません';
+    // バイナリの案内・読み込み失敗・空の差分・中身の無い md など、上の 3 つに当たらない
+    // 錨無しの本文がまだある。表示の種類を数え上げ切るのは無理なので、最後はここへ
+    // 落として総称で言う——件数ベースの案内を出すと、また嘘になる。
+    return 'この表示にはコメントできません';
+  }
+
   function renderSide() {
     var side = ensureSide();
     if (!side) return;
@@ -725,12 +737,13 @@
     sideItems = [];
     var n = comments.length;
 
-    // キー操作の常設ヒント（ヘルプを開かなくても要点が分かるように）。件数で出し分ける。
+    // キー操作の常設ヒント（ヘルプを開かなくても要点が分かるように）。掴む行が無い
+    // 表示なら件数より先に「ここには付けられない」を出す——嘘のキー案内を残さない。
     var hint = document.createElement('div');
     hint.className = 'md-cmt-hint';
-    hint.textContent = (n === 0)
+    hint.textContent = noAnchorHint() || ((n === 0)
       ? 'j / k で移動、Enter でコメント（Shift+j/k で複数行）。クリック・ドラッグでも可'
-      : 'n / p 巡回 · e 編集 · x 削除 · y 全部コピー · ? 全キー';
+      : 'n / p 巡回 · e 編集 · x 削除 · y 全部コピー · ? 全キー');
     side.appendChild(hint);
 
     // 一覧は file→行順（n/p の巡回順・全部コピーの出力順と同じ）。巡回が一覧を
@@ -993,7 +1006,7 @@
   // ── キーボード操作（マウス無しでコメント） ───────────────────
   // モード中、ユニット・カーソルを j/k・↑/↓ で移動し、Enter でコメント。
   // Shift+j/k で複数ユニットのレンジを伸縮する。keyscroll.js とは「モード中の j/k」を
-  // 譲ってもらうことで排他する（MdComment.isMode 参照）。
+  // 譲ってもらうことで排他する（keymap.js の when が MdComment.isMode / canAnchor 参照）。
   var kbCursor = null;  // 現在のユニット（カーソル）
   var kbAnchor = null;  // レンジ選択のアンカー
   // モード中の j/k・Shift+j/k は毎キー全走査になりやすいので、ユニット配列をキャッシュする。
@@ -1127,9 +1140,7 @@
       // 埋め込みが抜けて本文が縮むぶんはスクロール補正しつつ貼り直す。
       anchorScroll(redraw);
     } else {
-      // 行ユニットは wrapSourceLines が本文の差し替え時に作るので、ここでやることは
-      // 「行数が多すぎて包まれなかったソース」で行を掴めない理由を案内するだけ。
-      notifySrcTooBig(hostEl());
+      // 行ユニットは wrapSourceLines が本文の差し替え時に作るので、ここで作るものは無い。
       // 先にサイドバー（コメントタブ）を開いてガター分のリフローを済ませてから
       // 埋め込みを差し込む（redraw が入れて、伸びるぶんはスクロール補正。見えている
       // ユニットへのキーボード・カーソルも redraw 内の initKbCursor が置く）。
@@ -1337,7 +1348,10 @@
     open: function() { setMode(true); },
     // MdCommon.isOverlayOpen が参照する（ポップオーバー表示中かどうか）。
     isPopoverOpen: function() { return !!popover; },
-    // keyscroll.js が「モード中の j/k」を譲るために参照する。
-    isMode: function() { return mode; }
+    // keymap.js の when が参照する。isMode は一覧の巡回キー（n / p / e / x / y）用で、
+    // 錨れない表示でも効かせたいのでモードの有無だけを見る。canAnchor は
+    // j / k / Enter 用で、錨れる行が無ければスクロール側へ譲る。
+    isMode: function() { return mode; },
+    canAnchor: canAnchor
   };
 })();

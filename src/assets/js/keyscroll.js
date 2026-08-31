@@ -2,7 +2,8 @@
 // keymap.js の表が持つので、ここは「どこをスクロールするか」だけを決める。
 //
 // スクロール主体は MdCommon.getScroller()（シェル=#preview-pane / 1 枚もの=document）。
-// ツリーにフォーカスがある間・コメントモード中の j/k は keymap.js 側の when で除外済み。
+// ツリーにフォーカスがある間と、錨れる行があるコメントモード中の j/k は keymap.js 側の
+// when で除外済み（錨れない表示——html の iframe / git 差分 / 巨大ソース——では戻ってくる）。
 (function() {
   // html を iframe 描画している時、スクロールすべき対象は iframe 内の文書である。
   // 親（body / #preview-pane）は html-frame が丁度 1 画面ぶんなので動かず、フォーカスが

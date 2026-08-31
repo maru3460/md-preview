@@ -33,6 +33,10 @@
   function inTree() { return !!(window.MdCommon && MdCommon.isSidebarFocused()); }
   function interactive() { return !!(window.MdCommon && MdCommon.isInteractiveFocus()); }
   function inCommentMode() { return !!(window.MdComment && MdComment.isMode && MdComment.isMode()); }
+  // 「モード中」だけでは j / k の行き先を決められない。html の iframe 表示・git 差分・
+  // 巨大ソースは錨る行ユニットが無く、コメント側が取ってもキーが黙って消えるので、
+  // 錨れるかどうかで分ける（錨れないならスクロールへ戻す）。
+  function canAnchor() { return !!(window.MdComment && MdComment.canAnchor && MdComment.canAnchor()); }
 
   // 素キー（修飾なし）を「アプリの操作」として受け取ってよい状況か。
   // 入力欄とオーバーレイ表示中は本文の操作を止める。
@@ -76,7 +80,7 @@
     // ── 読み進める（keyscroll.js） ──
     { cat: 'scroll', keys: 'j / k', desc: '1 行スクロール 下 / 上',
       run: 'scroll', match: keys('j', 'k'),
-      when: function(e) { return body(e) && !inTree() && !inCommentMode(); } },
+      when: function(e) { return body(e) && !inTree() && !canAnchor(); } },
     { cat: 'scroll', keys: 'd / u', desc: '半ページ 下 / 上',
       run: 'scroll', match: keys('d', 'u'),
       when: function(e) { return body(e) && !inTree(); } },
@@ -108,12 +112,14 @@
       run: 'view-raw', match: letter('r'), when: cmd },
 
     // ── コメント（comment.js） ──
-    { cat: 'comment', keys: 'c', desc: 'コメントモード開始/終了',
+    { cat: 'comment', keys: 'c', desc: 'コメントモード開始/終了（HTML 表示・git 差分・巨大ソースは行に付けられない）',
       run: 'comment-toggle', match: keys('c'),
       when: function(e) { return body(e) && !inTree(); } },
     { cat: 'comment', keys: 'j / k / Enter', desc: 'コメント中: 移動（Shift+j/k でレンジ）/ Enter で付与',
       run: 'comment-mode', match: keys('j', 'J', 'k', 'K', 'Enter', 'ArrowDown', 'ArrowUp'),
-      when: function(e) { return body(e) && !inTree() && inCommentMode(); } },
+      when: function(e) { return body(e) && !inTree() && canAnchor(); } },
+    // 一覧は他ファイルのコメントも並ぶ横断インデックスなので、錨れない表示（html 等）でも
+    // 巡回・全部コピーは使わせる（n / p はフォルダモードなら md 側へ切り替えて着地する）。
     { cat: 'comment', keys: 'n / p / e / x / y', desc: 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全部コピー',
       run: 'comment-mode', match: keys('n', 'p', 'e', 'x', 'y', 'Delete'),
       when: function(e) { return body(e) && !inTree() && inCommentMode(); } },

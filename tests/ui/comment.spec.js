@@ -2,8 +2,29 @@
 //
 // プレビューと raw / ソース表示で行の数え方が違う（フロントマターぶんずれる、
 // 非 md はソースしか無い）ので、どの表示で付けたかを覚えて戻れるかが要。
+const fs = require('fs');
+const path = require('path');
 const { test, expect } = require('@playwright/test');
 const { openFolder, nextFrames } = require('./helpers');
+
+/// 追跡済みのフィクスチャは常にクリーンで差分が空になり、行数も閾値に遠い。
+/// 錨れない表示（git 差分 / 巨大ソース）を作るには、その場でファイルを置くしかない。
+/// 未追跡ファイルは差分の相手がいないので「全行が追加」になる。
+function withFixture(name, body, fn) {
+  const file = path.join(__dirname, '../ui-fixtures', name);
+  fs.writeFileSync(file, body);
+  return fn(name).finally(() => fs.rmSync(file, { force: true }));
+}
+
+/// #preview-pane が確実にスクロールできる高さを作る（本文が 1 画面に収まると
+/// j を押しても動かず、スクロールへ戻ったことを見分けられないため）。
+async function padPane(page) {
+  await page.evaluate(() => {
+    const pad = document.createElement('div');
+    pad.style.height = '3000px';
+    document.querySelector('#preview-pane .markdown-body').appendChild(pad);
+  });
+}
 
 test('c でコメントモードに入り、Esc で抜ける', async ({ page }) => {
   await openFolder(page);
@@ -348,4 +369,85 @@ test('別ファイルの raw コメントへ飛ぶと、raw のまま着地す�
   await expect(page.locator('.md-raw-toggle')).toHaveClass(/active/);
   await expect(page.locator('.source-view')).toBeVisible();
   await expect(page.locator('.md-src-row[data-src-line="1"]')).toHaveClass(/md-cmt-kbcursor/);
+});
+
+test('html 表示ではコメントモード中でも j / k がスクロールし、付けられない旨が出る', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  // ツリークリックでフォーカスがサイドバーへ移っているので、素キーが本文へ届くよう戻す。
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+  // 錨る行ユニットが無い表示なので、件数ベースのキー案内ではなく理由を出す。
+  await expect(page.locator('.md-cmt-hint')).toContainText('HTML にコメントはできません');
+  // 掴む行が無いのでカーソルも置かれない。
+  await expect(page.locator('.md-cmt-kbcursor')).toHaveCount(0);
+
+  // j はコメント側に取られず、iframe 内の文書をスクロールする。フィクスチャは
+  // 1 画面に収まっていて動かないので、確実にスクロールできる高さを足しておく。
+  await frame.locator('body').evaluate((b) => {
+    const pad = b.ownerDocument.createElement('div');
+    pad.style.height = '3000px';
+    b.appendChild(pad);
+  });
+  const top = () => page.evaluate(() => {
+    const d = document.querySelector('iframe.html-frame').contentDocument;
+    return (d.scrollingElement || d.documentElement).scrollTop;
+  });
+  expect(await top()).toBe(0);
+  await page.keyboard.press('j');
+  await expect.poll(top).toBeGreaterThan(0);
+  await page.keyboard.press('k');
+  await expect.poll(top).toBe(0);
+});
+
+test('git 差分ではコメントモード中でも j / k がスクロールし、付けられない旨が出る', async ({ page }) => {
+  await withFixture('zz-untracked.md', '# 未追跡\n\n差分では全行が追加になる。\n', async (name) => {
+    await openFolder(page);
+    await page.locator('.tree-item', { hasText: name }).click();
+    await expect(page.locator('#preview-pane')).toContainText('未追跡');
+    // ツリークリックでフォーカスがサイドバーへ移っているので、素キーが本文へ届くよう戻す。
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Meta+d');
+    await expect(page.locator('.diff-source')).toBeVisible();
+
+    await page.keyboard.press('c');
+    await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+    await expect(page.locator('.md-cmt-hint')).toContainText('git 差分にコメントはできません');
+    await expect(page.locator('.md-cmt-kbcursor')).toHaveCount(0);
+
+    await padPane(page);
+    const top = () => page.evaluate(() => document.getElementById('preview-pane').scrollTop);
+    expect(await top()).toBe(0);
+    await page.keyboard.press('j');
+    await expect.poll(top).toBeGreaterThan(0);
+    await page.keyboard.press('k');
+    await expect.poll(top).toBe(0);
+  });
+});
+
+test('1 万行超のソースではコメントモード中でも j / k がスクロールし、付けられない旨が出る', async ({ page }) => {
+  const big = Array.from({ length: 10500 }, (_, i) => 'line ' + (i + 1)).join('\n') + '\n';
+  await withFixture('zz-big.txt', big, async (name) => {
+    await openFolder(page);
+    await page.locator('.tree-item', { hasText: name }).click();
+    await expect(page.locator('.source-main')).toBeVisible();
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    // 閾値超えなので wrapSourceLines が行を包まない＝錨る行ユニットが 1 個も無い。
+    expect(await page.locator('#preview-pane [data-src-line]').count()).toBe(0);
+
+    await page.keyboard.press('c');
+    await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+    await expect(page.locator('.md-cmt-hint')).toContainText('大きなファイルなので行コメントはできません');
+    // 案内はサイドバーの常設ヒントに一本化した（トーストは出さない）。
+    await expect(page.locator('.md-cmt-toast')).toHaveCount(0);
+
+    const top = () => page.evaluate(() => document.getElementById('preview-pane').scrollTop);
+    expect(await top()).toBe(0);
+    await page.keyboard.press('j');
+    await expect.poll(top).toBeGreaterThan(0);
+  });
 });
