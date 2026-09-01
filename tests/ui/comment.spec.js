@@ -310,6 +310,40 @@ test('本文が動いただけの mousemove では n / p の巡回対象を奪�
   await expect(page.locator('.md-cmt-item.review')).toHaveCount(0);
 });
 
+test('X は全ファイルのコメントを一度に消し、消した件数を返す', async ({ page }) => {
+  await openFolder(page);
+  await page.keyboard.press(']'); // a.md
+  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
+  await page.keyboard.press('c');
+
+  // a.md に 2 件、b.md に 1 件（一覧はファイルを跨いで溜まる）。
+  for (const [line, body] of [['3', 'ひとつめ'], ['7', 'ふたつめ']]) {
+    await page.locator(`#preview-pane p[data-src-line="${line}"]`).click();
+    await page.locator('.md-cmt-textarea').fill(body);
+    await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
+  }
+  await page.keyboard.press(']'); // b.md
+  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し B');
+  await page.locator('#preview-pane p[data-src-line="3"]').click();
+  await page.locator('.md-cmt-textarea').fill('b.md にも');
+  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
+  await expect(page.locator('.md-cmt-item')).toHaveCount(3);
+
+  // X は対象を選ばない（カーソルはコメントの無い行に置いておく）。
+  await page.keyboard.press('k');
+  await page.keyboard.press('Shift+X');
+  await expect(page.locator('.md-cmt-item')).toHaveCount(0);
+  await expect(page.locator('.md-toast')).toHaveText('3 件を全消去しました');
+  // 本文の印（マーカー・💬・埋め込み）も残らない。
+  await expect(page.locator('.md-cmt-marked')).toHaveCount(0);
+  await expect(page.locator('.md-cmt-badge')).toHaveCount(0);
+  await expect(page.locator('.md-cmt-embed')).toHaveCount(0);
+
+  // 空で押しても壊れない（件数ではなく「まだありません」を返す）。
+  await page.keyboard.press('Shift+X');
+  await expect(page.locator('.md-toast')).toHaveText('コメントはまだありません');
+});
+
 test('錨が同じユニットに重なった 💬 バッジは 1 個にまとまる', async ({ page }) => {
   await openFolder(page);
   await page.keyboard.press(']'); // a.md

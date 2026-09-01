@@ -350,6 +350,15 @@
     if (reviewId === c.id) reviewId = null;   // 消したコメントは巡回対象から外す
     toast('コメントを削除しました');
   }
+  // X: 全ファイルのコメントを全消去（パネルの「全消去」と同じ実処理）。確認は挟まない
+  // ——「全部コピー（y）してから消して、指示を書き直してまた付ける」が主な流れなので、
+  // 都度の確認は邪魔になる。代わりに消した件数をトーストに出して、事故に気付ける形にする。
+  function deleteAll() {
+    var n = comments.length;
+    if (!n) { toast('コメントはまだありません'); return; }
+    clearAll();
+    toast(n + ' 件を全消去しました');
+  }
 
   // 短いフィードバックの浮遊トースト（キーボード操作の結果をボタン無しで返す）。
   // 実体は MdCommon.toast（選択即コピーと同じものを共有する）。呼び出しが多いので
@@ -731,7 +740,7 @@
     hint.className = 'md-cmt-hint';
     hint.textContent = noAnchorHint() || ((n === 0)
       ? 'j / k で移動、Enter でコメント（Shift+j/k で複数行）。クリック・ドラッグでも可'
-      : 'n / p 巡回 · e 編集 · x 削除 · y 全部コピー · ? 全キー');
+      : 'n / p 巡回 · e 編集 · x 削除 · X 全消去 · y 全部コピー · ? 全キー');
     side.appendChild(hint);
 
     // 一覧は file→行順（n/p の巡回順・全部コピーの出力順と同じ）。巡回が一覧を
@@ -1284,6 +1293,9 @@
           // 削除は x / Delete のみ。Backspace は「戻る/文字消し」の筋反射で誤爆しやすい
           // ので割り当てない。
           case 'x': case 'Delete': deleteCurrent(); return;
+          // X: 全消去。Shift は j→J（レンジ）・g→G（末尾）と同じ「同じ操作を大きく」の
+          // 意味で、x（1 件）に対する全件をここに置く。
+          case 'X': deleteAll(); return;
           // y: 全部コピー（パネルのボタンと同じ。トーストで結果を返す）。
           case 'y': copyAll(null); return;
           default: return;

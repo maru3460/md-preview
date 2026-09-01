@@ -120,8 +120,8 @@
       when: function(e) { return body(e) && !inTree() && canAnchor(); } },
     // 一覧は他ファイルのコメントも並ぶ横断インデックスなので、錨れない表示（html 等）でも
     // 巡回・全部コピーは使わせる（n / p はフォルダモードなら md 側へ切り替えて着地する）。
-    { cat: 'comment', keys: 'n / p / e / x / y', desc: 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全部コピー',
-      run: 'comment-mode', match: keys('n', 'p', 'e', 'x', 'y', 'Delete'),
+    { cat: 'comment', keys: 'n / p / e / x / X / y', desc: 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全消去 / 全部コピー',
+      run: 'comment-mode', match: keys('n', 'p', 'e', 'x', 'X', 'y', 'Delete'),
       when: function(e) { return body(e) && !inTree() && inCommentMode(); } },
 
     // ── ファイル移動（folder.js） ──
