@@ -62,6 +62,22 @@ fn src_attrs(idx: &LineIndex, range: &Range<usize>) -> String {
     }
 }
 
+/// fence の情報文字列（``` の後ろに書かれた `rust` や `sh:install.sh`）を
+/// `.code-wrapper` の属性として持たせる。選択コピー（common.js の selectionMarkdown）が
+/// フェンスを組み直すのに読む。情報無しの fence と indented ブロックでは空になる。
+///
+/// `class="language-…"` では代用できない: hljs が後から自分の検出結果の class を足すので
+/// 原文の言語と見分けが付かず、`lang:filename` のファイル名側は別 div へ分かれていて
+/// 情報文字列に戻せない。
+fn fence_attr(info: &str) -> String {
+    let info = info.trim();
+    if info.is_empty() {
+        String::new()
+    } else {
+        format!(" data-fence=\"{}\"", attr_escape(info))
+    }
+}
+
 pub fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -608,8 +624,9 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
                         format!(" class=\"language-{}\"", attr_escape(&lang))
                     };
                     let html = format!(
-                        "<div class=\"code-wrapper has-filename\"{}><div class=\"code-filename\">{}</div><pre><code{}>{}</code></pre></div>",
+                        "<div class=\"code-wrapper has-filename\"{}{}><div class=\"code-filename\">{}</div><pre><code{}>{}</code></pre></div>",
                         attrs,
+                        fence_attr(&info_str),
                         html_escape(&fname),
                         lang_class,
                         html_escape(&content)
@@ -621,7 +638,12 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
                 // 素の fenced ブロック: pulldown の <pre><code> を code-wrapper で包み、
                 // ブロック単位でコメントできるよう外枠に data-src-line を振る。
                 out.push(Event::Html(
-                    format!("<div class=\"code-wrapper\"{}>", attrs).into(),
+                    format!(
+                        "<div class=\"code-wrapper\"{}{}>",
+                        attrs,
+                        fence_attr(&info_str)
+                    )
+                    .into(),
                 ));
                 out.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))));
                 code_wrap_open = true;

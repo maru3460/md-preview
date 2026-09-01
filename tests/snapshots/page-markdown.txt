@@ -57,10 +57,10 @@
 <div class="table-wrap" data-src-line="31" data-src-end-line="33"><table><thead><tr><th style="text-align: left">左寄せ</th><th style="text-align: right">右寄せ</th></tr></thead><tbody>
 <tr><td style="text-align: left">a</td><td style="text-align: right">b</td></tr>
 </tbody></table>
-</div><div class="code-wrapper" data-src-line="35" data-src-end-line="37">
+</div><div class="code-wrapper" data-src-line="35" data-src-end-line="37" data-fence="rust">
 <pre><code class="language-rust">fn plain() {}
 </code></pre>
-</div><div class="code-wrapper has-filename" data-src-line="39" data-src-end-line="41"><div class="code-filename">src/named.rs</div><pre><code class="language-rust">fn named() {}
+</div><div class="code-wrapper has-filename" data-src-line="39" data-src-end-line="41" data-fence="rust:src/named.rs"><div class="code-filename">src/named.rs</div><pre><code class="language-rust">fn named() {}
 </code></pre></div><pre class="mermaid" data-src-line="43" data-src-end-line="46">graph LR
 A--&gt;B
 </pre><div class="drawio-wrap" data-src-line="48" data-src-end-line="50"><div class="mxgraph" data-mxgraph="{&quot;highlight&quot;:&quot;#0066cc&quot;,&quot;nav&quot;:true,&quot;resize&quot;:true,&quot;lightbox&quot;:true,&quot;toolbar&quot;:&quot;lightbox&quot;,&quot;xml&quot;:&quot;\u003cmxGraphModel&gt;\u003croot&gt;A &amp;amp; \&quot;B\&quot;\u003c/root&gt;\u003c/mxGraphModel&gt;&quot;}"></div></div><details data-src-line="52">

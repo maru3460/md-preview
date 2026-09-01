@@ -650,6 +650,149 @@
     return '';
   }
 
+  // ── 選択範囲をマークダウンのソース寄りに直す ────────────────────
+  // レンダリング結果をなぞると、ブラウザが返すのは「見えている文字」なので記法が全部
+  // 落ちる。`コード` を選んでもバッククォートが付かず、貼った先で地の文に化ける。
+  //
+  // 戻すのはコードの記法だけ（バッククォートとフェンス）。太字やリンクまで戻すと、
+  // 文章をチャットへ貼るときに記号が邪魔になる方が多い。
+  //
+  // 作り方は「選択範囲の複製を画面外へ写し、そこで code を書き換えて innerText を読む」。
+  // 段落・行・表の切れ目をどう文字にするかはブラウザに任せられるので、空白と改行の畳み方が
+  // 素のコピーと揃う。自前で走査すると、表のタブ区切りや <br> や white-space の扱いを
+  // ひとつずつ再現する話になる。
+  var MIRROR_MAX = 200000;   // 写しを作るのを諦める選択の長さ（巨大ファイルの全選択対策）
+
+  function elOf(node) {
+    return node && (node.nodeType === 1 ? node : node.parentElement);
+  }
+
+  // 中身を ` で包むための区切り。中の最長の連続バッククォートより 1 本長くする。
+  function ticksFor(text, min) {
+    var run = 0, max = 0;
+    for (var i = 0; i < text.length; i++) {
+      if (text.charAt(i) === '`') { run++; if (run > max) max = run; } else run = 0;
+    }
+    var out = '';
+    while (out.length < Math.max(min, max + 1)) out += '`';
+    return out;
+  }
+
+  // インラインコード。CommonMark は両端の空白 1 文字を剥がすので、端が ` か空白のときは
+  // 空白で詰めておく（詰めないと `` `x`` のように区切りと中身が繋がって読めなくなる）。
+  function inlineCode(text) {
+    var pad = (/^`|`$/.test(text) || (/^\s/.test(text) && /\s$/.test(text))) ? ' ' : '';
+    var fence = ticksFor(text, 1);
+    return fence + pad + text + pad + fence;
+  }
+
+  // コードブロック。info は fence の情報文字列（`rust` や `sh:install.sh`）。
+  function fencedCode(text, info) {
+    var fence = ticksFor(text, 3);
+    return fence + info + '\n' + text.replace(/\n+$/, '') + '\n' + fence;
+  }
+
+  // fence の情報文字列。原文どおりの値は Rust が .code-wrapper の data-fence に置く
+  // （html.rs の fence_attr）。写しが wrapper を含まない場合の保険として、hljs が
+  // 混ぜた class から言語だけ拾う（先に来るのが原文の言語で、後ろは hljs の検出結果）。
+  function fenceInfo(code) {
+    var wrap = code.closest ? code.closest('.code-wrapper') : null;
+    var info = wrap && wrap.getAttribute('data-fence');
+    if (info) return info;
+    var m = /(?:^|\s)language-(\S+)/.exec(code.className || '');
+    // hljs は言語を判定できなかったブロックに language-undefined を付ける（indented な
+    // コードブロックがこれになる）。原文の情報ではないので情報無しの fence として扱う。
+    return m && m[1] !== 'undefined' ? m[1] : '';
+  }
+
+  function hasCode(body, range) {
+    var codes = body.querySelectorAll('code');
+    for (var i = 0; i < codes.length; i++) {
+      // intersectsNode が無い/投げる環境では写しの側で判断させる（多く付くより
+      // 落ちる方が困る）。
+      try { if (range.intersectsNode(codes[i])) return true; } catch (e) { return true; }
+    }
+    return false;
+  }
+
+  function mirrorMarkdown(body, range) {
+    var box = document.createElement('div');
+    // 本文と同じ CSS（pre の white-space、リスト・表の箱）を継承させるため
+    // .markdown-body の中へ入れる。幅も本文と揃える。
+    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + body.clientWidth + 'px;';
+    box.setAttribute('aria-hidden', 'true');
+    try {
+      box.appendChild(range.cloneContents());
+      // 本文ではないもの。Copy ボタンは user-select:none を持たないので、素のコピーだと
+      // コードブロックの末尾に "Copy" の 4 文字が混ざる。
+      box.querySelectorAll('.copy-btn, .md-cmt-badge, .md-cmt-badge-holder, .source-gutter')
+        .forEach(function(n) { n.remove(); });
+      // 画像・動画・draw.io の図は文字を持たない。写しに残すと、読み込みが走り直す分と
+      // レイアウトの分だけ損をする。mermaid の svg はラベルが文字なので残す（素のコピーで
+      // 入っていたものを、写しを経由したせいで落とさない）。
+      box.querySelectorAll('img, canvas, video, audio, iframe, .mxgraph')
+        .forEach(function(n) { n.remove(); });
+      box.querySelectorAll('code').forEach(function(code) {
+        if (!code.closest('pre')) {
+          code.textContent = inlineCode(code.textContent);
+          return;
+        }
+        // ファイル名バーは 1 行として混ざる。fence の情報文字列が同じ名前を持つので捨てる。
+        var wrap = code.closest('.code-wrapper');
+        var fname = wrap && wrap.querySelector('.code-filename');
+        var info = fenceInfo(code);
+        if (fname) fname.remove();
+        // 前後を 1 行空ける。写しの innerText はブロックの境目に改行 1 つしか置かないので、
+        // フェンスが前の段落や次のフェンスと地続きになる（下の \n{3,} で 1 行に詰まる）。
+        code.textContent = '\n' + fencedCode(code.textContent, info) + '\n';
+      });
+      body.appendChild(box);
+      var text = box.innerText;
+      // ブロックの境目に開いた空行を 1 つに詰め、前後の余りは落とす（フェンスの前後に
+      // 足した改行も、写しのマージン由来の空行もここで揃う）。
+      return text ? text.replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '') : '';
+    } catch (e) {
+      return '';
+    } finally {
+      if (box.parentNode) box.parentNode.removeChild(box);
+    }
+  }
+
+  // doc は選択を持つ文書（selectionText と同じ引数）。マークダウン本文の選択でだけ
+  // 記法を戻し、それ以外は selectionText と同じ文字列をそのまま返す。
+  function selectionMarkdown(doc) {
+    var plain = selectionText(doc);
+    if (!plain) return '';
+    // .html-frame の中は素の html。<code> はマークダウン由来ではないので触らない。
+    if (doc && doc !== document) return plain;
+
+    var sel, range;
+    try {
+      sel = document.getSelection ? document.getSelection() : null;
+      range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    } catch (e) { return plain; }
+    if (!range) return plain;
+
+    var host = elOf(range.commonAncestorContainer);
+    if (!host || !host.closest) return plain;
+    var body = host.closest('.markdown-body');
+    // raw / diff 表示（.source-view）は既に原文そのもの。フェンスを足すと二重になる。
+    if (!body || host.closest('.source-view')) return plain;
+
+    // 選択が 1 つの code の内側に収まっているとき。複製すると code 要素ごと範囲の外へ
+    // 落ちて（部分選択の共通祖先はテキストノード）言語も分からなくなるので、素の
+    // テキストをここで包む。
+    var code = host.closest('code');
+    if (code) {
+      return code.closest('pre') ? fencedCode(plain, fenceInfo(code)) : inlineCode(plain);
+    }
+
+    // コードが混ざらない選択（＝普通の文章）は写しを作らずに返す。ここが大半の道で、
+    // 挙動もコストも従来と変わらない。
+    if (!hasCode(body, range) || plain.length > MIRROR_MAX) return plain;
+    return mirrorMarkdown(body, range) || plain;
+  }
+
   // 短いフィードバックの浮遊トースト（操作の結果をボタン無しで返す）。
   // 画面下中央に 1 つだけ作り、以降は文言を差し替えて使い回す。
   var toastEl = null, toastTimer = null;
@@ -750,6 +893,7 @@
     isFieldEl: isFieldEl,
     copyText: copyText,
     selectionText: selectionText,
+    selectionMarkdown: selectionMarkdown,
     toast: toast,
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,

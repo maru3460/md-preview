@@ -14,6 +14,10 @@
 // selectionchange まで見るとキーボード選択（Shift+矢印）でも走るが、そこまでは要らない
 // （参考にした 3 つもマウス操作だけを対象にしている）。
 //
+// クリップボードへ入れる文字は MdCommon.selectionMarkdown を通してマークダウンの
+// ソース寄りに戻す（`コード` のバッククォート・コードブロックのフェンス）。ブラウザが
+// 返す「見えている文字」のままだと、貼った先でコードが地の文に化ける。
+//
 // 成功の合図はマウスを離した位置に出すチェック 1 つ（.md-copy-tick）で、文字は出さない。
 // 失敗した時だけ MdCommon.toast で文字を出す——黙って失敗すると、コピーできたつもりの
 // まま貼りに行くことになる。
@@ -116,14 +120,21 @@
     if (!sel || sel.isCollapsed) return;
     if (inField(sel.anchorNode) || inField(sel.focusNode)) return;
 
-    var text = MdCommon.selectionText(doc);
-    if (!text) return;
+    // ジェスチャの判定は素のテキストで済ませる。mousedown で撮る prev も素なので、
+    // ここで記法を戻したものと見比べると全部「変わった」になってしまう。
+    var plain = MdCommon.selectionText(doc);
+    if (!plain) return;
     // 開始時と変わっていないなら、このジェスチャは選択を作っていない。
     // 素の mousedown は選択を畳むので、本当になぞった時は prev が空になって必ず通る
     // （同じ範囲をなぞり直した時も、間に畳まれるので通る）。残るのは
     // 「選択を保つために mousedown を preventDefault する UI」——メニュー行・タブ・
     // サイドバーのリサイザ——のクリックで、そこだけがここで落ちる。
-    if (text === g.prev) return;
+    if (plain === g.prev) return;
+
+    // クリップボードへはマークダウンのソース寄りの形で入れる（`コード` のバッククォート・
+    // コードブロックのフェンス）。見えている文字のままだと、貼った先でコードが地の文に
+    // 化ける。本文以外（raw 表示・html フレーム）では plain がそのまま返る。
+    var text = MdCommon.selectionMarkdown(doc) || plain;
 
     var x = e.clientX, y = e.clientY;
     if (frame) {
