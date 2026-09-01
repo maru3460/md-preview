@@ -241,6 +241,12 @@ fn main() {
             }
         })
         .with_ipc_handler(move |msg| {
+            // 正規の IPC はすべて自前のスクリプト（＝トップフレーム）から来る。
+            // html ファイルを描く iframe は sandbox 無しなので、その中の script も
+            // top.ipc を叩けてしまう。クリップボードもパス操作も渡さない。
+            if !is_top_frame(msg.uri()) {
+                return;
+            }
             let body = msg.body().as_str();
             match body {
                 "close" => { let _ = proxy.send_event(AppEvent::Close); }
@@ -251,6 +257,8 @@ fn main() {
                         handle_menu(verb, payload, &ipc_root);
                     } else if let Some(abs) = body.strip_prefix("watch:") {
                         watch_extra(&ipc_watcher, Path::new(abs));
+                    } else if let Some(text) = body.strip_prefix("copy:") {
+                        platform::copy_to_clipboard(text);
                     }
                 }
             }
@@ -297,8 +305,9 @@ fn main() {
 }
 
 /// 右クリックメニュー由来の IPC（`menu:<verb>:<payload>`）を処理する。
-/// 相対パス・選択テキストのコピーは JS 側で完結するので、ここに来るのは
-/// 絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つだけ。
+/// ここに来るのは絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つ——
+/// いずれも payload が「パス」なので、`resolve_target` で解決してから触る。
+/// 任意テキストのクリップボード書き込みはパス解決を通さない別の口（`copy:`）。
 fn handle_menu(verb: &str, payload: &str, root: &Path) {
     let Some(path) = resolve_target(payload, root) else { return };
     match verb {
@@ -311,6 +320,30 @@ fn handle_menu(verb: &str, payload: &str, root: &Path) {
         }
         _ => {}
     }
+}
+
+/// IPC の送信元がトップフレーム（自前のスクリプトが動く文書）か。
+///
+/// wry は `WKScriptMessage.frameInfo` の URL を `Request` の URI に載せてくる。
+/// トップは `with_url` で読んだ `mdpreview://localhost/` のままなので、そこに
+/// 完全一致するかで見る。html を描く iframe の src は必ずファイルのパス
+/// （`/rel` か `/__abs/abs`）なので一致しない。
+///
+/// 判定は必ず許可制で書く。「iframe だと分かる形だけ弾く」という否定形にすると、
+/// `about:blank` / `about:srcdoc` の無名サブフレームを通してしまう——`http::Uri` は
+/// `//` を持たない `scheme:opaque` を authority として読むので、あれらは
+/// scheme=None・path="" になり、パスだけを見る判定では素通りする。
+///
+/// これで塞げない経路が 1 つ残る。悪意ある html が `<iframe src="/">` を作ると
+/// アプリのシェルがそのフレームに読み込まれ、URL は `mdpreview://localhost/` に
+/// なる。`frameInfo` は「messageHandlers を持つフレーム」に紐づくので、そこ経由で
+/// 投げられた IPC はトップと見分けが付かない。URI では原理的に判定できないため、
+/// ここは「事故を減らす衛生」であって信頼できない html への対策ではない。
+/// 本来の防御は README のとおり「信頼できない .html を開かない」ことである。
+fn is_top_frame(uri: &wry::http::Uri) -> bool {
+    uri.scheme_str() == Some("mdpreview")
+        && uri.authority().map(|a| a.as_str()) == Some("localhost")
+        && uri.path() == "/"
 }
 
 /// メニュー操作対象の絶対パスを解決する。`id` は `?file=` と同じ識別子
@@ -389,4 +422,52 @@ fn spawn_watcher(
     // watch_extra が個別に足す。
     debouncer.watcher().watch(&root, RecursiveMode::Recursive).ok()?;
     Some(debouncer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn top(s: &str) -> bool {
+        is_top_frame(&s.parse::<wry::http::Uri>().unwrap())
+    }
+
+    #[test]
+    fn top_frame_accepts_only_the_app_page() {
+        // with_url が読む URL そのもの。query / fragment が付いても本体は同じ。
+        assert!(top("mdpreview://localhost/"));
+        assert!(top("mdpreview://localhost"));  // path は "/" に正規化される
+        assert!(top("mdpreview://localhost/?file=a.md"));
+        assert!(top("mdpreview://localhost/#sec"));
+    }
+
+    #[test]
+    fn html_iframes_are_rejected() {
+        // html を描く iframe。src は asset_url が組むファイルのパス。
+        assert!(!top("mdpreview://localhost/docs/page.html"));
+        assert!(!top("mdpreview://localhost/__abs/Users/me/page.html"));
+        assert!(!top("mdpreview://localhost/a.html?x=1"));
+    }
+
+    #[test]
+    fn anonymous_subframes_are_rejected() {
+        // これを通すのが「パスだけ見る」判定の穴だった。`http::Uri` は `//` の無い
+        // `scheme:opaque` を authority として読むので、どれも path == "" になる。
+        for u in ["about:blank", "about:srcdoc", "javascript:void(0)"] {
+            assert_eq!(u.parse::<wry::http::Uri>().unwrap().path(), "", "{u}");
+            assert!(!top(u), "{u}");
+        }
+        // パスだけの相対 URI も、トップとは名乗れない。
+        assert!(!top("/"));
+        assert!(!is_top_frame(&wry::http::Uri::default()));
+    }
+
+    #[test]
+    fn other_origins_are_rejected() {
+        assert!(!top("mdpreview://evil/"));
+        assert!(!top("https://localhost/"));
+        // file:/// は http::Uri がパースできない（authority が空）。wry がここへ
+        // 届ける前に捨てるので、到達しないことだけ記録しておく。
+        assert!("file:///".parse::<wry::http::Uri>().is_err());
+    }
 }

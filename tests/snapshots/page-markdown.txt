@@ -18,6 +18,7 @@
 <script nonce="NONCE">…</script>
 <script nonce="NONCE">…</script>
 <script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
 
 </head>
 <body>

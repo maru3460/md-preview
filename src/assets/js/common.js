@@ -78,14 +78,14 @@
         // ため、コード本文はこれで元ソースのまま取れる。
         var clone = code.cloneNode(true);
         clone.querySelectorAll('.md-cmt-badge, .md-cmt-embed, .md-cmt-badge-holder').forEach(function(n) { n.remove(); });
-        navigator.clipboard.writeText(clone.textContent).then(function() {
+        copyText(clone.textContent, function() {
           btn.textContent = 'Copied';
           btn.classList.add('copied');
           setTimeout(function() {
             btn.textContent = 'Copy';
             btn.classList.remove('copied');
           }, 1200);
-        }).catch(function() {
+        }, function() {
           btn.textContent = 'Failed';
           setTimeout(function() { btn.textContent = 'Copy'; }, 1200);
         });
@@ -431,6 +431,13 @@
       if (window.MdMenu) MdMenu.close();
     }, true);
 
+    // 選択即コピー。iframe 内の mouseup も親には届かないので、ここで同じ口へ繋ぐ
+    // （右クリックメニューやキー転送と同じ「親へ委譲」の形）。ここは親のスクリプト
+    // なので、この先で叩く window.ipc / navigator はトップフレームのものになる。
+    // frame も渡す。iframe 内の座標はその文書のビューポート基準なので、合図を親の
+    // 画面に出すには iframe の位置ぶん足す必要がある（右クリック転送と同じ換算）。
+    if (window.MdAutoCopy) MdAutoCopy.bindDoc(doc, frame);
+
     doc.addEventListener('keydown', function(e) {
       // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 /
       // b=ファイルツリー開閉 / w=close / f=検索)だけ親へ委譲する。
@@ -585,6 +592,82 @@
     open[0].close();
   }, true);
 
+  // ── クリップボードとトースト ──────────────────────────────────
+  // 書き込み口はここ 1 つに寄せる（コードブロックの Copy・右クリックの「コピー」・
+  // コメントの全部コピー・選択即コピーが全部ここを通る）。
+  //
+  // navigator.clipboard を先に試し、駄目なら Rust（NSPasteboard）へ回す。
+  // 以前は隠し textarea + execCommand で代替していたが、あれは textarea を select()
+  // するのでユーザーの選択範囲をその場で壊す——選択即コピーでは致命的なので捨てた。
+  //
+  // mdpreview:// は実測で secure context 扱いになり navigator.clipboard も生えている。
+  // 落ちるのは「ユーザー ジェスチャの外から呼ぶと NotAllowedError で reject」の方で、
+  // IPC はその受け皿。死にコードではなく、ジェスチャの無いコピーが必ず通る道である。
+  // IPC は投げっぱなしなので、その経路の done() は成功の確認ではなく送信の確認。
+  function copyText(text, done, fail) {
+    if (!text) { if (fail) fail(); return; }
+    var viaIpc = function() {
+      // wry は IPC の本文を CStr で読むので、NUL を含む文字列はそこで黙って切れる。
+      // 一部だけ入れて成功と言うより、失敗として返す（NUL 入りのテキストファイルを
+      // ソース表示でなぞると起こりうる）。
+      if (!window.ipc || text.indexOf('\u0000') >= 0) { if (fail) fail(); return; }
+      window.ipc.postMessage('copy:' + text);
+      if (done) done();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() { if (done) done(); }).catch(viaIpc);
+    } else {
+      viaIpc();
+    }
+  }
+
+  // 選択中のテキスト（前後の空白だけなら空文字）。
+  // .html-frame の中の選択は親の getSelection に出てこないので、親が空なら
+  // iframe の文書も見る。doc を渡せばその文書だけを見る。
+  //
+  // フレームを覗くときは hasFocus() で「いま操作しているフレーム」に絞る。WebKit は
+  // フォーカスが外れても選択を保持するので、これが無いと html を見た後に別の場所を
+  // 右クリックした時、ずっと前の選択を拾って「選んでいないテキスト」をコピーする。
+  // search.js の selectedText が同じ理由で同じガードを持つ。
+  function selectionText(doc) {
+    var pick = function(d) {
+      try {
+        var s = d && d.getSelection ? String(d.getSelection()) : '';
+        return s && s.trim() ? s : '';
+      } catch (e) { return ''; }
+    };
+    if (doc) return pick(doc);
+    var own = pick(document);
+    if (own) return own;
+    var frames = document.querySelectorAll('iframe.html-frame');
+    for (var i = 0; i < frames.length; i++) {
+      var fd;
+      try { fd = frames[i].contentDocument; } catch (e) { continue; } // 外部遷移で cross-origin
+      if (!fd || !fd.hasFocus()) continue;
+      var got = pick(fd);
+      if (got) return got;
+    }
+    return '';
+  }
+
+  // 短いフィードバックの浮遊トースト（操作の結果をボタン無しで返す）。
+  // 画面下中央に 1 つだけ作り、以降は文言を差し替えて使い回す。
+  var toastEl = null, toastTimer = null;
+  function toast(msg) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'md-toast';
+      // スクリーンリーダーにも結果（コピー/削除/巡回位置）を伝える。
+      toastEl.setAttribute('role', 'status');
+      toastEl.setAttribute('aria-live', 'polite');
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { if (toastEl) toastEl.classList.remove('show'); }, 1500);
+  }
+
   // フォーカスが文字入力欄（素キーを横取りしてはいけない要素）に乗っているか。
   // iframe 転送・スクロール素キー・フォーカス移譲の各所で同じ判定を使うため一本化する。
   function isFieldEl(el) {
@@ -665,6 +748,9 @@
     registerOverlay: registerOverlay,
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
+    copyText: copyText,
+    selectionText: selectionText,
+    toast: toast,
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,
     idToAbs: idToAbs,

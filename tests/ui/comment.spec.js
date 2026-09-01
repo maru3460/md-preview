@@ -443,7 +443,7 @@ test('1 万行超のソースではコメントモード中でも j / k がス�
     await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
     await expect(page.locator('.md-cmt-hint')).toContainText('大きなファイルなので行コメントはできません');
     // 案内はサイドバーの常設ヒントに一本化した（トーストは出さない）。
-    await expect(page.locator('.md-cmt-toast')).toHaveCount(0);
+    await expect(page.locator('.md-toast')).toHaveCount(0);
 
     const top = () => page.evaluate(() => document.getElementById('preview-pane').scrollTop);
     expect(await top()).toBe(0);

@@ -1518,8 +1518,9 @@ body.md-cmt-mode .source-main .copy-btn {
     border-radius: 2px;
 }
 
-/* キーボード操作のフィードバック・トースト（コピー完了 / n・p のジャンプ位置など）。 */
-.md-cmt-toast {
+/* 短いフィードバックの浮遊トースト（選択即コピー / コメントの全部コピー / 削除 /
+   n・p のジャンプ位置など）。画面下中央は herdr の toast.clipboard 既定位置に合わせる。 */
+.md-toast {
     position: fixed;
     left: 50%;
     bottom: 24px;
@@ -1540,9 +1541,51 @@ body.md-cmt-mode .source-main .copy-btn {
     transition: opacity 0.15s, transform 0.15s;
 }
 
-.md-cmt-toast.show {
+.md-toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+/* 選択即コピーの合図。マウスを離した位置にチェックだけを出す。
+   文字を持たないのは、読ませる必要が無いぶん短く消せるから——なぞるたびに出るものを
+   画面下端の文字にすると、そのたび読み筋から目を振ることになる。
+   失敗した時だけは .md-toast で文字を出す（黙って失敗させない）。 */
+.md-copy-tick {
+    position: fixed;
+    /* ⌘P のバックドロップ(1300)とヘルプ(1200)より上。合図が隠れると意味が無い。 */
+    z-index: 1350;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--md-accent, Highlight);
+    /* 白固定にすると、アクセントが淡いダークテーマ(terminal / nord / rose-pine /
+       blueprint / dracula / gruvbox)でコントラストが 2.5:1 を切りチェックが潰れる。
+       Canvas ならテーマの color-scheme に従って暗い地では暗く、明るい地では白になる。 */
+    color: Canvas;
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--md-accent, Highlight) 45%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.4);
+    transition: opacity 0.1s, transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.5);
+}
+
+.md-copy-tick.show {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* 見た目には出さず、読み上げにだけ渡す文字。 */
+.md-a11y {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
 }
 
 /* パネル項目ホバー時に本文側を一瞬強調する。 */

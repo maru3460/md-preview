@@ -1,6 +1,7 @@
 use std::path::Path;
 
-/// 右クリックメニュー由来のクリップボード書き込み（絶対パス）。
+/// クリップボードへの書き込み。ページ側の `MdCommon.copyText` が
+/// navigator.clipboard を使えなかった時の受け皿で、絶対パスのコピーもここへ来る。
 /// IPC ハンドラ（macOS では WKWebView がメインスレッドで配信）から呼ぶ前提。
 #[cfg(target_os = "macos")]
 pub fn copy_to_clipboard(text: &str) {

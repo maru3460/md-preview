@@ -6,7 +6,7 @@
 // 対象ユニットは html.rs が振った [data-src-line] を持つ要素（見出し・段落・リスト項目・
 // 表の行・引用・コードブロック）。クリックで最寄り 1 ユニット、ドラッグで複数行レンジ。
 //
-// 安全性: クリップボード書き込みは navigator.clipboard で JS 完結（IPC を介さない）。
+// 安全性: クリップボード書き込みは MdCommon.copyText に一本化している。
 // data-src-line は数値のみで、コメント本文/引用は textContent 経由でしか DOM に入れない。
 (function() {
   // ── 状態（配列がコメントの真実） ──────────────────────────────
@@ -352,21 +352,9 @@
   }
 
   // 短いフィードバックの浮遊トースト（キーボード操作の結果をボタン無しで返す）。
-  var toastEl = null, toastTimer = null;
-  function toast(msg) {
-    if (!toastEl) {
-      toastEl = document.createElement('div');
-      toastEl.className = 'md-cmt-toast';
-      // スクリーンリーダーにも結果（コピー/削除/巡回位置）を伝える。
-      toastEl.setAttribute('role', 'status');
-      toastEl.setAttribute('aria-live', 'polite');
-      document.body.appendChild(toastEl);
-    }
-    toastEl.textContent = msg;
-    toastEl.classList.add('show');
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function() { if (toastEl) toastEl.classList.remove('show'); }, 1500);
-  }
+  // 実体は MdCommon.toast（選択即コピーと同じものを共有する）。呼び出しが多いので
+  // ここでは名前だけ短く借りる。
+  function toast(msg) { MdCommon.toast(msg); }
 
   // ── マーカー描画（配列 → DOM） ────────────────────────────────
   // コメント id -> マーカーを付けた要素。スクロールごとの inview 判定で使い回す
@@ -926,23 +914,7 @@
       done = function() { toast('全部コピーしました'); };
       fail = function() { toast('コピーに失敗しました'); };
     }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(function() { fallbackCopy(text, done, fail); });
-    } else {
-      fallbackCopy(text, done, fail);
-    }
-  }
-  function fallbackCopy(text, done, fail) {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    ta.remove();
-    if (ok) { done(); } else if (fail) { fail(); }
+    MdCommon.copyText(text, done, fail);
   }
 
   // ── 「+」ハンドル（モード中、ホバー中ユニットの左に出す） ─────

@@ -20,6 +20,7 @@
 <script nonce="NONCE">…</script>
 <script nonce="NONCE">…</script>
 <script nonce="NONCE">…</script>
+<script nonce="NONCE">…</script>
 </head>
 <body class="folder-mode">
 <div class="folder-layout">
