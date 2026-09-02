@@ -201,7 +201,7 @@
     // ファイル切替ではないので通さない（タブが増えたり読み位置が動いたりしない）。
     if (!preserveScroll && window.MdTabs) MdTabs.onOpen(relPath);
     // 一度開いたタブへ戻る時は、そのタブに残した読み位置から再開する。
-    var savedScroll = preserveScroll ? pane.scrollTop
+    var savedScroll = preserveScroll ? MdCommon.readScroll()
       : (window.MdTabs ? MdTabs.scrollFor(relPath) : 0);
     currentFilePath = relPath;
     // root の外のファイルは root の再帰監視に載らないので、個別に監視を頼む。
@@ -241,7 +241,9 @@
         // 黙って無反応にならないようメッセージを出す。
         if (html == null) { showLoadError(pane, relPath); return; }
         pane.innerHTML = html;
-        pane.scrollTop = savedScroll;
+        // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
+        // （実際に戻すのは中身の load 後、common.js の bindFrame）。
+        MdCommon.restoreScroll(savedScroll);
         // html 表示（iframe）の相対リンクは、iframe 内遷移ではなく親のプレビュー遷移に
         // 回す（サイドバーの選択やコメントの現在ファイルを同期させるため）。
         MdCommon.hydrate(pane, { onLinkClick: frameLinkClick });

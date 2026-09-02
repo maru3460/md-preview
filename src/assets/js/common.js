@@ -419,6 +419,17 @@
     if (doc.__mdBound) return;
     doc.__mdBound = true;
 
+    // タブに残した読み位置へ戻す。ここまで待たないと中身の高さが決まらず、
+    // clamp されて 0 に落ちる。opacity は syncFrameBackground が次のフレームで
+    // 開けるので、先に位置を決めておけば移動が見えない。
+    // 消費したら捨てる ＝ iframe 内リンクで別の文書へ移った先へは持ち込まない。
+    var scrollTo = frame.__mdScrollTo;
+    frame.__mdScrollTo = 0;
+    if (scrollTo) {
+      var frameSc = doc.scrollingElement || doc.documentElement;
+      if (frameSc) frameSc.scrollTop = scrollTo;
+    }
+
     syncFrameBackground(frame);
 
     // iframe 内の mousedown / scroll は親 document には届かないので、contextmenu.js が
@@ -536,6 +547,54 @@
     return document.querySelector('#preview-pane')
       || document.scrollingElement
       || document.documentElement;
+  }
+
+  // ── 読み位置（タブ / ホットリロードが持ち回る値） ──────────────
+  // html 表示だけスクロールの主体が違う。.html-frame が画面 1 枚ぶんを占めて
+  // 中の文書がスクロールするので、親の #preview-pane は常に 0 のまま動かない。
+  // 呼ぶ側（tabs.js の saveActiveState / folder.js の loadPreview）が md と html を
+  // 場合分けせずに済むよう、「いま誰がスクロールしているか」をここへ集める。
+
+  // いま出ている html の iframe。html 表示でなければ null。
+  function htmlFrame() {
+    return document.querySelector('#preview-pane iframe.html-frame');
+  }
+
+  // iframe の中のスクロール要素。本物の文書がまだ来ていない（挿入直後の
+  // about:blank）／ cross-origin なら null。
+  function frameScroller(frame) {
+    try {
+      var d = frame.contentDocument;
+      if (!d || d.URL === 'about:blank') return null;
+      return d.scrollingElement || d.documentElement;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // いまの読み位置。
+  function readScroll() {
+    var frame = htmlFrame();
+    if (!frame) {
+      var p = getScroller();
+      return p ? p.scrollTop : 0;
+    }
+    var sc = frameScroller(frame);
+    // load 前に訊かれたら、これから戻すはずの値を返す。ここで 0 を返すと
+    // 「開いた直後に別タブへ移る」だけで復元待ちの位置が消える。
+    return sc ? sc.scrollTop : (frame.__mdScrollTo || 0);
+  }
+
+  // 読み位置を戻す。html は中身が load されるまで代入しても効かないので、
+  // iframe へ預けて bindFrame に消費させる。
+  function restoreScroll(top) {
+    var frame = htmlFrame();
+    if (!frame) {
+      var p = getScroller();
+      if (p) p.scrollTop = top || 0;
+      return;
+    }
+    frame.__mdScrollTo = top || 0;
   }
 
   // ファイルツリー（サイドバー）にフォーカスがあるか。ツリー操作の起点判定。
@@ -886,6 +945,8 @@
     runDrawio: runDrawio,
     wireHtmlFrames: wireHtmlFrames,
     getScroller: getScroller,
+    readScroll: readScroll,
+    restoreScroll: restoreScroll,
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
     registerOverlay: registerOverlay,

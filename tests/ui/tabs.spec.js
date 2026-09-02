@@ -76,6 +76,45 @@ test('タブごとに読み位置が復元される', async ({ page }) => {
   await expect.poll(() => pane(page)).toBe(600);
 });
 
+/// iframe の中の読み位置。html 表示でない間は -1（呼ばないこと）。
+async function frameTop(page) {
+  return page.evaluate(() => {
+    const f = document.querySelector('iframe.html-frame');
+    if (!f || !f.contentDocument) return -1;
+    const d = f.contentDocument;
+    return (d.scrollingElement || d.documentElement).scrollTop;
+  });
+}
+
+// html は iframe の中がスクロール主体で、親ペインは 1 画面ぶんぴったりなので
+// 常に 0 のまま動かない。ペインだけ見ていると保存する値が無く、戻ると先頭に落ちる。
+test('html 表示（iframe）でもタブごとに読み位置が復元される', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'page.html');
+  // 中身が縦に伸びるまで待つ（伸びる前に測ると復元先が作れない）。
+  await expect.poll(() => page.evaluate(() => {
+    const f = document.querySelector('iframe.html-frame');
+    if (!f || !f.contentDocument) return 0;
+    const d = f.contentDocument;
+    const el = d.scrollingElement || d.documentElement;
+    return el.scrollHeight - el.clientHeight;
+  })).toBeGreaterThan(600);
+  await page.evaluate(() => {
+    const d = document.querySelector('iframe.html-frame').contentDocument;
+    (d.scrollingElement || d.documentElement).scrollTop = 600;
+  });
+  expect(await frameTop(page)).toBe(600);
+
+  // 別タブへ移る。ここで読み位置を拾えていないと、戻ったとき 0 になる。
+  await openFile(page, 'a.md');
+  await expect.poll(() => pane(page)).toBe(0);
+
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('page.html');
+  // iframe を作り直して load を待つぶん、復元は本文より遅れて届く。
+  await expect.poll(() => frameTop(page)).toBe(600);
+});
+
 test('タブごとに Raw / 差分の状態が復元される', async ({ page }) => {
   await openFolder(page);
   const raw = page.locator('.md-raw-toggle');

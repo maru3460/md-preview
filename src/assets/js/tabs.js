@@ -20,7 +20,6 @@
   // onOpen を呼ぶので、この印が無いと自分の呼び出しで状態を二重に書き換える。
   var switching = false;
 
-  function pane() { return document.getElementById('preview-pane'); }
   function bar() { return document.getElementById('tabbar'); }
 
   function indexOf(path) {
@@ -51,8 +50,7 @@
   function saveActiveState() {
     var t = tabs[activeIdx];
     if (!t) return;
-    var p = pane();
-    if (p) t.scroll = p.scrollTop;
+    t.scroll = MdCommon.readScroll();
     t.mode = currentMode();
   }
 
