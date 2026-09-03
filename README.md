@@ -23,8 +23,24 @@ cargo install --path .
 ## アンインストール
 
 ```sh
-cargo uninstall md-preview
+md uninstall
 ```
+
+`md` はディスクの 4 か所にものを置きます。`cargo uninstall md-preview` は本体しか消さないので、残りは `md uninstall` でまとめて片付けます。
+
+| 場所                    | 中身                                               |
+| ----------------------- | -------------------------------------------------- |
+| `~/.config/md-preview/` | テーマ設定・ユーザー CSS・起動用のバンドル（下記） |
+| `~/Library/WebKit/md`   | UI の状態（オンボーディング済みフラグなど）        |
+| `~/Library/Caches/md`   | WebKit のキャッシュ                                |
+| `~/.cargo/bin/md`       | 本体（`cargo uninstall md-preview` に委譲します）  |
+
+本体の削除を cargo に任せるのは、cargo が「どの crate がどの bin を置いたか」を台帳に記録しているためです。バイナリだけ先に消すと台帳とズレて、`cargo install --list` に残り続けます。
+
+`~/Library` 以下の 2 つは、`CFBundleIdentifier` を持たないアプリの既定として**実行ファイル名がそのままディレクトリ名になる**場所です。`md` 専用の名前空間ではないので、`md` という名前の別のプログラムが同じ場所を使っている場合は一覧に出さず、触りません。
+
+> [!NOTE]
+> `~/.config/md-preview/app/` には 500 バイト弱の `Info.plist` と本体への symlink を置き、起動時にそこから自分を起動し直しています。macOS に「アプリ」として認識されないと、日本語入力の変換候補ウィンドウが出ないためです。
 
 ## 使い方
 
@@ -284,7 +300,7 @@ draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGrap
 ```
 
 > [!NOTE]
-> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「インストール」の `cargo install --path .` で別途セットアップしてください。プラグインを消しても `md` コマンドは残るので、本体も消すには `cargo uninstall md-preview` を実行してください。
+> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「インストール」の `cargo install --path .` で別途セットアップしてください。プラグインを消しても `md` コマンドは残るので、本体も消すには `md uninstall`（上記「[アンインストール](#アンインストール)」）を実行してください。
 
 ## ライセンス
 
