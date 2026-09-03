@@ -8,9 +8,18 @@ pub use crate::urlpath::{file_id, percent_decode};
 
 type Response = wry::http::Response<Cow<'static, [u8]>>;
 
+/// すべての応答に付ける。WebKit にディスクキャッシュを作らせないため。
+///
+/// 付けないと、ヘッダを見て貯めるかどうかをブラウザが自分で決める（実測で
+/// `~/Library/Caches/md` が 15MB まで育っていた）。ここで貯める価値は無い:
+/// vendor の JS はバイナリ埋め込みでメモリから配っており、キャッシュから読むより速い。
+/// むしろ古い内容が返ってホットリロードが効かなくなる方が困る。
+const NO_STORE: (&str, &str) = ("Cache-Control", "no-store");
+
 pub fn ok_response(content_type: &str, body: Vec<u8>) -> Response {
     wry::http::Response::builder()
         .header("Content-Type", content_type)
+        .header(NO_STORE.0, NO_STORE.1)
         .body(Cow::Owned(body))
         .unwrap()
 }
@@ -18,6 +27,7 @@ pub fn ok_response(content_type: &str, body: Vec<u8>) -> Response {
 pub fn not_found_response() -> Response {
     wry::http::Response::builder()
         .status(404)
+        .header(NO_STORE.0, NO_STORE.1)
         .body(Cow::Borrowed(b"Not Found" as &[u8]))
         .unwrap()
 }
@@ -807,6 +817,15 @@ fn handle_has_md(rel: &str, root_dir: &Path) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_response_forbids_disk_caching() {
+        // 応答の生成口はこの 2 つだけ。どちらから出ても no-store が付く。
+        let ok = ok_response("text/plain", b"hi".to_vec());
+        assert_eq!(ok.headers().get("Cache-Control").unwrap(), "no-store");
+        let nf = not_found_response();
+        assert_eq!(nf.headers().get("Cache-Control").unwrap(), "no-store");
+    }
 
     #[test]
     fn builtin_lib_served_for_known_names() {
