@@ -108,6 +108,15 @@ fn run_terminal_command(args: &[String]) -> bool {
         return true;
     }
 
+    // `md uninstall` — md が置いた設定・データを片付ける。`theme` と同じく、
+    // `uninstall` という名前のファイルに邪魔されないようパス解決より前に処理する
+    // （そういうファイルを開きたいときは `md ./uninstall`）。
+    // ここで処理を終えるので、この後ろのバンドルへの乗り換えも通らない。
+    if args.len() >= 2 && args[1] == "uninstall" {
+        md_preview::uninstall::run(&args[2..]);
+        return true;
+    }
+
     // `md --html <file> [theme]` — ウィンドウを開かず、描画したページを stdout へ。
     // 省略可能な theme 引数は、ユーザーが保存した使用中テーマに触れずに描画対象の
     // テーマだけを上書きするので、スクリーンショットツールが設定を乱さずライト/

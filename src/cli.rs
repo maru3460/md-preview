@@ -20,6 +20,7 @@ md - 高速Markdownプレビュー
   md <a.md> <b.md>…   複数のファイルをタブで開きます（先頭が最初に見えるタブ）
   cat file.md | md    標準入力（パイプ）からMarkdownを読みます
   md theme [<name>]   テーマ一覧を表示、または <name> に切り替えます
+  md uninstall        md が置いた設定・データを消します（本体は cargo に任せます）
   md --sample         サンプルのMarkdownを標準出力に出します
   md --help, -h       このヘルプを表示します
   md --version, -V    バージョンを表示します
@@ -206,7 +207,7 @@ mod tests {
 
     #[test]
     fn usage_lists_every_subcommand() {
-        for flag in ["--sample", "--help", "--version", "theme", "--detach", "--no-detach"] {
+        for flag in ["--sample", "--help", "--version", "theme", "uninstall", "--detach", "--no-detach"] {
             assert!(USAGE.contains(flag), "{flag} が使い方に無い");
         }
     }

@@ -12,6 +12,7 @@ pub mod embed;
 pub mod html;
 pub mod request;
 pub mod theme;
+pub mod uninstall;
 pub mod urlpath;
 
 /// md がユーザーごとの持ち物を置く場所 `~/.config/md-preview`。テーマ設定・
