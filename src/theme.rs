@@ -85,16 +85,12 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-fn config_dir() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config/md-preview"))
-}
-
 fn user_themes_dir() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("themes"))
+    crate::config_dir().map(|d| d.join("themes"))
 }
 
 fn active_theme_path() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("active-theme"))
+    crate::config_dir().map(|d| d.join("active-theme"))
 }
 
 fn builtin(name: &str) -> Option<(&'static str, Appearance)> {
@@ -161,7 +157,7 @@ pub fn read_active_name() -> String {
 }
 
 pub fn write_active_name(name: &str) -> std::io::Result<()> {
-    let dir = config_dir()
+    let dir = crate::config_dir()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set"))?;
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("active-theme"), name)

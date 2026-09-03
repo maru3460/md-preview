@@ -151,6 +151,12 @@ fn main() {
 
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
+    // macOS で日本語入力の変換候補パネルを出すため、最小のバンドルへ乗り換える
+    // （成功するとここから戻らない）。ウィンドウを開かない経路を通したくないので
+    // run_terminal_command と引数チェックの後、自己デタッチの判定より前に置く。
+    // ここより後ろだと、乗り換え後の current_exe() を detach_self が使えない。
+    md_preview::bundle::relaunch_in_flat_bundle();
+
     // ここから先はウィンドウを開く経路。コマンドを終了せずに待たせると、
     // 待ち時間に上限のある呼び出し元（エージェントのコマンド実行ツールなど）が
     // 上限に達したときにプロセスグループごと畳み、ウィンドウまで消えてしまう。

@@ -5,6 +5,7 @@
 //! wry / tao / objc2 に触れる platform.rs と main.rs はバイナリ側に残す。
 
 pub mod app_config;
+pub mod bundle;
 pub mod cli;
 pub mod diff;
 pub mod embed;
@@ -13,11 +14,19 @@ pub mod request;
 pub mod theme;
 pub mod urlpath;
 
+/// md がユーザーごとの持ち物を置く場所 `~/.config/md-preview`。テーマ設定・
+/// ユーザー CSS・IME 用の flat bundle（[`bundle`]）が同居する。
+///
+/// 定義元をここ 1 つに寄せている。同じパスを組み立てる箇所が増えるたびに
+/// 「掃除するときにどこを消せばいいか」の答えが散るため。
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config/md-preview"))
+}
+
 /// ユーザーの追加スタイル `~/.config/md-preview/style.css`。無ければ空。
 /// base.css → テーマ → これ、の順に読み込まれる最後の層。
 pub fn user_style_css() -> String {
-    std::env::var("HOME")
-        .ok()
-        .and_then(|home| std::fs::read_to_string(format!("{}/.config/md-preview/style.css", home)).ok())
+    config_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("style.css")).ok())
         .unwrap_or_default()
 }
