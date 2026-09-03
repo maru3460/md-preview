@@ -23,13 +23,7 @@ md - 高速Markdownプレビュー
   md uninstall        md が置いた設定・データを消します（本体は cargo に任せます）
   md --sample         サンプルのMarkdownを標準出力に出します
   md --help, -h       このヘルプを表示します
-  md --version, -V    バージョンを表示します
-
-オプション:
-  --detach            ウィンドウを開いたら即座にコマンドを終了します
-  --no-detach         ウィンドウを閉じるまでコマンドを終了しません
-                      （既定: 端末から起動したときは --no-detach、
-                       それ以外は --detach）";
+  md --version, -V    バージョンを表示します";
 
 fn hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     let h = hex.strip_prefix('#')?;
@@ -207,7 +201,7 @@ mod tests {
 
     #[test]
     fn usage_lists_every_subcommand() {
-        for flag in ["--sample", "--help", "--version", "theme", "uninstall", "--detach", "--no-detach"] {
+        for flag in ["--sample", "--help", "--version", "theme", "uninstall"] {
             assert!(USAGE.contains(flag), "{flag} が使い方に無い");
         }
     }

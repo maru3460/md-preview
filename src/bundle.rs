@@ -73,8 +73,6 @@ pub fn relaunch_in_flat_bundle() {
     }
 
     use std::os::unix::process::CommandExt;
-    // 引数は「フィルタ後の args」ではなく生のものを渡す。--detach / --no-detach は
-    // 呼び出し元で抜き取られているので、フィルタ後を渡すと乗り換えた先で消える。
     // stdin/stdout/stderr と process_group は触らない。exec は fd をそのまま
     // 引き継ぐので、パイプ入力も端末も繋がったまま乗り換わる。
     let _ = std::process::Command::new(app_dir.join(BIN_NAME))

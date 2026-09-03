@@ -121,6 +121,9 @@ pub fn resolve(name: &str) -> (String, Appearance) {
     if let Some((css, ap)) = builtin(name) {
         return (css.to_string(), ap);
     }
+    // この警告が届くのは `md --html` だけ。窓を開く経路では resolve が走るのは
+    // デタッチ後の子で、その stderr は /dev/null（親に繋ぐと OS のログが混ざるため）。
+    // 設定画面でテーマを扱えるようにするとき（#38）に、窓の中で見せる形へ移す。
     eprintln!("md: '{}' というテーマがないため 'default' を使用します", name);
     (DEFAULT_THEME_CSS.to_string(), Appearance::Auto)
 }

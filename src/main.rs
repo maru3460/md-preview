@@ -37,9 +37,17 @@ enum AppEvent {
 /// これが無いと、子がまた孫を起動して止まらない。
 const DETACHED_ENV: &str = "MD_DETACHED";
 
+/// デタッチをやめて前景で開く逃げ道。窓を持つプロセスの panic や出力は
+/// デタッチすると /dev/null へ行くので、それを読みたい開発時のためにある。
+/// フラグではなく環境変数なのは、人が日常で使うものではないから（`MD_NO_BUNDLE`
+/// と同じ扱い）。
+const NO_DETACH_ENV: &str = "MD_NO_DETACH";
+
 /// 自分自身を別のプロセスグループで起動し直す。子の起動に成功したら true を返し、
 /// 親はそのまま終了する。自分の実行ファイルが辿れないなど切り離せない事情がある
 /// ときは false を返し、前景での表示に落とす（何も出ないより開いた方がよい）。
+///
+/// `targets` は親が検証し、そのまま子へ渡す引数（実行ファイル名を除いた argv）。
 fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBuf>) -> bool {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
@@ -56,8 +64,16 @@ fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBu
         let _ = app_config::plan_paths(targets, current_dir);
     }
 
+    // 子の口は 3 つとも /dev/null にする。端末へ繋ぐと、窓を持つプロセスが吐く
+    // AppKit / 入力メソッドのログ（IMKCFRunLoopWakeUpReliable など）が md の名前で
+    // 混ざる。パイプへ繋ぐと、握ったままウィンドウが生き続けて呼び出し元が EOF 待ちで
+    // 戻らなくなる。人に見せる価値があるのは「窓が出ない」エラーだけで、それは上の
+    // plan_paths と下の spool_stdin、それに main の引数チェックで親が出し切っている。
+    //
+    // 子へ渡すのは env::args() の取り直しではなく、上で検証した targets そのもの。
+    // 取り直すと「検証したもの」と「渡すもの」が別々に育って食い違える。
     let mut cmd = Command::new(exe);
-    cmd.args(std::env::args().skip(1))
+    cmd.args(targets)
         .env(DETACHED_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -134,17 +150,7 @@ fn run_terminal_command(args: &[String]) -> bool {
 }
 
 fn main() {
-    // デタッチ指定はどの位置に書いてもよいので、先に抜き取っておく。
-    // 以降の引数の数え方は従来どおりでよくなる。
-    let mut args: Vec<String> = Vec::new();
-    let mut detach_flag: Option<bool> = None;
-    for (i, arg) in std::env::args().enumerate() {
-        match arg.as_str() {
-            "--detach" if i > 0 => detach_flag = Some(true),
-            "--no-detach" if i > 0 => detach_flag = Some(false),
-            _ => args.push(arg),
-        }
-    }
+    let args: Vec<String> = std::env::args().collect();
 
     if run_terminal_command(&args) {
         return;
@@ -166,17 +172,15 @@ fn main() {
     // ここより後ろだと、乗り換え後の current_exe() を detach_self が使えない。
     md_preview::bundle::relaunch_in_flat_bundle();
 
-    // ここから先はウィンドウを開く経路。コマンドを終了せずに待たせると、
-    // 待ち時間に上限のある呼び出し元（エージェントのコマンド実行ツールなど）が
-    // 上限に達したときにプロセスグループごと畳み、ウィンドウまで消えてしまう。
-    // そこで自分自身を別のプロセスグループで起動し直し、親は即座に終了する。
-    // 端末から人が叩いたときは前景のままにして、Ctrl-C で閉じられる形を保つ。
-    if std::env::var_os(DETACHED_ENV).is_none() {
-        let detach = detach_flag.unwrap_or_else(|| !std::io::stdout().is_terminal());
-        let targets: &[String] = if args.len() > 1 { &args[1..] } else { &[] };
-        if detach && detach_self(stdin_mode, targets, &current_dir) {
-            return;
-        }
+    // ここから先はウィンドウを開く経路。前景で待たせると、待ち時間に上限のある
+    // 呼び出し元（エージェントのコマンド実行ツールなど）が上限に達したときに
+    // プロセスグループごと畳み、ウィンドウまで消えてしまう。人が叩いたときも「開いて
+    // 終わり」でプロンプトが返る方が自然なので、stdout が端末かどうかで挙動を分けない。
+    if std::env::var_os(DETACHED_ENV).is_none()
+        && std::env::var_os(NO_DETACH_ENV).is_none()
+        && detach_self(stdin_mode, &args[1..], &current_dir)
+    {
+        return;
     }
 
     let custom_css = md_preview::user_style_css();
