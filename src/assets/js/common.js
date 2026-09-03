@@ -410,6 +410,30 @@
     });
   }
 
+  // タブから戻ってきた読み位置を iframe の中へ戻す。
+  //
+  // 見えるようになってから動かす。opacity:0 のうちに中の文書をスクロールさせると、
+  // WKWebView は動かした先を塗らないまま合成して、そこから下が真っ白になる
+  // （実機だけで出る。手でスクロールし直すと直る＝塗り直しの取りこぼし）。
+  // syncFrameBackground が次のフレームで opacity を開けるので、そのさらに次の
+  // フレーム——中身が一度塗られたあと——で動かす。先頭が 1 フレーム見えるが、
+  // opacity のフェード中なので移動は目に付かない。
+  function restoreFrameScroll(frame) {
+    var top = frame.__mdScrollTo;
+    if (!top) return;
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        // 消してから戻す ＝ iframe 内リンクで別の文書へ移った先へは持ち込まない。
+        frame.__mdScrollTo = 0;
+        try {
+          var d = frame.contentDocument;
+          var sc = d && (d.scrollingElement || d.documentElement);
+          if (sc) sc.scrollTop = top;
+        } catch (e) { /* cross-origin / 差し替え済み: 復元は諦める */ }
+      });
+    });
+  }
+
   function bindFrame(frame, opts) {
     var doc;
     try { doc = frame.contentDocument; } catch (e) { return; } // 外部遷移などで cross-origin
@@ -420,17 +444,10 @@
     doc.__mdBound = true;
 
     // タブに残した読み位置へ戻す。ここまで待たないと中身の高さが決まらず、
-    // clamp されて 0 に落ちる。opacity は syncFrameBackground が次のフレームで
-    // 開けるので、先に位置を決めておけば移動が見えない。
-    // 消費したら捨てる ＝ iframe 内リンクで別の文書へ移った先へは持ち込まない。
-    var scrollTo = frame.__mdScrollTo;
-    frame.__mdScrollTo = 0;
-    if (scrollTo) {
-      var frameSc = doc.scrollingElement || doc.documentElement;
-      if (frameSc) frameSc.scrollTop = scrollTo;
-    }
-
+    // clamp されて 0 に落ちる。実際に戻すのは restoreFrameScroll（数フレーム後）で、
+    // 預けた値もそこで捨てる ＝ 戻し切る前に離れても readScroll がまだ拾える。
     syncFrameBackground(frame);
+    restoreFrameScroll(frame);
 
     // iframe 内の mousedown / scroll は親 document には届かないので、contextmenu.js が
     // 「外側クリック / スクロールで閉じる」ために親へ張るリスナーが発火しない。
@@ -579,10 +596,12 @@
       var p = getScroller();
       return p ? p.scrollTop : 0;
     }
+    // 復元待ちの値があるならそれがいまの読み位置。load 前（中身がまだ無い）と、
+    // load 後 restoreFrameScroll が戻すまでの数フレームの両方をこれで覆う。
+    // 素直に scrollTop を返すと、その間に別タブへ移るだけで位置が 0 に消える。
+    if (frame.__mdScrollTo) return frame.__mdScrollTo;
     var sc = frameScroller(frame);
-    // load 前に訊かれたら、これから戻すはずの値を返す。ここで 0 を返すと
-    // 「開いた直後に別タブへ移る」だけで復元待ちの位置が消える。
-    return sc ? sc.scrollTop : (frame.__mdScrollTo || 0);
+    return sc ? sc.scrollTop : 0;
   }
 
   // 読み位置を戻す。html は中身が load されるまで代入しても効かないので、
