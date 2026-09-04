@@ -174,12 +174,16 @@
   }
 
   // 本文＋TOC が収まるか判定するための利用可能幅。
-  // #preview-pane があればその幅、無ければ viewport 幅を見る。
+  // #preview-pane があればそれを載せている列(#main-col)の幅、無ければ viewport 幅を見る。
+  // ペイン自身の幅は見ない——パネルのガターはペインの margin で確保しているので、
+  // 開いている間だけペインが 300px あまり細くなる。それを判定に使うと「開いているか」が
+  // 判定の入力になり、本文を差し替えるたび（ファイル切替・ホットリロード）に
+  // 開閉が交互に反転する。列の幅はサイドバーと窓幅だけで決まり、TOC の開閉では動かない。
   function availWidth() {
     if (scrollTarget === window || !scroller) {
       return document.documentElement.clientWidth || window.innerWidth || 0;
     }
-    return scroller.clientWidth || 0;
+    return (scroller.parentElement || scroller).clientWidth || 0;
   }
 
   // ユーザー操作の入口。手動で開けば userClosed を解除、閉じれば設定する。
