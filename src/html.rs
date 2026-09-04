@@ -135,19 +135,6 @@ const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("comment.js", include_str!("assets/js/comment.js")),
 ];
 
-/// CSP の nonce を生成する。本文（untrusted な Markdown）に埋め込まれた inline
-/// script を実行させないため、自前の inline script だけにこの nonce を付ける。
-/// 攻撃者は静的なファイルなので nonce を読めず（ブラウザが nonce 属性を隠す）、
-/// script を走らせて nonce を得ることもできない（鶏卵）ため、時刻由来で十分。
-fn make_nonce() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let n = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{:032x}", n)
-}
-
 pub const MD_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_TASKLISTS)
     .union(Options::ENABLE_STRIKETHROUGH)
@@ -697,26 +684,25 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
 }
 
 /// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、`PAGE_SCRIPTS` の
-/// 各モジュールを nonce 付きで inline する。
+/// 各モジュールを inline する。
 /// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILES 等）を末尾に差し込む。
-fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce: &str) -> String {
+fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> String {
     let scripts: String = PAGE_SCRIPTS
         .iter()
-        .map(|(_name, src)| format!("<script nonce=\"{}\">{}</script>\n", nonce, src))
+        .map(|(_name, src)| format!("<script>{}</script>\n", src))
         .collect();
-    // CSP: script は nonce 付きの自前 script と同一オリジン（mdpreview://localhost、
-    // /__lib/ の mermaid・drawio 等）のみ許可。'unsafe-inline' を入れないことで、
-    // 本文に書かれた <script> や on* 属性は実行されない。'unsafe-eval' は mermaid/drawio
-    // 用の保険だが、nonce 無しでは攻撃者 script 自体が走らないため eval には到達できない。
+    // CSP は張らない（本文の <script> も外部リソースの埋め込みもそのまま動く）。
+    // Why not: `.html` は忠実描画のため sandbox 無しの同一オリジン iframe で JS ごと
+    // 動かしている。同じアプリで開く `.md` だけを締めても信頼境界にはならず、
+    // YouTube の埋め込み・Web フォント・外部 CSS を落とす代償の方が大きい。
+    // IPC 側のガード（is_top_frame / id_to_path / is_blocked_ext）は CSP とは独立に残る。
     format!(
         r#"<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; media-src 'self' data:; frame-src 'self'; worker-src 'self' blob:">
 <title>{title}</title>
 <style>{base_css}</style>
 <style>{theme_css}</style>
 <style>{custom_css}</style>
 {scripts}{extra_head}"#,
-        nonce = nonce,
         title = html_escape(title),
         base_css = BASE_CSS,
         theme_css = theme_css,
@@ -729,7 +715,6 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, nonce:
 /// `body_class` は `.markdown-body` に足す追加クラス（空文字なら無し）。
 /// ソース表示は `"source-page"` を渡して 720px 中央制約を外し全幅にする。
 pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, body_class: &str) -> String {
-    let nonce = make_nonce();
     let class_attr = if body_class.is_empty() {
         "markdown-body".to_string()
     } else {
@@ -747,7 +732,7 @@ pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, bo
 </article>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, "", &nonce),
+        head = head(title, theme_css, custom_css, ""),
         class_attr = class_attr,
         body = body,
     )
@@ -850,10 +835,9 @@ pub fn build_folder_html(
         .map(|s| json_string(s))
         .collect::<Vec<_>>()
         .join(",");
-    let nonce = make_nonce();
     let folder_head = format!(
-        "<script nonce=\"{}\">var INITIAL_FILES = [{}];</script>\n<script nonce=\"{}\">{}</script>",
-        nonce, initial_files_json, nonce, TABS_JS
+        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>",
+        initial_files_json, TABS_JS
     );
     format!(
         r#"<!DOCTYPE html>
@@ -872,7 +856,7 @@ pub fn build_folder_html(
 </div>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, &folder_head, &nonce),
+        head = head(title, theme_css, custom_css, &folder_head),
     )
 }
 

@@ -5,8 +5,8 @@
 (function() {
   // 遅延ロードした <script> を URL 単位でメモ化する。mermaid/drawio の巨大ライブラリを
   // 必要になった時に 1 度だけ読み込むためのもの。
-  // URL はスキームを書かずオリジン相対にする（CSP の 'self' に収まるうえ、
-  // examples/serve.rs 越しに http で開いた時もそのまま動く）。
+  // URL はスキームを書かずオリジン相対にする（examples/serve.rs 越しに http で
+  // 開いた時もそのまま動く）。
   var cache = {};
   function loadLib(url) {
     if (cache[url]) return cache[url];

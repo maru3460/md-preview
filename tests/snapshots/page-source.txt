@@ -2,23 +2,22 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'nonce-NONCE'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'self'; media-src 'self' data:; frame-src 'self'; worker-src 'self' blob:">
 <title>sample.rs</title>
 <style>…</style>
 <style>…</style>
 <style>…</style>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
-<script nonce="NONCE">…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
+<script>…</script>
 
 </head>
 <body>

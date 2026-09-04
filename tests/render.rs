@@ -34,7 +34,7 @@ fn read_fixture(rel: &str) -> String {
 // ── 正規化 ──────────────────────────────────────────────────────────
 
 /// inline の `<style>` / `<script>` の中身を `…` に畳む。開きタグ（属性込み）と
-/// 閉じタグは残すので、読み込み順や nonce の有無は引き続き固定される。
+/// 閉じタグは残すので、読み込み順とタグの属性は引き続き固定される。
 ///
 /// 中身に閉じタグ文字列が現れることは無い（現れたらブラウザ側でページが壊れるので、
 /// そもそも成立しない）。よって単純な前方探索で十分。
@@ -67,37 +67,8 @@ fn fold_inline_assets(html: &str) -> String {
     }
 }
 
-/// nonce は起動時刻由来で毎回変わるので固定値に潰す。`nonce="…"`（script 属性）と
-/// `'nonce-…'`（CSP ヘッダ）の両方に現れるので、続く 16 進の連なりをまとめて潰す。
-fn mask_nonce(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find("nonce") {
-        out.push_str(&rest[..i]);
-        rest = &rest[i + "nonce".len()..];
-        // 区切り（`="` か `-`）を挟んで 16 進が続く形だけを対象にする。
-        let sep_len = if rest.starts_with("=\"") { 2 } else if rest.starts_with('-') { 1 } else { 0 };
-        if sep_len == 0 {
-            out.push_str("nonce");
-            continue;
-        }
-        let body = &rest[sep_len..];
-        let hex_len = body.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(body.len());
-        if hex_len == 0 {
-            out.push_str("nonce");
-            continue;
-        }
-        out.push_str("nonce");
-        out.push_str(&rest[..sep_len]);
-        out.push_str("NONCE");
-        rest = &body[hex_len..];
-    }
-    out.push_str(rest);
-    out
-}
-
 fn normalize(html: &str) -> String {
-    let mut s = mask_nonce(&fold_inline_assets(html));
+    let mut s = fold_inline_assets(html);
     if !s.ends_with('\n') {
         s.push('\n');
     }
