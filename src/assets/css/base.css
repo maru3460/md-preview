@@ -15,6 +15,12 @@
     /* スクロールバーの太さ。タブの高さもこの値から引くので、太さを変えるときは
        ここだけ動かす（2 箇所に 2px を散らさない）。 */
     --md-sb-w: 2px;
+    /* 本文の外周（額縁）。1 枚もの表示は body、シェルは #preview-pane が持ち、
+       .html-frame の高さもここから引く。値を散らすと iframe の高さだけ置き去りに
+       なって下に死んだ帯が出るので、外周を読む側はすべてこの変数を見る
+       （TOC を開いている間の右ガターも含む）。
+       html 表示だけ下で 8px に上書きする。 */
+    --md-pad: 48px;
 }
 
 /* ── スクロールバー ────────────────────────────────────────────
@@ -94,7 +100,7 @@ pre::-webkit-scrollbar-thumb,
 body {
     font-size: 17px;
     margin: 0;
-    padding: 48px;
+    padding: var(--md-pad);
 }
 
 .markdown-body {
@@ -435,18 +441,32 @@ blockquote.markdown-alert-caution {
 }
 
 /* html ファイルは iframe（ミニブラウザ）で描画する。source-page と同様に本文の
-   720px 中央制約を外し、iframe はビューポート高から本文パディング(48px×2)を引いた
-   分を満たして内部スクロールする。1 枚もの / シェルのどちらも縦パディングは
-   48px なので calc(100vh - 96px) で揃う（シェルでは preview-pane の padding）。 */
+   720px 中央制約を外し、iframe はビューポート高から外周(--md-pad×2)を引いた分を
+   満たして内部スクロールする。1 枚もの / シェルのどちらも外周は同じ変数なので、
+   計算は 1 本で揃う（シェルでは preview-pane の padding）。 */
 .markdown-body.html-page {
     max-width: none;
     margin: 0;
 }
 
+/* html の外周は 8px。48px は「max-width:720px の中央寄せ本文が狭い窓で端に付かない
+   ための保険」であって、全幅の html には効かずただの額縁になる。0 まで詰めないのは、
+   スタイルを持たない素の html（body 既定の 8px しかない）が窮屈に見えるため。
+   :has でこの 2 つに絞るのは、外周を持つのが親（body / #preview-pane）なのに
+   html かどうかを知っているのが子（.html-page）だから。フォルダ表示のタブ切替
+   （本文の差し替え）にも JS 無しで追従する。直下の子に限るのは、md 本文の生 HTML が
+   class="html-page" を名乗っても（それは .markdown-body の中なので）額縁を
+   乗っ取れないようにするため。
+   .html-frame は子孫なので、この --md-pad をそのまま継承して高さを合わせる。 */
+body:has(> .html-page),
+#preview-pane:has(> .html-page) {
+    --md-pad: 8px;
+}
+
 .html-frame {
     display: block;
     width: 100%;
-    height: calc(100vh - 96px - var(--md-tabbar-h));
+    height: calc(100vh - var(--md-pad) * 2 - var(--md-tabbar-h));
     border: 0;
     /* アプリのテーマ(dracula 等)の color-scheme に引きずられず OS 準拠で描画する
        （ブラウザでファイルを直接開いたときに寄せる）。実際の地色は読込後に JS が
@@ -668,7 +688,7 @@ body.sidebar-closed #resizer::before {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 48px;
+    padding: var(--md-pad);
     box-sizing: border-box;
 }
 
@@ -984,10 +1004,10 @@ mark.md-search-hit {
 /* ── TOC を常設サイドバーとして開いている間のレイアウト ───────────────
    パネルは fixed なので本文に被る。開いている間だけ右ガターを --md-toc-w ぶん
    空け、中央寄せ本文(または preview-pane の本文)をその左へ収める。Zen/Qiita 風に
-   「本文＋目次」を一塊に見せる。左パディング(48px)と対称になるよう +48px する。
+   「本文＋目次」を一塊に見せる。左パディングと対称になるよう外周ぶんを足す。
    狭い画面では JS(toc.js)側が自動でパネルを閉じ、このクラスも外れる。 */
 body.md-toc-open {
-    padding-right: calc(var(--md-toc-w) + 48px);
+    padding-right: calc(var(--md-toc-w) + var(--md-pad));
 }
 
 /* folder モードは body 余白を持たず preview-pane 側で本文を描くので、
@@ -995,7 +1015,7 @@ body.md-toc-open {
    確保の仕方は padding ではなく margin。padding だとペインの箱はビューポート右端まで
    伸びたままで、右端に出る本文のスクロールバーがパネルの裏に隠れてしまう。margin で
    箱そのものをパネルの左端で終わらせれば、バーはパネルの左隣に出る（本文の右余白は
-   padding の 48px がそのまま効くので、見え方は padding 版と同じ）。
+   padding の外周ぶんがそのまま効くので、見え方は padding 版と同じ）。
    さらに 8px 余分に詰めてバーをパネルから離す。パネルの左端には枠線(1px)と、TOC の
    現在地マーカー(a の border-left 2px)が並ぶので、詰めないと 5px の中に縦線が 3 本
    立ち、どれが読み位置でどれが現在の見出しか分からなくなる。離す先を本文側にしたのは、
