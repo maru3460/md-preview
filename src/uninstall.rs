@@ -1,15 +1,59 @@
 //! `md uninstall` — md がディスクへ置いたものを片付ける。
 //!
-//! `cargo uninstall` は `~/.cargo/bin/md` しか消さないので、設定と WebKit の
-//! データが残る。ここで消すのはその残るぶんで、**本体の削除は cargo に委譲する**。
+//! 本体を消すコマンド（`brew uninstall` / `cargo uninstall`）は設定と WebKit の
+//! データを残す。ここで消すのはその残るぶんで、本体そのものは自分で unlink しない。
 //!
-//! 自分で unlink しないのは、cargo が `~/.cargo/.crates.toml` と
-//! `.crates2.json` に「どの crate がどの bin を置いたか」を記録しているため。
-//! バイナリだけ消すと台帳とズレて、`cargo install --list` に幽霊が残り、後から
-//! `cargo uninstall` を打つと失敗する。「消したのに消えていない」状態を作る。
+//! cargo で入っているときだけ、本体の削除を `cargo uninstall` に委譲してここから
+//! 実行する。cargo が `~/.cargo/.crates.toml` と `.crates2.json` に「どの crate が
+//! どの bin を置いたか」を記録しているためで、バイナリだけ消すと台帳とズレて
+//! `cargo install --list` に幽霊が残り、後から `cargo uninstall` を打つと失敗する。
+//! 「消したのに消えていない」状態を作らないための委譲である。
+//!
+//! brew で入っているときは実行せず、案内だけ出す。brew は自分で台帳を持っていて
+//! 委譲する理由が無く、消す手順もユーザーが打つ 1 コマンドで足りる。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// crate 名。tap の formula 名（`Formula/md-preview.rb`）も同じ文字列なので、
+/// `cargo uninstall` と `brew uninstall` の両方の引数に使える。
+const CRATE: &str = env!("CARGO_PKG_NAME");
+
+/// 本体をどうやって消すか。入れ方で案内も、md が自分で実行するかどうかも変わる。
+#[derive(Debug, PartialEq)]
+pub enum Removal {
+    Cargo,
+    Brew,
+}
+
+impl Removal {
+    /// 一覧の本体の行に出す説明。cargo は md が代わりに打つので「消します」、
+    /// brew はユーザーが打つので「消してください」と、主語を書き分ける。
+    fn label(&self) -> String {
+        match self {
+            Removal::Cargo => format!("本体（cargo uninstall {} で消します）", CRATE),
+            Removal::Brew => format!("本体（brew uninstall {} で消してください）", CRATE),
+        }
+    }
+}
+
+/// いま走っている実行ファイルから入れ方を見分ける。
+///
+/// symlink を辿った先で判定する。PATH から `md` を叩くと `current_exe()` は
+/// `/opt/homebrew/bin/md`（symlink）を返し、辿った先が
+/// `/opt/homebrew/Cellar/md-preview/<版>/bin/md` になる。Cellar は brew が実体を
+/// 置く唯一の場所なので、prefix がどこか（`/opt/homebrew` か `/usr/local` か、
+/// 独自の prefix か）を知らなくても見分けられる。
+///
+/// 辿るので、バンドルの `~/.config/md-preview/app/md` から呼ばれても正しく出る。
+pub fn detect(exe: &Path) -> Removal {
+    let real = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    if real.components().any(|c| c.as_os_str() == "Cellar") {
+        Removal::Brew
+    } else {
+        Removal::Cargo
+    }
+}
 
 /// 消す対象 1 件。
 pub struct Target {
@@ -131,17 +175,19 @@ fn cargo_bin(home: &Path, exe_name: &str) -> PathBuf {
         .join(exe_name)
 }
 
+/// 本体の大きさ。`dir_size` と違って symlink を辿る。brew で入れた本体は
+/// `/opt/homebrew/bin/md` という symlink なので、辿らないと 0B と出てしまう。
+fn bin_size(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
 /// 一覧のテキスト。実行前の確認にも `--dry-run` にも同じものを使う。
-pub fn plan_text(targets: &[Target], crate_name: &str, bin: &Path) -> String {
+pub fn plan_text(targets: &[Target], removal: &Removal, bin: &Path) -> String {
     let mut rows: Vec<(String, String, String)> = targets
         .iter()
         .map(|t| (t.path.display().to_string(), human_size(t.bytes), t.label.to_string()))
         .collect();
-    rows.push((
-        bin.display().to_string(),
-        human_size(dir_size(bin)),
-        format!("本体（cargo uninstall {} で消します）", crate_name),
-    ));
+    rows.push((bin.display().to_string(), human_size(bin_size(bin)), removal.label()));
 
     // 桁は実際のパスに合わせる。固定幅にすると HOME の長さで崩れる。
     let width = rows.iter().map(|(p, _, _)| p.chars().count()).max().unwrap_or(0);
@@ -172,12 +218,19 @@ pub fn run(rest: &[String]) {
     let exe_name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("md").to_string();
 
     let targets = plan(&home, &exe_name);
-    let crate_name = env!("CARGO_PKG_NAME");
-    // cargo が置いた本体が見つからないとき（開発中の直接実行など）は、せめて
-    // いま走っているものを出す。
-    let bin = cargo_bin(&home, &exe_name);
-    let bin = if bin.exists() { bin } else { exe };
-    print!("{}", plan_text(&targets, crate_name, &bin));
+    let removal = detect(&exe);
+    // brew ではいま走っているパス（PATH 経由なら `/opt/homebrew/bin/md`）がそのまま
+    // 消える場所なので、それを出す。cargo は `cargo run` で走っていることがあり、
+    // 実際に消えるのは cargo が置いた方なので、そちらを探して出す。見つからない
+    // とき（開発中の直接実行など）は、せめていま走っているものを出す。
+    let bin = match removal {
+        Removal::Brew => exe,
+        Removal::Cargo => {
+            let placed = cargo_bin(&home, &exe_name);
+            if placed.exists() { placed } else { exe }
+        }
+    };
+    print!("{}", plan_text(&targets, &removal, &bin));
 
     if dry_run {
         println!("\n（--dry-run なので何も消していません）");
@@ -194,17 +247,25 @@ pub fn run(rest: &[String]) {
         }
     }
 
-    // 本体は cargo に任せる。cargo が居ないときは掃除だけで正常終了し、残りの
-    // 手順を伝える（ここで失敗扱いにすると、掃除は済んでいるのに赤く出る）。
-    match std::process::Command::new("cargo").arg("uninstall").arg(crate_name).status() {
-        Ok(status) if status.success() => println!("\n片付けました。"),
-        Ok(_) => {
-            println!("\n設定とデータは消しました。");
-            println!("本体は cargo uninstall {} で消してください。", crate_name);
+    match removal {
+        // 本体は cargo に任せる。cargo が居ないときは掃除だけで正常終了し、残りの
+        // 手順を伝える（ここで失敗扱いにすると、掃除は済んでいるのに赤く出る）。
+        Removal::Cargo => {
+            match std::process::Command::new("cargo").arg("uninstall").arg(CRATE).status() {
+                Ok(status) if status.success() => println!("\n片付けました。"),
+                Ok(_) => {
+                    println!("\n設定とデータは消しました。");
+                    println!("本体は cargo uninstall {} で消してください。", CRATE);
+                }
+                Err(_) => {
+                    println!("\n設定とデータは消しました。cargo が見つかりません。");
+                    println!("本体は cargo uninstall {} で消してください。", CRATE);
+                }
+            }
         }
-        Err(_) => {
-            println!("\n設定とデータは消しました。cargo が見つかりません。");
-            println!("本体は cargo uninstall {} で消してください。", crate_name);
+        Removal::Brew => {
+            println!("\n設定とデータは消しました。");
+            println!("本体は brew uninstall {} で消してください。", CRATE);
         }
     }
 }
@@ -310,7 +371,7 @@ mod tests {
         let home = temp("text");
         std::fs::create_dir_all(home.join(".config/md-preview")).unwrap();
         let targets = plan(&home, "md");
-        let text = plan_text(&targets, "md-preview", &home.join(".cargo/bin/md"));
+        let text = plan_text(&targets, &Removal::Cargo, &home.join(".cargo/bin/md"));
 
         // 大きさの列が全行で同じ位置から始まる（HOME の長さに引きずられない）。
         let cols: Vec<usize> = text
@@ -323,6 +384,49 @@ mod tests {
         assert!(text.contains("cargo uninstall md-preview"));
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// brew で入れた人に cargo の案内を出さない（逆も）。
+    #[test]
+    fn a_binary_under_cellar_is_removed_by_brew() {
+        let root = temp("detect");
+        let cellar = root.join("Cellar/md-preview/0.1.20/bin");
+        std::fs::create_dir_all(&cellar).unwrap();
+        std::fs::write(cellar.join("md"), b"x").unwrap();
+
+        // PATH に張られる symlink 側から見ても Cellar だと分かる。
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::os::unix::fs::symlink(cellar.join("md"), root.join("bin/md")).unwrap();
+        assert_eq!(detect(&root.join("bin/md")), Removal::Brew);
+        assert_eq!(detect(&cellar.join("md")), Removal::Brew);
+
+        // cargo が置いた方は Cellar を通らない。
+        let cargo = root.join(".cargo/bin");
+        std::fs::create_dir_all(&cargo).unwrap();
+        std::fs::write(cargo.join("md"), b"x").unwrap();
+        assert_eq!(detect(&cargo.join("md")), Removal::Cargo);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 案内の主語が入れ方で入れ替わる。
+    #[test]
+    fn the_binary_row_names_the_matching_uninstaller() {
+        assert!(Removal::Cargo.label().contains("cargo uninstall md-preview"));
+        assert!(Removal::Brew.label().contains("brew uninstall md-preview"));
+    }
+
+    /// symlink で入る本体の大きさが 0B にならない。
+    #[test]
+    fn the_binary_size_follows_a_symlink() {
+        let root = temp("binsize");
+        let real = root.join("real-md");
+        std::fs::write(&real, b"0123456789").unwrap();
+        let link = root.join("md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert_eq!(bin_size(&link), 10);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
