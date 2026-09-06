@@ -20,3 +20,6 @@ playwright-report/
 # UI テストが一時的に置くフィクスチャ（差分・巨大ソース用。テスト内で消すが、落ちた時の保険）
 tests/ui-fixtures/zz-untracked.md
 tests/ui-fixtures/zz-big.txt
+
+# ローカルの秘密（tap へ push するトークンなど）。追跡すると即座に漏れる。
+.env
