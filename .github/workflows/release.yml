@@ -1,0 +1,160 @@
+name: Release
+
+# タグを push したときだけ走る。ビルドに数分かかるので、main への push では動かさない。
+# ワークフローはタグが指すコミットに含まれていないと発火しないので、このファイルを
+# main へ push してからタグを打つこと。
+on:
+  push:
+    tags: ['v*']
+
+# Release を作るのに要る。tap への push は別のトークン（TAP_TOKEN）で行う。
+permissions:
+  contents: write
+
+# tap への push は 1 本ずつ。短い間に 2 本のタグを打つと、あとから来た方の push が
+# 非 fast-forward で弾かれる。
+concurrency:
+  group: release
+
+defaults:
+  run:
+    # 既定の `bash -e` には pipefail が無く、`shasum | cut` のようなパイプは前段が
+    # 落ちても後段が成功すれば通ってしまう。明示すると pipefail 付きになる。
+    shell: bash
+
+jobs:
+  release:
+    # Apple Silicon のランナー。ここから x86_64 へクロスする（wry / tao は
+    # システムフレームワークしか使わず build.rs も無いので、そのまま通る）。
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: タグと Cargo.toml のバージョンを突き合わせる
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::タグ ${GITHUB_REF_NAME} と Cargo.toml の ${crate} がズレています"
+            exit 1
+          fi
+          echo "VERSION=${tag}" >> "$GITHUB_ENV"
+
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      # --locked を付けるのは、Cargo.lock が古いまま CI が黙って書き換えて別物を
+      # ビルドするのを防ぐため。配るバイナリは手元で試したものと同じ依存で作る。
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - run: cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: ユニバーサルバイナリに束ねる
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/md \
+            target/x86_64-apple-darwin/release/md \
+            -output dist/md
+
+          # Apple Silicon は署名の無い実行ファイルを起動時に SIGKILL する。リンカが
+          # 付ける ad-hoc 署名は lipo を越えて生き残るが、それは arm64 スライスだけで、
+          # 束ねたファイル全体を codesign -v に掛けると x86_64 側で落ちる。検証を
+          # 「アーキ無指定で通ること」に揃えたいので、両アーキへ掛け直す。
+          #
+          # strip は掛けない。9.6MB を削りたくなるが、署名を壊して起動しなくなる
+          # （実測で exit 137）。Homebrew の Cleaner も bin を strip しない。
+          codesign -s - -f dist/md
+          codesign -v dist/md
+
+          lipo -info dist/md
+          # ランナーは arm64 なので、これで起動を確かめられるのは arm64 スライスだけ。
+          # x86_64 側は codesign -v が通っていることまでしか言えない。
+          dist/md --version
+
+      - name: tar.gz に固めて sha256 を採る
+        run: |
+          name="md-preview-${GITHUB_REF_NAME}-macos-universal.tar.gz"
+          tar -czf "$name" -C dist md
+
+          sha="$(shasum -a 256 "$name" | cut -d' ' -f1)"
+          # 空の sha256 をそのまま formula へ流すと、後段の照合が空パターンとして
+          # 全行にマッチしてしまい、壊れた formula が「成功」で push される。
+          if [ ${#sha} -ne 64 ]; then
+            echo "::error::sha256 を取れませんでした"
+            exit 1
+          fi
+
+          echo "ASSET=${name}" >> "$GITHUB_ENV"
+          echo "SHA256=${sha}" >> "$GITHUB_ENV"
+
+      - name: Release を作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 同じタグで再実行することがある（tap への push だけ失敗した時など）。
+          # create は既存のリリースがあると落ちるので、その場合は資産を差し替える。
+          # ここで止まると、一番ありがちな失敗のリカバリ手段が塞がってしまう。
+          gh release create "$GITHUB_REF_NAME" "$ASSET" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+          || gh release upload "$GITHUB_REF_NAME" "$ASSET" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: tap の formula を書き換える
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ASSET}"
+
+          # トークンは URL に載せず、認証ヘッダで渡す（remote に焼き付けない）。
+          # Actions が自動で伏せるのは secrets の生の値だけで、base64 にした後の
+          # 文字列は伏せてくれないので、自分でマスクを頼む。
+          auth="$(printf 'x-access-token:%s' "$TAP_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::${auth}"
+
+          # shallow にしない。あとで rebase することがあり、浅いクローンだと面倒。
+          # formula 1 ファイルのリポジトリなので、全部持ってきても一瞬である。
+          git -c "http.extraheader=Authorization: Basic ${auth}" \
+            clone https://github.com/maru3460/homebrew-tap.git "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+
+          f=Formula/md-preview.rb
+          # 空リポジトリを clone しても git は成功する。formula がまだ無いときに
+          # sed の「そんなファイルは無い」で落ちると、原因が本質から遠い。
+          if [ ! -f "$f" ]; then
+            echo "::error::tap に ${f} がありません（初回は手で push してください）"
+            exit 1
+          fi
+
+          sed -i '' \
+            -e "s|^  url .*|  url \"${url}\"|" \
+            -e "s|^  sha256 .*|  sha256 \"${SHA256}\"|" \
+            -e "s|^  version .*|  version \"${VERSION}\"|" \
+            "$f"
+
+          # sed はパターンが一致しなくても黙って成功する。3 行を別々に照合するのは、
+          # たとえば url だけ空振りすると「古い tarball の URL + 新しい sha256」に
+          # なり、CI は成功したまま全ユーザーの brew install がチェックサム不一致で
+          # 壊れるため。1 行でも書けていなければここで止める。
+          if ! grep -qF "url \"${url}\"" "$f" \
+            || ! grep -qF "sha256 \"${SHA256}\"" "$f" \
+            || ! grep -qF "version \"${VERSION}\"" "$f"; then
+            echo "::error::${f} の書き換えが効いていません（url / sha256 / version の行の形を確認）"
+            exit 1
+          fi
+
+          if git diff --quiet; then
+            echo "formula は既に ${VERSION} を指しています"
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am "md-preview ${VERSION}"
+
+          # tap を手で触った直後などは push が弾かれる。formula 1 ファイルなので
+          # rebase して入れ直せば済む。
+          git -c "http.extraheader=Authorization: Basic ${auth}" push || {
+            git -c "http.extraheader=Authorization: Basic ${auth}" pull --rebase
+            git -c "http.extraheader=Authorization: Basic ${auth}" push
+          }
