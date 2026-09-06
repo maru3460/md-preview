@@ -310,4 +310,4 @@ draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGrap
 
 ## ライセンス
 
-MIT
+MIT License（[LICENSE](LICENSE)）。同梱している第三者ソフトウェアの表記は [THIRD-PARTY.md](THIRD-PARTY.md) にあります。
