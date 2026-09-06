@@ -12,30 +12,37 @@ macOS WebKit（[wry](https://github.com/tauri-apps/wry)）でレンダリング�
 
 ## インストール
 
-[Rust](https://rustup.rs/) が必要です。
+macOS 専用です。Homebrew の tap から入ります。
 
 ```sh
-cargo install --path .
+brew install maru3460/tap/md-preview
 ```
 
-`~/.cargo/bin/md` としてインストールされます。`PATH` に含まれていることを確認してください。
+入るのはユニバーサルバイナリ 1 本（Apple Silicon / Intel 両対応）です。Rust も Xcode も要りません。更新は `brew upgrade md-preview` です。
+
+自分でビルドしたい場合は、リポジトリをクローンして `cargo install --path .` でも入ります。[Rust](https://rustup.rs/) が必要で、本体は `~/.cargo/bin/md` に置かれます。
 
 ## アンインストール
 
 ```sh
 md uninstall
+brew uninstall md-preview
 ```
 
-`md` はディスクの 4 か所にものを置きます。`cargo uninstall md-preview` は本体しか消さないので、残りは `md uninstall` でまとめて片付けます。
+順番が大事です。先に本体を消すと `md uninstall` が打てなくなり、設定とキャッシュが残ります。
 
-| 場所                    | 中身                                               |
-| ----------------------- | -------------------------------------------------- |
-| `~/.config/md-preview/` | テーマ設定・ユーザー CSS・起動用のバンドル（下記） |
-| `~/Library/WebKit/md`   | UI の状態（オンボーディング済みフラグなど）        |
-| `~/Library/Caches/md`   | WebKit のキャッシュ                                |
-| `~/.cargo/bin/md`       | 本体（`cargo uninstall md-preview` に委譲します）  |
+`md` はディスクの 4 か所にものを置きます。本体を消すコマンドは設定と WebKit のデータを残すので、残りは `md uninstall` でまとめて片付けます。
 
-本体の削除を cargo に任せるのは、cargo が「どの crate がどの bin を置いたか」を台帳に記録しているためです。バイナリだけ先に消すと台帳とズレて、`cargo install --list` に残り続けます。
+| 場所                    | 中身                                               | 誰が消すか        |
+| ----------------------- | -------------------------------------------------- | ----------------- |
+| `~/.config/md-preview/` | テーマ設定・ユーザー CSS・起動用のバンドル（下記） | `md uninstall`    |
+| `~/Library/WebKit/md`   | UI の状態（オンボーディング済みフラグなど）        | `md uninstall`    |
+| `~/Library/Caches/md`   | WebKit のキャッシュ                                | `md uninstall`    |
+| 本体（実行ファイル）    | `/opt/homebrew/bin/md` または `~/.cargo/bin/md`    | `brew uninstall`  |
+
+設定とキャッシュを brew が消さないのは慣習どおりです（formula はユーザーのデータに触りません）。そのぶんを `md uninstall` が引き受けていて、頼まれたときだけ一覧を見せて消します。
+
+ソースから入れた場合は、本体の消し方の案内が `cargo uninstall md-preview` に変わり、`md uninstall` がそれを代わりに実行します。cargo が「どの crate がどの bin を置いたか」を台帳に記録していて、バイナリだけ先に消すと台帳とズレ、`cargo install --list` に残り続けるためです。brew にはその事情が無いので、案内を出すだけにしています。どちらの案内を出すかは、いま走っている実行ファイルの位置を見て決めます。
 
 `~/Library` 以下の 2 つは、`CFBundleIdentifier` を持たないアプリの既定として**実行ファイル名がそのままディレクトリ名になる**場所です。`md` 専用の名前空間ではないので、`md` という名前の別のプログラムが同じ場所を使っている場合は一覧に出さず、触りません。
 
@@ -306,7 +313,7 @@ draw.io 図は ` ```drawio ` コードブロックに draw.io の XML（`<mxGrap
 ```
 
 > [!NOTE]
-> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「インストール」の `cargo install --path .` で別途セットアップしてください。プラグインを消しても `md` コマンドは残るので、本体も消すには `md uninstall`（上記「[アンインストール](#アンインストール)」）を実行してください。
+> プラグインに含まれるのはスキル（`md` の使い方チートシート）のみです。`md` コマンド本体は上記「[インストール](#インストール)」の `brew install` で別途セットアップしてください。プラグインを消しても `md` コマンドは残るので、本体も消すには `md uninstall`（上記「[アンインストール](#アンインストール)」）を実行してください。
 
 ## ライセンス
 
