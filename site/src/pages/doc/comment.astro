@@ -1,0 +1,89 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+
+// keys.astro の表と同じ内容。片方だけ直さないこと。
+const commentKeys = [
+  ['j / k', 'ユニット間を移動（↑ / ↓ でも）'],
+  ['⇧J / ⇧K', '複数行をまとめて選ぶ'],
+  ['Enter', 'コメント入力を開く'],
+  ['⌘Enter', '保存'],
+  ['Esc', '取り消し'],
+  ['n / p', '次 / 前のコメントへ'],
+  ['e', '編集'],
+  ['x / Delete', '削除'],
+  ['⇧X', '全消去'],
+  ['y', '全部コピー'],
+];
+---
+<DocLayout
+  slug="comment"
+  title="コメントを付けて渡す"
+  description="c でコメントモードに入り、本文に指摘を書いて、file:line 付きでまとめてコピーする。"
+>
+  <p>
+    <kbd>c</kbd> でコメントモードに入ります。見出し・段落・リスト項目・表・引用・コードブロック・
+    <code>&lt;details&gt;</code> の折りたたみ・front matter の単位で、レンダリング済みの本文に
+    そのまま指摘を書けます。
+  </p>
+
+  <div class="figure">
+    <div class="figure-frame">
+      <div class="shot-body">
+        comment.mp4
+        <small>付ける → 保存 → 全部コピー まで通しで</small>
+      </div>
+    </div>
+  </div>
+
+  <h2>1. 付ける</h2>
+  <p>
+    ホバーすると左に <code>+</code> が出ます。クリックで入力が開き、<kbd>⌘Enter</kbd> で保存、<kbd>Esc</kbd> で取り消しです。
+    ドラッグすれば複数行をまとめて 1 コメントにできます。
+  </p>
+  <p>
+    マウスを使わずに操作することもできます。<kbd>j</kbd> / <kbd>k</kbd> でユニット間を移動し、
+    <kbd>⇧J</kbd> / <kbd>⇧K</kbd> で範囲を広げ、<kbd>Enter</kbd> で入力を開きます。
+  </p>
+
+  <h2>2. 見直す</h2>
+  <p>
+    保存すると対象の左に色帯と 💬 バッジが付き、右下のパネルに 1 件追加されます。
+    バッジをクリックすれば編集でき、コメント済みのユニットにホバーすると内容がプレビュー表示されます。
+  </p>
+  <p>
+    <kbd>n</kbd> / <kbd>p</kbd> で次 / 前のコメントへ飛べます。別ファイルのコメントなら自動で開きます。
+  </p>
+
+  <h2>3. 渡す</h2>
+  <p>
+    <kbd>y</kbd>（または右下パネルの「全部コピー」）で、次の形に畳んでクリップボードへ入ります。
+    そのまま貼れば、ファイルと行を指したレビュー指摘として伝わります。
+  </p>
+  <div class="codebox">
+    <div class="codebox-head"><span>クリップボードに入るもの</span><span>y</span></div>
+    <pre>{`- notes/trip.md:8
+> 2 日目は朝いちで美術館へ行く。
+
+朝は起きられないので午後にしてほしい`}</pre>
+  </div>
+
+  <h2>モード中のキー</h2>
+  <div class="keys">
+    {commentKeys.map(([k, d]) => (
+      <div class="keyrow"><kbd>{k}</kbd><span class="kdesc">{d}</span></div>
+    ))}
+  </div>
+
+  <h2>Raw 表示とソース表示でも付く</h2>
+  <p>
+    Raw 表示（<kbd>⌘R</kbd>）と、md 以外のファイルのソース表示でも付けられます。
+    こちらは 1 行が 1 ユニットで、クリックやドラッグで行や範囲を指定します。
+    行番号はどちらもソースの行なので、プレビューで付けたコメントと同じ <code>file:line</code> の並びに混ざります。
+  </p>
+
+  <p class="note">
+    コメントはセッション内のメモリだけに残り、ファイルには保存されません。
+    <code>.html</code> の表示・Git 差分・10,000 行を超えるソースには行コメントを付けられません
+    （モードには入れるので、巡回・全部コピー・全消去は使えます）。
+  </p>
+</DocLayout>

@@ -1,0 +1,75 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<DocLayout slug="read" title="読む" description="⌘P のファイル検索、⌘F のページ内検索、アウトライン、選択即コピー、自動リロード。">
+  <p>
+    GitHub で見たときと同じ形で出します。表・タスクリスト・アラート・front matter・
+    Mermaid・draw.io・シンタックスハイライトに対応しています。
+    図のライブラリは図があるときだけ読み込むので、図の無い md は軽いまま開きます。
+  </p>
+
+  <h2>ファイルを開く（<kbd>⌘P</kbd>）</h2>
+  <p>
+    ルート以下の全ファイルから、ファイル名であいまい検索して開けます。
+    <code>km</code> のような飛ばし打ちでも <code>keymap.md</code> に当たります（部分列マッチ）。
+    <code>docs/comment</code> のように <code>/</code> を含めればパスでも絞れます。
+  </p>
+  <div class="figure">
+    <div class="figure-frame">
+      <div class="shot-body">
+        palette.mp4
+        <small>⌘P で km と打って、深い階層のファイルを開くまで</small>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    一覧からは <code>.git</code> / <code>node_modules</code> / <code>target</code> などの生成物を除いています。
+    除外されたファイルもサイドバーのツリーからは開けます。
+  </p>
+
+  <h2>本文を探す（<kbd>⌘F</kbd>）</h2>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">移動</div>
+      <div class="fdesc"><kbd>Enter</kbd> / <kbd>⇧Enter</kbd>（または <kbd>↑</kbd> <kbd>↓</kbd>）で前後のヒットへ。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">大文字小文字</div>
+      <div class="fdesc"><code>Aa</code> ボタンで区別を切り替えます。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">閉じても残る</div>
+      <div class="fdesc">閉じても入力した語は残るので、もう一度 <kbd>⌘F</kbd> で続きから探せます。選択テキストがあれば初期クエリに入ります。</div>
+    </div>
+  </div>
+
+  <h2>見出しを辿る（<kbd>⌘T</kbd>）</h2>
+  <p>
+    アウトラインパネルが開きます。項目をクリックするとその見出しへスクロールし、
+    読み進めると現在位置が追従してハイライトされます。
+  </p>
+
+  <h2>選択するとコピーされる</h2>
+  <p>
+    マウスで範囲を選ぶと、その場でクリップボードに入ります（<kbd>⌘C</kbd> は要りません）。
+    ダブルクリックの単語選択、トリプルクリックの段落選択でも入ります。
+  </p>
+  <p>
+    入る文字は、コードの記法を Markdown のソースへ戻したものです。
+    インラインコードはバッククォートで包まれ、コードブロックはフェンス付きで入ります。
+    太字やリンク・表は見えている文字のまま入ります。
+  </p>
+
+  <h2>保存すると更新される</h2>
+  <p>
+    表示中のファイルを編集して保存すると、プレビューが自動で追いつきます。スクロール位置は維持されます。
+  </p>
+
+  <h2>配色を変える</h2>
+  <p>
+    <code>md theme &lt;名前&gt;</code> で丸ごと切り替わります。
+    13 個の一覧と実物は <a href={`${base}/themes/`}>Themes</a> にあります。
+  </p>
+</DocLayout>

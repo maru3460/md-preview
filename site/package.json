@@ -1,0 +1,13 @@
+{
+  "name": "md-preview-site",
+  "private": true,
+  "description": "md-preview の製品サイト。GitHub Pages へ静的書き出しする。",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "devDependencies": {
+    "astro": "^5.14.1"
+  }
+}

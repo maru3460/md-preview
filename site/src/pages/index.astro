@@ -1,0 +1,167 @@
+---
+import Base from '../layouts/Base.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const link = (p) => `${base}/${p}/`;
+
+const chips = [
+  { name: 'default', color: '#ffffff' },
+  { name: 'nord', color: '#2e3440' },
+  { name: 'dracula', color: '#282a36' },
+  { name: 'gruvbox', color: '#282828' },
+  { name: 'paper', color: '#faf6ee' },
+  { name: 'editorial', color: '#fffefb' },
+  { name: 'terminal', color: '#0b0f0b' },
+];
+
+const cards = [
+  {
+    key: 'GFM',
+    title: 'GitHub と同じ見え方',
+    desc: '表・タスクリスト・アラート・front matter に対応。Mermaid と draw.io は図があるときだけ読み込むので、図の無い md は軽いまま開く。',
+  },
+  {
+    key: 'c',
+    title: 'コメントを付けられる',
+    desc: '段落・表・コードブロックの単位で指摘を書ける。<code>file:line</code> 付きでまとめてコピーできる。',
+  },
+  {
+    key: '⌘P',
+    title: 'ファイル名で開く',
+    desc: '<code>km</code> の飛ばし打ちで <code>keymap.md</code> に当たる。深い階層でもツリーを掘らずに開ける。',
+  },
+  {
+    key: 'md theme',
+    title: 'テーマが 13 個',
+    desc: 'light 6・dark 6・OS 追従 1。<code>~/.config</code> に CSS を置けば自分のテーマも足せる。',
+  },
+  {
+    key: '⌘R / ⌘D',
+    title: 'md 以外も開ける',
+    desc: '<code>.html</code> はページとして表示。それ以外のテキストは行番号付きのソース表示。Git 差分にも切り替えられる。',
+  },
+  {
+    key: 'save',
+    title: '保存すると反映される',
+    desc: 'エディタで保存するとプレビューが更新される。スクロール位置はそのまま。',
+  },
+];
+---
+<Base
+  title="md-preview — ターミナルから離れない Markdown ビューア"
+  description="macOS 用の Markdown ビューア。ターミナルから開いて読み、気になった所にコメントを付けて、そのまま AI に返せる。"
+  current="home"
+>
+  <section class="hero">
+    <div class="hero-inner">
+      <h1>ターミナルから離れない Markdown ビューア</h1>
+      <p class="hero-lead">
+        macOS 専用。<br />
+        開いて読んで、気になった所にコメントを付けて、そのまま AI に返せる。
+      </p>
+
+      <div class="themebar">
+        <div class="themebar-label">デフォルトのテーマは 13 個ある。押すとこのページの配色も変わる</div>
+        <div class="chips">
+          {chips.map((c) => (
+            <button
+              class="chip"
+              type="button"
+              data-theme-set={c.name}
+              aria-pressed={c.name === 'default' ? 'true' : 'false'}
+            >
+              <span class="swatch" style={`background:${c.color}`}></span>{c.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div class="shot">
+        <div class="shot-chrome"><i></i><i></i><i></i><span>sample.md — md</span></div>
+        <div class="shot-body">
+          hero.png
+          <small>
+            サイドバーのツリー＋タブ＋Mermaid 図が 1 画面に入った状態。<br />
+            テーマは <b data-theme-name>default</b> の 1 枚を出す。
+          </small>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section alt">
+    <div class="section-inner">
+      <div class="section-head">
+        <h2>Feature</h2>
+      </div>
+      <div class="cards">
+        {cards.map((c) => (
+          <div class="card">
+            <span class="key">{c.key}</span>
+            <h3>{c.title}</h3>
+            <p set:html={c.desc}></p>
+          </div>
+        ))}
+      </div>
+      <p style="text-align:center;margin-top:40px">
+        <a href={link('doc')}>使い方を見る →</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-inner split">
+      <div>
+        <h2>Getting Started</h2>
+        <p>
+          <code>c</code> でコメントモードに入ると、レンダリング済みの本文にそのまま指摘を書ける。
+          マウスでもキーボードだけでも操作できる。
+        </p>
+        <p>
+          <code>y</code> を押すと、付けたコメントが全部クリップボードに入る。
+          ファイルと行を指した形なので、貼ればそのまま伝わる。
+        </p>
+        <p><a href={`${base}/doc/comment/`}>コメントの付け方 →</a></p>
+      </div>
+      <div class="codebox">
+        <div class="codebox-head"><span>クリップボードに入るもの</span><span>y</span></div>
+        <pre>{`- notes/curry.md:4
+> 玉ねぎは飴色になるまで 40 分炒める。
+
+40 分は長い。もっと早く済ませたい
+
+- notes/curry.md:12
+> 隠し味にチョコレートをひとかけ入れる。
+
+なんで効くのか解説して`}</pre>
+      </div>
+    </div>
+    <div class="section-inner figure">
+      <div class="figure-frame">
+        <div class="shot-body">
+          comment.mp4
+          <small>c → ホバーで + → 入力 → ⌘Enter → 💬 バッジ → 「全部コピー」まで通しで</small>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section alt">
+    <div class="section-inner" style="max-width:640px">
+      <div class="section-head">
+        <h2>Install</h2>
+        <p>Homebrew の tap から入る。</p>
+      </div>
+      <div class="codebox">
+        <div class="codebox-head">
+          <span>Terminal</span>
+          <button class="copy" type="button" data-copy="brew install maru3460/tap/md-preview">コピー</button>
+        </div>
+        <pre>brew install maru3460/tap/md-preview</pre>
+      </div>
+      <p style="margin-top:16px;font-size:14px;color:var(--fg-dim)">
+        詳しくは <a href={`${base}/doc/install/`}>Doc</a> へ。
+      </p>
+    </div>
+  </section>
+</Base>

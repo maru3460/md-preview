@@ -1,0 +1,111 @@
+---
+import '../styles/site.css';
+import { VERSION, REPO } from '../version.js';
+
+const { title, description, current } = Astro.props;
+
+// base は '/md-preview'。末尾を揃えてから組み立てる。
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const link = (p) => (p ? `${base}/${p}/` : `${base}/`);
+
+// 機能の一覧は Home のカードで足りる。タブに置くのは、読んだあとに
+// 実際に手を動かすための Doc と、この製品固有の見せ場である Themes だけ。
+const nav = [
+  { key: 'home', label: 'Home', href: link('') },
+  { key: 'doc', label: 'Doc', href: link('doc') },
+  { key: 'themes', label: 'Themes', href: link('themes') },
+];
+---
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml" />
+  <!-- 配色の復元は描画前に。あとから当てると一瞬だけ既定色が見える。 -->
+  <script is:inline>
+    try {
+      var t = localStorage.getItem('md-site-theme');
+      if (t) document.documentElement.setAttribute('data-md-theme', t);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav">
+      <a class="brand" href={link('')}><span class="caret">▍</span>md-preview</a>
+      <div class="nav-links">
+        {nav.map((n) => (
+          <a href={n.href} aria-current={n.key === current ? 'page' : undefined}>{n.label}</a>
+        ))}
+        <a href={REPO} rel="noopener">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <slot />
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>MIT License · macOS 専用</span>
+      <span class="footer-links">
+        <a href={REPO}>GitHub</a>
+        <a href={`${REPO}/releases`}>Releases</a>
+        <a href={`${REPO}/issues`}>Issues</a>
+      </span>
+      <span class="gen">v{VERSION}</span>
+    </div>
+  </footer>
+
+  <script is:inline>
+    // テーマの着せ替え。[data-theme-set] を持つ要素ならどこに置いても効く。
+    (function () {
+      var root = document.documentElement;
+      var KEY = 'md-site-theme';
+
+      function apply(name) {
+        if (name) root.setAttribute('data-md-theme', name);
+        else root.removeAttribute('data-md-theme');
+        try { name ? localStorage.setItem(KEY, name) : localStorage.removeItem(KEY); } catch (e) {}
+        document.querySelectorAll('[data-theme-set]').forEach(function (el) {
+          if (el.hasAttribute('aria-pressed')) {
+            el.setAttribute('aria-pressed', String(el.dataset.themeSet === (name || 'default')));
+          }
+        });
+        document.querySelectorAll('[data-theme-name]').forEach(function (el) {
+          el.textContent = name || 'default';
+        });
+      }
+
+      document.querySelectorAll('[data-theme-set]').forEach(function (el) {
+        el.addEventListener('click', function () {
+          var n = el.dataset.themeSet;
+          apply(n === 'default' ? '' : n);
+        });
+      });
+
+      var saved = null;
+      try { saved = localStorage.getItem(KEY); } catch (e) {}
+      apply(saved || '');
+    })();
+
+    // コードのコピー。data-copy に入れた文字列をそのまま渡す。
+    document.querySelectorAll('[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        navigator.clipboard.writeText(btn.dataset.copy).then(function () {
+          var before = btn.textContent;
+          btn.textContent = 'コピーしました';
+          setTimeout(function () { btn.textContent = before; }, 1400);
+        });
+      });
+    });
+  </script>
+</body>
+</html>

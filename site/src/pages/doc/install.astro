@@ -1,0 +1,42 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+import { REPO } from '../../version.js';
+
+const install = 'brew install maru3460/tap/md-preview';
+---
+<DocLayout slug="install" title="インストール" description="md-preview のインストール手順。Homebrew で入る。macOS 専用。">
+  <p>
+    macOS 専用です。Homebrew の tap から入ります。
+  </p>
+
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Terminal</span>
+      <button class="copy" type="button" data-copy={install}>コピー</button>
+    </div>
+    <pre>{install}</pre>
+  </div>
+
+  <p>入るのはユニバーサルバイナリ 1 本です（Apple Silicon / Intel 両対応）。</p>
+
+  <p class="note">
+    <code>md --version</code> が動かないときは、Homebrew の <code>bin</code> が
+    <code>PATH</code> に入っているか確認してください。
+  </p>
+
+  <h2>更新する</h2>
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Terminal</span>
+      <button class="copy" type="button" data-copy="brew upgrade md-preview">コピー</button>
+    </div>
+    <pre>brew upgrade md-preview</pre>
+  </div>
+
+  <h2>ソースから入れる</h2>
+  <p>
+    自分でビルドしたい場合は <a href={REPO}>リポジトリ</a>をクローンして
+    <code>cargo install --path .</code> でも入ります。<a href="https://rustup.rs/">Rust</a> が必要です。
+    このときの本体は <code>~/.cargo/bin/md</code> に置かれます。
+  </p>
+</DocLayout>

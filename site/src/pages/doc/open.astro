@@ -1,0 +1,41 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+---
+<DocLayout slug="open" title="開く" description="ファイル・ディレクトリ・標準入力の 3 通りの開き方と、ルートの決まり方。">
+  <p>
+    開き方は 3 つです。どれでも画面は同じで、変わるのは
+    <strong>サイドバーのルートがどこになるか</strong>だけです。
+  </p>
+
+  <div class="codebox">
+    <div class="codebox-head"><span>Terminal</span></div>
+    <pre>{`md intro.md          # ファイルを開く
+md .                 # ディレクトリを開く
+cat note.md | md     # 標準入力から読む`}</pre>
+  </div>
+
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">ファイルを指定</div>
+      <div class="fdesc">作業ディレクトリがルートになり、そのファイルがタブで開きます。作業ディレクトリの外のファイルを指定したときは、そのファイルの親ディレクトリがルートです。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">ディレクトリを指定</div>
+      <div class="fdesc">そこがルートになります。タブは開かないので、ツリーから選んで開きます。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">標準入力</div>
+      <div class="fdesc">作業ディレクトリがルートです。渡された内容は一時ファイルになり、ツリーには出ませんがタブで開きます。</div>
+    </div>
+  </div>
+
+  <p class="note">
+    ウィンドウは自分をバックグラウンドへ切り離して残ります。ターミナルを閉じても消えません。
+    閉じるのは <kbd>⌘W</kbd>（最後のタブを閉じるとウィンドウも閉じます）。
+  </p>
+
+  <p>
+    複数ファイルをまとめて渡すなどの細かい指定は <code>md --help</code> にあります。
+    Claude Code から使う場合は、同梱のスキルが状況に応じて使い分けます。
+  </p>
+</DocLayout>

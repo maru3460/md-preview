@@ -1,0 +1,50 @@
+name: Deploy site to Pages
+
+# サイトだけの変更で走らせる。Rust のビルドとは無関係なので、
+# src/ を触っただけでデプロイが動くと待ち時間が無駄になる。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'Cargo.toml' # バージョンをフッタに出しているので、上がったら焼き直す
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 走行中に新しい push が来たら、古い方は畳む（デプロイは最新の 1 本でいい）。
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+        working-directory: site
+      - run: npm run build
+        working-directory: site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

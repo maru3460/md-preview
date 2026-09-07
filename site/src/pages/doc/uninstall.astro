@@ -1,0 +1,41 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+---
+<DocLayout slug="uninstall" title="アンインストール" description="本体は brew で消す。設定とキャッシュを消したいときは md uninstall。">
+  <p>本体は brew で消せます。</p>
+
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Terminal</span>
+      <button class="copy" type="button" data-copy={"md uninstall\nbrew uninstall md-preview"}>コピー</button>
+    </div>
+    <pre>{`md uninstall
+brew uninstall md-preview`}</pre>
+  </div>
+
+  <p>
+    設定とキャッシュは本体とは別に残ります。放っておいても困りませんが、
+    消したいなら <code>md uninstall</code> が一覧を見せて片付けます。
+    先に本体を消すと <code>md uninstall</code> が打てなくなるので、順番はこの通りにしてください。
+  </p>
+
+  <table class="plain">
+    <thead>
+      <tr><th>場所</th><th>中身</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>~/.config/md-preview/</code></td><td>テーマ設定・ユーザー CSS・起動用のバンドル</td></tr>
+      <tr><td><code>~/Library/WebKit/md</code></td><td>UI の状態（オンボーディング済みフラグなど）</td></tr>
+      <tr><td><code>~/Library/Caches/md</code></td><td>WebKit のキャッシュ</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    <code>~/Library</code> 以下の 2 つは実行ファイル名がそのままディレクトリ名になる場所で、
+    <code>md</code> 専用ではありません。<code>md</code> という名前の別のプログラムが同じ場所を使っている場合は触りません。
+  </p>
+
+  <p class="note">
+    ソースから入れた場合は、<code>md uninstall</code> が <code>cargo uninstall md-preview</code> まで実行して本体も消します。
+  </p>
+</DocLayout>

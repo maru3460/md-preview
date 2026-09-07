@@ -1,0 +1,32 @@
+---
+import Base from './Base.astro';
+import { DOC_PAGES } from '../doc-pages.js';
+
+const { slug, title, description } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const docLink = (s) => (s ? `${base}/doc/${s}/` : `${base}/doc/`);
+
+const i = DOC_PAGES.findIndex((p) => p.slug === slug);
+const prev = i > 0 ? DOC_PAGES[i - 1] : null;
+const next = i < DOC_PAGES.length - 1 ? DOC_PAGES[i + 1] : null;
+---
+<Base title={`${title} — md-preview`} description={description} current="doc">
+  <div class="doc-layout">
+    <nav class="doc-nav" aria-label="使い方の目次">
+      {DOC_PAGES.map((p) => (
+        <a href={docLink(p.slug)} aria-current={p.slug === slug ? 'page' : undefined}>{p.title}</a>
+      ))}
+    </nav>
+
+    <article class="doc-body">
+      <h1>{title}</h1>
+      <slot />
+
+      <nav class="doc-pager">
+        {prev ? <a href={docLink(prev.slug)}>← {prev.title}</a> : <span></span>}
+        {next ? <a href={docLink(next.slug)}>{next.title} →</a> : <span></span>}
+      </nav>
+    </article>
+  </div>
+</Base>

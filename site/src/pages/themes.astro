@@ -1,0 +1,162 @@
+---
+import Base from '../layouts/Base.astro';
+
+// 色は src/assets/themes/*.css の実値（body の背景・文字と --md-accent）から取っている。
+const themes = [
+  { name: 'default', kind: 'auto', bg: '#ffffff', alt: '#f6f8fa', accent: '#3b82f6', note: 'OS のダークモードに追従する既定のテーマ' },
+  { name: 'minimal', kind: 'light', bg: '#ffffff', alt: '#f1f0ee', accent: '#2e7cd6', note: '装飾を削った素の白' },
+  { name: 'editorial', kind: 'light', bg: '#fffefb', alt: '#efe9df', accent: '#8a1c1c', note: '読み物向け。赤の差し色' },
+  { name: 'ink', kind: 'light', bg: '#ffffff', alt: '#ebebeb', accent: '#000000', note: '黒一色のコントラスト' },
+  { name: 'paper', kind: 'light', bg: '#faf6ee', alt: '#ece4d5', accent: '#1f6f6b', note: '紙の色。本文はセリフ体' },
+  { name: 'mono', kind: 'light', bg: '#f7f5ef', alt: '#e9e4d6', accent: '#9b2c2c', note: '全部等幅' },
+  { name: 'solarized-light', kind: 'light', bg: '#fdf6e3', alt: '#eee8d5', accent: '#268bd2', note: '定番の Solarized' },
+  { name: 'nord', kind: 'dark', bg: '#2e3440', alt: '#3b4252', accent: '#88c0d0', note: '寒色の低コントラスト' },
+  { name: 'dracula', kind: 'dark', bg: '#282a36', alt: '#44475a', accent: '#bd93f9', note: '紫の差し色' },
+  { name: 'gruvbox', kind: 'dark', bg: '#282828', alt: '#32302f', accent: '#fe8019', note: 'レトロな暖色' },
+  { name: 'rose-pine', kind: 'dark', bg: '#191724', alt: '#26233a', accent: '#c4a7e7', note: '紫みのある暗色' },
+  { name: 'terminal', kind: 'dark', bg: '#0b0f0b', alt: '#14241a', accent: '#6ee787', note: '緑の等幅。端末そのもの' },
+  { name: 'blueprint', kind: 'dark', bg: '#0e2a4a', alt: '#123455', accent: '#6fb3e0', note: '製図の青' },
+];
+
+const groups = [
+  ['auto（OS 設定に追従）', themes.filter((t) => t.kind === 'auto')],
+  ['light（固定）', themes.filter((t) => t.kind === 'light')],
+  ['dark（固定）', themes.filter((t) => t.kind === 'dark')],
+];
+---
+<Base
+  title="Themes — md-preview"
+  description="md-preview の 13 テーマ。md theme <名前> で配色を丸ごと切り替えられる。ユーザー CSS を置けば独自テーマも作れる。"
+  current="themes"
+>
+  <div class="page-head">
+    <h1>Themes</h1>
+    <p>
+      <code>md theme &lt;名前&gt;</code> で配色が丸ごと変わる。
+      カードを押すと、このページがそのテーマの色になる。
+    </p>
+  </div>
+
+  <section class="section">
+    <div class="section-inner">
+      {groups.map(([label, list]) => (
+        <div style="margin-bottom:48px">
+          <h2 style="font-size:18px;margin-bottom:16px">{label}</h2>
+          <div class="theme-grid">
+            {list.map((t) => (
+              <button class="theme-card" type="button" data-theme-set={t.name} title={t.note}>
+                <span class="theme-swatch">
+                  <b style={`background:${t.bg}`}></b>
+                  <b style={`background:${t.alt}`}></b>
+                  <b style={`background:${t.accent}`}></b>
+                </span>
+                <span class="theme-meta">
+                  <code>{t.name}</code>
+                  <em>{t.kind}</em>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <!-- 実物のスクショを 13 枚撮る代わりに、サイト側のテーマ変数だけで描いた見本。
+           「こんな感じになる」の温度感なので、コードの色付けまでは再現しない。 -->
+      <div class="figure">
+        <div class="figure-frame preview-frame">
+          <div class="shot-chrome"><i></i><i></i><i></i><span>sample.md</span></div>
+          <article class="preview">
+            <h1>大見出し H1</h1>
+            <p>
+              これは導入の段落。新しいタイポグラフィでは行間 1.75、本文サイズ 17px、本文幅 720px に調整されている。
+              長文を読み流したときに視線が迷わない密度を狙っている。
+            </p>
+
+            <h2>中見出し H2</h2>
+            <p>長めの段落をもう一つ置いて、見出しと本文の呼吸感を確認する。<code>code spans</code> は地の文に馴染ませた淡色背景にしている。</p>
+
+            <h3>小見出し H3</h3>
+            <p>リンクは <a href="#">GitHub</a> のように青基調。裸の URL はそのまま貼るだけでリンクになる → <a href="#">https://github.com/rust-lang/rust</a> 。</p>
+
+            <h2>GFM Alerts</h2>
+            <div class="alert alert-note"><b>Note</b><p>補足情報。読者がスキミングしている時にも気付けるようにする。</p></div>
+            <div class="alert alert-tip"><b>Tip</b><p>物事をうまく進めるためのヒント。</p></div>
+            <div class="alert alert-important"><b>Important</b><p>ユーザーの達成のために知っておくべき重要な情報。</p></div>
+            <div class="alert alert-warning"><b>Warning</b><p>起こり得る問題を避けるための即座の注意。</p></div>
+            <div class="alert alert-caution"><b>Caution</b><p>アクションの否定的な結果を伴うリスクや、特定の操作を行うべきでない理由について。</p></div>
+            <p>通常の引用も従来通り：</p>
+            <blockquote>これは普通のブロッククォート。地の文より少し色を落とした見た目。</blockquote>
+
+            <h2>コードブロック</h2>
+            <pre><code>{`fn main() {
+    println!("Hello, md-preview!");
+    let v = vec![1, 2, 3];
+    for x in &v {
+        println!("{}", x);
+    }
+}`}</code></pre>
+            <p>インラインコード <code>let x = 42;</code> も同居させて確認。</p>
+
+            <h2>テーブル</h2>
+            <table>
+              <thead><tr><th>機能</th><th>状態</th><th>備考</th></tr></thead>
+              <tbody>
+                <tr><td>Mermaid</td><td>✅</td><td>バンドル済</td></tr>
+                <tr><td>Callout</td><td>✅</td><td>GFM 5種</td></tr>
+                <tr><td>Copy ボタン</td><td>✅</td><td>hover で表示</td></tr>
+                <tr><td>タイポ刷新</td><td>✅</td><td>既定CSS更新</td></tr>
+              </tbody>
+            </table>
+
+            <h2>リスト &amp; タスク</h2>
+            <ul>
+              <li>項目1</li>
+              <li>項目2
+                <ul><li>ネスト</li><li>もうひとつ</li></ul>
+              </li>
+              <li>項目3</li>
+            </ul>
+            <p>タスク：</p>
+            <ul class="tasks">
+              <li><input type="checkbox" checked disabled /> Mermaid 対応</li>
+              <li><input type="checkbox" checked disabled /> Callout</li>
+              <li><input type="checkbox" checked disabled /> コピーボタン</li>
+              <li><input type="checkbox" disabled /> さらに何か追加機能</li>
+            </ul>
+
+            <h2>フットノート</h2>
+            <p>これはフットノート例<sup><a href="#">1</a></sup>。複数も可能<sup><a href="#">2</a></sup>。</p>
+          </article>
+        </div>
+        <p class="figure-caption">md --sample で開ける sample.md の抜粋。上のカードを押すと、この文書も一緒に切り替わる</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section alt">
+    <div class="section-inner" style="max-width:720px">
+      <div class="section-head">
+        <h2>自分のテーマを足す</h2>
+      </div>
+
+      <h3 style="font-size:17px;margin-bottom:10px">ユーザーテーマ</h3>
+      <p style="color:var(--fg-dim);margin-bottom:16px">
+        <code>~/.config/md-preview/themes/&lt;名前&gt;.css</code> に置くと <code>md theme &lt;名前&gt;</code> で選べるようになる。
+        組み込みと同じ名前ならそちらが優先される。テンプレートは <code>default</code> の CSS を写すのが手軽。
+      </p>
+
+      <h3 style="font-size:17px;margin:28px 0 10px">カスタム CSS</h3>
+      <p style="color:var(--fg-dim);margin-bottom:16px">
+        <code>~/.config/md-preview/style.css</code> はテーマより後ろに当たる。
+        選んでいるテーマはそのままに、細部だけ直したいときに使う。
+      </p>
+      <div class="codebox">
+        <div class="codebox-head"><span>~/.config/md-preview/style.css</span></div>
+        <pre>{`/* 例: コンテンツ幅を広げる */
+.markdown-body {
+    max-width: 1000px;
+}`}</pre>
+      </div>
+    </div>
+  </section>
+</Base>

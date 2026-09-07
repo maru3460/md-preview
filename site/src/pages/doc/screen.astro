@@ -1,0 +1,56 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+---
+<DocLayout slug="screen" title="画面の見方" description="サイドバーのツリー、タブ、プレビュー。相対パスがどこを基準に解決されるか。">
+  <p>
+    画面はサイドバーのツリー、タブバー、プレビューの 3 つでできています。
+  </p>
+
+  <div class="figure">
+    <div class="figure-frame">
+      <div class="shot-body">
+        screen.png
+        <small>ツリーを展開してタブを 2 枚開いた状態</small>
+      </div>
+    </div>
+  </div>
+
+  <h2>サイドバー</h2>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">ツリー</div>
+      <div class="fdesc">Markdown を含まないディレクトリは自動で除外されます。幅はドラッグで変えられ、<kbd>⌘B</kbd> で丸ごと隠せます。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">キーで辿る</div>
+      <div class="fdesc"><kbd>Tab</kbd> で本文とツリーのフォーカスを行き来します。ツリー内では <kbd>j</kbd> / <kbd>k</kbd> で上下、<kbd>Enter</kbd> か <kbd>l</kbd> で開き、<kbd>h</kbd> で畳みます。本文からは <kbd>[</kbd> / <kbd>]</kbd> で前後のファイルへ移動します。</div>
+    </div>
+  </div>
+
+  <h2>タブ</h2>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">開くたびに増える</div>
+      <div class="fdesc">ツリー・<kbd>⌘P</kbd>・本文のリンク、どの経路で開いても新しいタブになります。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">状態を覚えている</div>
+      <div class="fdesc">タブごとに読み位置と表示モード（Raw / 差分）を保持するので、戻ると離れたときの状態になります。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">移動と操作</div>
+      <div class="fdesc"><kbd>⇧Tab</kbd> で次へ、<kbd>⌘1</kbd> … <kbd>⌘9</kbd> で直接移動。中クリックか <code>×</code> で閉じます。右クリックで「他のタブを閉じる」「パスをコピー」が出ます。</div>
+    </div>
+  </div>
+
+  <h2>相対パスの基準</h2>
+  <p>
+    画像（<code>![](fig.png)</code>）もリンク（<code>[b](./b.md)</code>）も、開いているフォルダではなく
+    <strong>その Markdown ファイルがある場所</strong>を基準に解決します。
+    <code>docs/a.md</code> の <code>fig.png</code> は <code>docs/fig.png</code> を指します。
+  </p>
+  <p>
+    <code>../assets/fig.png</code> のようにフォルダの外を指すパスも解決します。
+    外のファイルを開いた場合、ツリーには行がありませんがタブには並び、編集すれば自動リロードも効きます。
+  </p>
+</DocLayout>

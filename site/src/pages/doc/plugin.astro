@@ -1,0 +1,62 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+---
+<DocLayout
+  slug="plugin"
+  title="Claude Code プラグイン"
+  description="md-preview を Claude Code のプラグインとして入れる手順。スキルだけが入る。"
+>
+  <p>
+    このリポジトリは <a href="https://claude.com/claude-code">Claude Code</a> のプラグインとしても配布しています。
+    <code>md</code> の使い方をまとめたスキルが入るので、Claude Code が Markdown を見せたいときに
+    <code>md</code> を使うようになります。
+  </p>
+
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Claude Code の中で実行</span>
+      <button class="copy" type="button" data-copy="/plugin marketplace add maru3460/md-preview">コピー</button>
+    </div>
+    <pre>{`/plugin marketplace add maru3460/md-preview
+/plugin install md-preview@md-preview`}</pre>
+  </div>
+
+  <p class="note">
+    入るのは<strong>スキルだけ</strong>です。<code>md</code> コマンド本体は別に入れる必要があります。
+  </p>
+
+  <h2>更新する</h2>
+  <p>
+    <code>marketplace add</code> で入れたプラグインは、リポジトリ側でバージョンが上がっても自動では更新されません。
+    メタデータを取り直してから再インストールします。
+  </p>
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Claude Code の中で実行</span>
+      <button class="copy" type="button" data-copy="/plugin marketplace update md-preview">コピー</button>
+    </div>
+    <pre>{`/plugin marketplace update md-preview
+/plugin install md-preview@md-preview`}</pre>
+  </div>
+  <p>
+    反映されたかは <code>/plugin list</code>、または <code>/plugin</code> → <strong>Installed</strong> タブの
+    <strong>Last updated</strong> で確認できます。
+  </p>
+
+  <h2>自動更新にする</h2>
+  <p>
+    カスタムマーケットプレイスは既定で自動更新が切れています。
+    <code>/plugin</code> → <strong>Marketplaces</strong> → <code>md-preview</code> →
+    <strong>Enable auto-update</strong> で有効にすると、起動時に最新版へ更新されます。
+  </p>
+
+  <h2>外す</h2>
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Claude Code の中で実行</span>
+      <button class="copy" type="button" data-copy="/plugin uninstall md-preview@md-preview">コピー</button>
+    </div>
+    <pre>{`/plugin uninstall md-preview@md-preview
+/plugin marketplace remove md-preview   # 登録ごと消す場合`}</pre>
+  </div>
+</DocLayout>

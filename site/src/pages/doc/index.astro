@@ -1,0 +1,42 @@
+---
+import DocLayout from '../../layouts/DocLayout.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const docLink = (s) => `${base}/doc/${s}/`;
+
+const flow = [
+  ['AI が md を書く', 'Claude Code などに書かせた設計メモやレビュー結果です。'],
+  ['md で開く', '<code>md path/to/file.md</code>。ウィンドウが出て、コマンドはすぐ終了します。'],
+  ['読む', 'ツリーで辿る、⌘P で開く、⌘F で探す。図もコードもそのまま出ます。'],
+  ['コメントする', '<code>c</code> で気になった段落に指摘を書きます。'],
+  ['渡す', '<code>y</code> で全部コピーして、AI に貼ります。'],
+  ['閉じる', '<kbd>⌘W</kbd>。フォーカスがターミナルに戻ります。'],
+];
+---
+<DocLayout slug="" title="はじめに" description="md-preview の使い方。開いて、読んで、コメントを付けて、AI に返すまでの流れ。">
+  <p>
+    md-preview は、ターミナルから Markdown を開いて読むための macOS 用ビューアです。
+    編集はしません。読むことと、読んだ結果を返すことに絞ってあります。
+  </p>
+
+  <h2>ひととおりの流れ</h2>
+  <div class="flist">
+    {flow.map(([name, desc], i) => (
+      <div class="fitem">
+        <div class="fname">{i + 1}. {name}</div>
+        <div class="fdesc" set:html={desc}></div>
+      </div>
+    ))}
+  </div>
+
+  <p class="note">
+    まだ入れていなければ <a href={docLink('install')}>インストール</a> から。
+    もう入っているなら <a href={docLink('open')}>開く</a> へ進んでください。
+  </p>
+
+  <h2>このドキュメントの並び</h2>
+  <p>
+    左の目次は、入れる → 開く → 読む → 返す → 片付ける、の順に並んでいます。
+    上から読んでも、必要な所だけ拾っても構いません。
+  </p>
+</DocLayout>

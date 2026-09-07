@@ -23,3 +23,10 @@ tests/ui-fixtures/zz-big.txt
 
 # ローカルの秘密（tap へ push するトークンなど）。追跡すると即座に漏れる。
 .env
+
+# サイトのビルド成果物（site/ で npm run build すれば作り直せる）
+site/dist/
+site/.astro/
+
+# ルートの package-lock.json は無視しているが、サイトは CI が npm ci で入れるので追跡する
+!site/package-lock.json
