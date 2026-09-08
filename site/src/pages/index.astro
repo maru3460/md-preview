@@ -75,11 +75,12 @@ const cards = [
           ))}
         </div>
       </div>
+    </div>
 
-      <!-- ⌘⇧5 のウィンドウ撮影は macOS の影と角丸を持っているので、サイト側では枠を付けない -->
-      <div class="shot shot-window">
-        <img src={`${base}/images/hero.png`} width="1392" height="844" alt="md-preview のウィンドウ。左にファイルツリー、中央に sample.md のプレビュー、右にアウトライン" />
-      </div>
+    <!-- 見出しの枠（820px）より広く出したいので hero-inner の外に置く -->
+    <div class="shot">
+      <video src={`${base}/images/hero.mp4`} width="1346" height="788" autoplay muted loop playsinline preload="metadata"
+        aria-label="ターミナルで md . と打ってウィンドウが開き、読んで、閉じてターミナルへ戻るまでの録画"></video>
     </div>
   </section>
 
@@ -133,7 +134,7 @@ const cards = [
     <div class="section-inner figure">
       <div class="figure-frame">
         <video src={`${base}/images/comment.mp4`} width="1794" height="928" autoplay muted loop playsinline preload="metadata"
-          aria-label="コメントを付けて、全部コピーして、Claude Code に貼るまでの録画"></video>
+          aria-label="段落にコメントを付けて、全部コピーして、Claude Code に貼るまでの録画"></video>
       </div>
     </div>
   </section>
