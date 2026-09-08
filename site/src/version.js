@@ -8,5 +8,9 @@ import { resolve } from 'node:path';
 const toml = readFileSync(resolve(process.cwd(), '../Cargo.toml'), 'utf8');
 const m = toml.match(/^version\s*=\s*"([^"]+)"/m);
 
-export const VERSION = m ? m[1] : '0.0.0';
+if (!m) {
+  // フッタに v0.0.0 が出たまま公開されるより、ビルドが赤くなる方がよい。
+  throw new Error('version.js: ../Cargo.toml から version を読めませんでした（site/ で実行していますか）');
+}
+export const VERSION = m[1];
 export const REPO = 'https://github.com/maru3460/md-preview';

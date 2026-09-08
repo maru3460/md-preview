@@ -1,11 +1,13 @@
 ---
 import '../styles/site.css';
 import { VERSION, REPO } from '../version.js';
+import { THEME_NAMES } from '../themes.js';
 
 const { title, description, current } = Astro.props;
 
 // base は '/md-preview'。末尾を揃えてから組み立てる。
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
 const link = (p) => (p ? `${base}/${p}/` : `${base}/`);
 
 // 機能の一覧は Home のカードで足りる。タブに置くのは、読んだあとに
@@ -26,6 +28,8 @@ const nav = [
   <meta property="og:title" content={title} />
   <meta property="og:description" content={description} />
   <meta property="og:type" content="website" />
+  <meta property="og:url" content={canonical} />
+  <link rel="canonical" href={canonical} />
   <meta property="og:image" content={new URL(`${base}/icon.png`, Astro.site).href} />
   <link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml" />
   <link rel="icon" href={`${base}/favicon-32.png`} type="image/png" sizes="32x32" />
@@ -47,7 +51,7 @@ const nav = [
         {nav.map((n) => (
           <a href={n.href} aria-current={n.key === current ? 'page' : undefined}>{n.label}</a>
         ))}
-        <a href={REPO} rel="noopener">GitHub</a>
+        <a href={REPO}>GitHub</a>
       </div>
     </nav>
   </header>
@@ -68,11 +72,15 @@ const nav = [
     </div>
   </footer>
 
-  <script is:inline>
+  <script is:inline define:vars={{ THEME_NAMES }}>
     // テーマの着せ替え。[data-theme-set] を持つ要素ならどこに置いても効く。
     (function () {
       var root = document.documentElement;
       var KEY = 'md-site-theme';
+      // localStorage に既知でない名前が残っていると、どの [data-md-theme] にも当たらない
+      // のに :root:not([data-md-theme]) のダークブロックだけが無効になり、暗い OS でも
+      // 白背景に固着する。テーマを消したり改名したりした後に起きるので、ここで弾く。
+      function known(name) { return THEME_NAMES.indexOf(name) >= 0; }
 
       function apply(name) {
         if (name) root.setAttribute('data-md-theme', name);
@@ -97,17 +105,24 @@ const nav = [
 
       var saved = null;
       try { saved = localStorage.getItem(KEY); } catch (e) {}
-      apply(saved || '');
+      apply(saved && known(saved) && saved !== 'default' ? saved : '');
     })();
 
     // コードのコピー。data-copy に入れた文字列をそのまま渡す。
+    // 元のラベルは最初に 1 回だけ覚える。押した瞬間の textContent を覚えると、
+    // 1.4 秒以内の 2 回目で「コピーしました」を元の文言として掴んで戻らなくなる。
     document.querySelectorAll('[data-copy]').forEach(function (btn) {
+      var label = btn.textContent;
+      var timer = null;
+      function show(text) {
+        btn.textContent = text;
+        clearTimeout(timer);
+        timer = setTimeout(function () { btn.textContent = label; }, 1400);
+      }
       btn.addEventListener('click', function () {
-        navigator.clipboard.writeText(btn.dataset.copy).then(function () {
-          var before = btn.textContent;
-          btn.textContent = 'コピーしました';
-          setTimeout(function () { btn.textContent = before; }, 1400);
-        });
+        navigator.clipboard.writeText(btn.dataset.copy)
+          .then(function () { show('コピーしました'); })
+          .catch(function () { show('コピーできませんでした'); });
       });
     });
   </script>

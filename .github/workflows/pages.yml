@@ -9,17 +9,22 @@ on:
       - 'site/**'
       - 'Cargo.toml' # バージョンをフッタに出しているので、上がったら焼き直す
       - '.github/workflows/pages.yml'
+  # PR ではビルドだけ通す（デプロイは main への push のみ）。
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'Cargo.toml'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# 走行中に新しい push が来たら、古い方は畳む（デプロイは最新の 1 本でいい）。
+# 同時に 2 本走らせない。途中で止めると deploy-pages が半端な状態を残すことが
+# あるので、待たせて順に流す（actions/deploy-pages の推奨）。
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -41,7 +46,11 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

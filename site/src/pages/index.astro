@@ -1,18 +1,18 @@
 ---
 import Base from '../layouts/Base.astro';
+import { THEMES } from '../themes.js';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const link = (p) => `${base}/${p}/`;
 
-const chips = [
-  { name: 'default', color: '#ffffff' },
-  { name: 'nord', color: '#2e3440' },
-  { name: 'dracula', color: '#282a36' },
-  { name: 'gruvbox', color: '#282828' },
-  { name: 'paper', color: '#faf6ee' },
-  { name: 'editorial', color: '#fffefb' },
-  { name: 'terminal', color: '#0b0f0b' },
-];
+// Home に出すのは代表の 7 つ。色は themes.js の背景色。default は OS の設定に
+// 追従するので、白 1 色で塗ると暗い OS では嘘になる。半々にして「両方」を表す。
+const CHIP_NAMES = ['default', 'nord', 'dracula', 'gruvbox', 'paper', 'editorial', 'terminal'];
+const chips = CHIP_NAMES.map((name) => {
+  const t = THEMES.find((x) => x.name === name);
+  const color = name === 'default' ? 'linear-gradient(90deg, #ffffff 50%, #0d1117 50%)' : t.bg;
+  return { name, color };
+});
 
 const cards = [
   {

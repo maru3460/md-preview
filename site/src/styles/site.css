@@ -1,7 +1,6 @@
 /* ──────────────────────────────────────────────
-   トークン。土台は GitHub Primer 系にする。md-preview 自身が
-   「GitHub 風レンダリング」を謳っているので、サイトの色が同じ系統だと
-   製品と地続きに見える。
+   トークン。土台は GitHub Primer 系にする。md-preview の既定テーマが
+   GitHub の見え方に寄せてあるので、サイトの色が同じ系統だと製品と地続きに見える。
    ────────────────────────────────────────────── */
 :root {
     --bg: #ffffff;
@@ -11,7 +10,7 @@
     --border: #d1d9e0;
     --border-strong: #b4bcc4;
     --accent: #0969da;
-    --accent-fg: #ffffff;
+   
     --shadow: 0 10px 30px -10px rgba(0, 0, 0, .18);
     --radius: 10px;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -26,6 +25,7 @@
 [data-md-theme="rose-pine"], [data-md-theme="terminal"], [data-md-theme="blueprint"] {
     --alert-note: #58a6ff; --alert-tip: #3fb950; --alert-important: #a371f7;
     --alert-warning: #d29922; --alert-caution: #f85149;
+    --shadow: 0 10px 30px -10px rgba(0, 0, 0, .6);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -49,54 +49,54 @@
    ────────────────────────────────────────────── */
 [data-md-theme="nord"] {
     --bg: #2e3440; --bg-alt: #3b4252; --fg: #d8dee9; --fg-dim: #a8b1c2;
-    --border: #4c566a; --border-strong: #667084; --accent: #88c0d0; --accent-fg: #2e3440;
+    --border: #4c566a; --border-strong: #667084; --accent: #88c0d0;
 }
 [data-md-theme="dracula"] {
     --bg: #282a36; --bg-alt: #44475a; --fg: #f8f8f2; --fg-dim: #b8b9c6;
-    --border: #44475a; --border-strong: #5c6076; --accent: #bd93f9; --accent-fg: #282a36;
+    --border: #44475a; --border-strong: #5c6076; --accent: #bd93f9;
 }
 [data-md-theme="gruvbox"] {
     --bg: #282828; --bg-alt: #32302f; --fg: #ebdbb2; --fg-dim: #bdae93;
-    --border: #504945; --border-strong: #665c54; --accent: #fe8019; --accent-fg: #282828;
+    --border: #504945; --border-strong: #665c54; --accent: #fe8019;
 }
 [data-md-theme="rose-pine"] {
     --bg: #191724; --bg-alt: #26233a; --fg: #e0def4; --fg-dim: #a9a3c2;
-    --border: #2f2b45; --border-strong: #45415c; --accent: #c4a7e7; --accent-fg: #191724;
+    --border: #2f2b45; --border-strong: #45415c; --accent: #c4a7e7;
 }
 [data-md-theme="terminal"] {
     --bg: #0b0f0b; --bg-alt: #14241a; --fg: #6ee787; --fg-dim: #4a9c5c;
-    --border: #1d2a1d; --border-strong: #2e4230; --accent: #6ee787; --accent-fg: #0b0f0b;
+    --border: #1d2a1d; --border-strong: #2e4230; --accent: #6ee787;
     --theme-font: var(--mono);
 }
 [data-md-theme="blueprint"] {
     --bg: #0e2a4a; --bg-alt: #123455; --fg: #cfe3f5; --fg-dim: #91b4d2;
-    --border: #1b4267; --border-strong: #2b5a85; --accent: #6fb3e0; --accent-fg: #0e2a4a;
+    --border: #1b4267; --border-strong: #2b5a85; --accent: #6fb3e0;
 }
 [data-md-theme="minimal"] {
     --bg: #ffffff; --bg-alt: #f1f0ee; --fg: #37352f; --fg-dim: #6d6a62;
-    --border: #e4e2de; --border-strong: #c9c6c0; --accent: #2e7cd6; --accent-fg: #ffffff;
+    --border: #e4e2de; --border-strong: #c9c6c0; --accent: #2e7cd6;
 }
 [data-md-theme="editorial"] {
     --bg: #fffefb; --bg-alt: #efe9df; --fg: #1a1a1a; --fg-dim: #5c5850;
-    --border: #e0dcd2; --border-strong: #c8c2b4; --accent: #8a1c1c; --accent-fg: #fffefb;
+    --border: #e0dcd2; --border-strong: #c8c2b4; --accent: #8a1c1c;
 }
 [data-md-theme="ink"] {
     --bg: #ffffff; --bg-alt: #ebebeb; --fg: #000000; --fg-dim: #5a5a5a;
-    --border: #dcdcdc; --border-strong: #b4b4b4; --accent: #000000; --accent-fg: #ffffff;
+    --border: #dcdcdc; --border-strong: #b4b4b4; --accent: #000000;
 }
 [data-md-theme="paper"] {
     --bg: #faf6ee; --bg-alt: #ece4d5; --fg: #33302a; --fg-dim: #6b6559;
-    --border: #ddd5c5; --border-strong: #c4bba7; --accent: #1f6f6b; --accent-fg: #faf6ee;
+    --border: #ddd5c5; --border-strong: #c4bba7; --accent: #1f6f6b;
     --theme-font: var(--serif);
 }
 [data-md-theme="mono"] {
-    --bg: #f7f5ef; --bg-alt: #e9e4d6; --fg: #2b2a26; --fg-dim: #6a675e;
-    --border: #ded8c8; --border-strong: #c2bba7; --accent: #9b2c2c; --accent-fg: #f7f5ef;
+    --bg: #f7f5ef; --bg-alt: #e9e4d6; --fg: #2b2a26; --fg-dim: #625f56;
+    --border: #ded8c8; --border-strong: #c2bba7; --accent: #9b2c2c;
     --theme-font: var(--mono);
 }
 [data-md-theme="solarized-light"] {
-    --bg: #fdf6e3; --bg-alt: #eee8d5; --fg: #073642; --fg-dim: #657b83;
-    --border: #e3dcc6; --border-strong: #c8c1ac; --accent: #268bd2; --accent-fg: #fdf6e3;
+    --bg: #fdf6e3; --bg-alt: #eee8d5; --fg: #073642; --fg-dim: #546a72;
+    --border: #e3dcc6; --border-strong: #c8c1ac; --accent: #268bd2;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -109,7 +109,12 @@ body {
     color: var(--fg);
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
-    transition: background-color .25s ease, color .25s ease;
+}
+
+/* フォーカスリングは UA 既定に頼らない。Safari の淡い単色は暗いテーマで見えない。 */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
 h1, h2, h3 { margin: 0; line-height: 1.3; letter-spacing: -0.01em; font-weight: 600; }
@@ -139,6 +144,13 @@ code { font-family: var(--mono); }
 .nav-links a { padding: 6px 12px; border-radius: 6px; font-size: 14px; color: var(--fg-dim); }
 .nav-links a:hover { color: var(--fg); background: var(--bg-alt); text-decoration: none; }
 .nav-links a[aria-current="page"] { color: var(--fg); background: var(--bg-alt); }
+/* 397px 未満で GitHub が切れて横スクロールが出る。詰めて 1 行に収める。 */
+@media (max-width: 420px) {
+    .nav { padding: 0 14px; gap: 10px; }
+    .brand { white-space: nowrap; }
+    .nav-links { gap: 0; }
+    .nav-links a { padding: 6px 7px; font-size: 13px; }
+}
 
 /* ── ヒーロー ──────────────────────────────── */
 .hero {
@@ -172,7 +184,7 @@ code { font-family: var(--mono); }
 /* ── テーマスイッチャー ────────────────────── */
 .themebar { margin-top: 44px; }
 .themebar-label {
-    font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+    font-size: 12px; letter-spacing: .06em;
     color: var(--fg-dim); margin-bottom: 12px;
 }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -185,7 +197,7 @@ code { font-family: var(--mono); }
 }
 .chip:hover { color: var(--fg); border-color: var(--border-strong); }
 .chip[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); background: var(--bg-alt); }
-.chip .swatch { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(127,127,127,.35); }
+.chip .swatch { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(127,127,127,.7); }
 
 /* ── スクリーンショットの枠 ────────────────── */
 .shot {
@@ -245,7 +257,7 @@ code { font-family: var(--mono); }
     font-family: var(--mono); font-size: 13px; line-height: 1.7; color: var(--fg);
 }
 
-/* ── ページ見出し（Features / Themes / Install） ── */
+/* ── ページ見出し（Themes・Doc の先頭） ── */
 .page-head {
     padding: 72px 24px 48px; text-align: center;
     background: linear-gradient(180deg, var(--bg-alt) 0%, var(--bg) 100%);
@@ -254,11 +266,6 @@ code { font-family: var(--mono); }
 .page-head p { max-width: 620px; margin: 0 auto; color: var(--fg-dim); font-size: 17px; }
 
 /* ── 機能グループ ──────────────────────────── */
-.fgroup { padding: 56px 24px; border-bottom: 1px solid var(--border); }
-.fgroup:last-of-type { border-bottom: none; }
-.fgroup-inner { max-width: 900px; margin: 0 auto; }
-.fgroup-title { font-size: 23px; margin-bottom: 8px; }
-.fgroup-lead { color: var(--fg-dim); margin-bottom: 28px; }
 .flist { display: flex; flex-direction: column; gap: 12px; }
 /* 左の列は「GitHub 風レンダリング」が 1 行に収まる幅。ここが折れると
    右の説明と行数が揃わず、並べた意味が薄れる。 */
@@ -279,7 +286,6 @@ code { font-family: var(--mono); }
 }
 .figure-frame img, .figure-frame video { display: block; width: 100%; height: auto; }
 .figure-caption { margin-top: 10px; font-size: 13px; color: var(--fg-dim); text-align: center; }
-.figure-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
 
 /* ── キーバインド表 ────────────────────────── */
 .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
@@ -306,10 +312,12 @@ kbd {
     transition: border-color .2s ease, transform .2s ease;
 }
 .theme-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.theme-card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.theme-note { display: block; padding: 0 13px 11px; font-size: 12px; line-height: 1.6; color: var(--fg-dim); }
 .theme-swatch { height: 84px; display: flex; }
 .theme-swatch b { flex: 1; }
 .theme-meta {
-    padding: 10px 13px; display: flex; align-items: baseline; justify-content: space-between;
+    padding: 10px 13px 4px; display: flex; align-items: baseline; justify-content: space-between;
     border-top: 1px solid var(--border);
 }
 .theme-meta code { font-size: 13px; color: var(--fg); }
