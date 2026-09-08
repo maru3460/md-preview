@@ -9,7 +9,10 @@
     --fg-dim: #59636e;
     --border: #d1d9e0;
     --border-strong: #b4bcc4;
-    --accent: #0969da;
+    /* --accent は製品 default の --md-accent（選択色）。リンクは製品と同じく別色。
+       default だけの事情なので、[data-md-theme] が付いたら --link は --accent に戻す。 */
+    --accent: #3b82f6;
+    --link: #0969da;
    
     --shadow: 0 10px 30px -10px rgba(0, 0, 0, .18);
     --radius: 10px;
@@ -36,7 +39,8 @@
         --fg-dim: #9198a1;
         --border: #30363d;
         --border-strong: #484f58;
-        --accent: #4493f8;
+        --accent: #60a5fa;
+        --link: #58a6ff;
         --shadow: 0 10px 30px -10px rgba(0, 0, 0, .6);
         --alert-note: #58a6ff; --alert-tip: #3fb950; --alert-important: #a371f7;
         --alert-warning: #d29922; --alert-caution: #f85149;
@@ -47,6 +51,7 @@
    実テーマの配色をサイトに着せる。13 テーマが看板なので、
    スクショを並べるより「今このページが dracula です」と見せる方が速い。
    ────────────────────────────────────────────── */
+[data-md-theme] { --link: var(--accent); }
 [data-md-theme="nord"] {
     --bg: #2e3440; --bg-alt: #3b4252; --fg: #d8dee9; --fg-dim: #a8b1c2;
     --border: #4c566a; --border-strong: #667084; --accent: #88c0d0;
@@ -121,7 +126,7 @@ body {
 
 h1, h2, h3 { margin: 0; line-height: 1.3; letter-spacing: -0.01em; font-weight: 600; }
 p { margin: 0; }
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--link, var(--accent)); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code { font-family: var(--mono); }
 
@@ -238,7 +243,7 @@ main { flex: 1 0 auto; }
 .card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
 .card .key {
     display: inline-block; margin-bottom: 14px; padding: 3px 9px;
-    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    font-family: var(--mono); font-size: 12px; color: var(--link, var(--accent));
     border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt);
 }
 .card h3 { font-size: 17px; margin-bottom: 8px; }
@@ -347,7 +352,7 @@ kbd {
 }
 .preview h3 { font-size: 17px; margin: 20px 0 8px; }
 .preview p, .preview ul, .preview table, .preview pre, .preview blockquote, .preview .alert { margin: 0 0 14px; }
-.preview a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.preview a { color: var(--link, var(--accent)); text-decoration: underline; text-underline-offset: 2px; }
 .preview code {
     font-family: var(--mono); font-size: 13px; padding: 2px 6px; border-radius: 5px;
     background: var(--bg-alt);
