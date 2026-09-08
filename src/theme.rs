@@ -47,12 +47,14 @@ pub struct Theme {
     pub css: &'static str,
     pub appearance: Appearance,
     /// `md theme` の色見本用の代表パレット: [bg, fg, accent, accent2, accent3]。
+    /// accent は各テーマ CSS の `--md-accent` と同じ値にする（default はリンク色と
+    /// 選択色が別だが、ここは他のテーマと同じく選択色の方を出す）。
     pub swatch: [&'static str; 5],
 }
 
 pub const BUILTIN: &[Theme] = &[
     Theme { name: "default", css: DEFAULT_THEME_CSS, appearance: Appearance::Auto,
-        swatch: ["#ffffff", "#1f2328", "#0969da", "#1a7f37", "#cf222e"] },
+        swatch: ["#ffffff", "#1f2328", "#3b82f6", "#1a7f37", "#cf222e"] },
     Theme { name: "minimal", css: MINIMAL_CSS, appearance: Appearance::Light,
         swatch: ["#ffffff", "#37352f", "#2e7cd6", "#2f9e44", "#e03131"] },
     Theme { name: "editorial", css: EDITORIAL_CSS, appearance: Appearance::Light,
