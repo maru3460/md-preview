@@ -7,6 +7,8 @@ HTMLも見れます。
 md path/to/file.md
 ```
 
+https://github.com/user-attachments/assets/008de3df-165f-4abf-86e3-c70411997ff0
+
 注意: mac限定です。
 
 ## インストール
@@ -25,10 +27,6 @@ brew uninstall md-preview
 ```
 
 `md uninstall` を実行しておくと、設定とキャッシュも消えます。
-
-## 使い方
-
-https://github.com/user-attachments/assets/008de3df-165f-4abf-86e3-c70411997ff0
 
 ## コメント（`c`）
 
