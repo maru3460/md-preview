@@ -1,6 +1,8 @@
 ---
 import DocLayout from '../../layouts/DocLayout.astro';
 
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 // keys.astro の表と同じ内容。片方だけ直さないこと。
 const commentKeys = [
   ['j / k', 'ユニット間を移動（↑ / ↓ でも）'],
@@ -28,11 +30,10 @@ const commentKeys = [
 
   <div class="figure">
     <div class="figure-frame">
-      <div class="shot-body">
-        comment.mp4
-        <small>付ける → 保存 → 全部コピー まで通しで</small>
-      </div>
+      <video src={`${base}/images/comment.mp4`} width="1794" height="928" autoplay muted loop playsinline preload="metadata"
+        aria-label="段落にコメントを付けて、全部コピーして、Claude Code に貼るまでの録画"></video>
     </div>
+    <p class="figure-caption">c で入り、段落を押して書き、⌘Enter で保存。全部コピーして Claude Code に貼るまで</p>
   </div>
 
   <h2>1. 付ける</h2>

@@ -1,18 +1,16 @@
 ---
 import DocLayout from '../../layouts/DocLayout.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <DocLayout slug="other" title="md 以外を開く" description="HTML のレンダリング表示、ソースビュー、Raw 表示、Git 差分、右クリックメニュー。">
   <p>
     <code>.html</code> はページとして、それ以外のテキストは行番号付きのソースとして開きます。
   </p>
 
-  <div class="figure">
-    <div class="figure-frame">
-      <div class="shot-body">
-        source.png
-        <small>ソースビューと Git 差分</small>
-      </div>
-    </div>
+  <div class="figure shot-window">
+    <img src={`${base}/images/raw.png`} width="1392" height="844" alt="main.rs を行番号付きのソースとして表示した状態" />
+    <p class="figure-caption">.rs をそのまま開いたところ</p>
   </div>
 
   <h2>HTML</h2>
@@ -37,6 +35,10 @@ import DocLayout from '../../layouts/DocLayout.astro';
     作業ツリーの差分に切り替わります。右下のトグルでも同じです。
     差分はレンダリング結果ではなくソースの差分なので、md でも非 md でも全幅で出ます。
   </p>
+  <div class="figure shot-window">
+    <img src={`${base}/images/diff.png`} width="1392" height="844" alt="render.rs を ⌘D で Git 差分表示に切り替えた状態。削除 1 行と追加 7 行" />
+    <p class="figure-caption">render.rs を ⌘D で差分に切り替えたところ</p>
+  </div>
 
   <h2>右クリックメニュー</h2>
   <div class="flist">

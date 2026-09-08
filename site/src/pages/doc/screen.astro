@@ -1,18 +1,15 @@
 ---
 import DocLayout from '../../layouts/DocLayout.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <DocLayout slug="screen" title="画面の見方" description="サイドバーのツリー、タブ、プレビュー。相対パスがどこを基準に解決されるか。">
   <p>
     画面はサイドバーのツリー、タブバー、プレビューの 3 つでできています。
   </p>
 
-  <div class="figure">
-    <div class="figure-frame">
-      <div class="shot-body">
-        screen.png
-        <small>ツリーを展開してタブを 2 枚開いた状態</small>
-      </div>
-    </div>
+  <div class="figure shot-window">
+    <img src={`${base}/images/hero.png`} width="1392" height="844" alt="左にファイルツリー、上にタブ、中央にプレビュー、右にアウトラインを出した状態" />
   </div>
 
   <h2>サイドバー</h2>
