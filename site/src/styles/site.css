@@ -103,6 +103,8 @@
 
 body {
     margin: 0;
+    /* 短いページ（Doc の目次など）でフッタが画面の途中に浮かないよう、main で残りを埋める */
+    min-height: 100vh; display: flex; flex-direction: column;
     font-family: var(--sans);
     font-size: 15px;
     line-height: 1.75;
@@ -122,6 +124,8 @@ p { margin: 0; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code { font-family: var(--mono); }
+
+main { flex: 1 0 auto; }
 
 /* ── ヘッダ ────────────────────────────────── */
 .site-header {
