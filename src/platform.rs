@@ -84,6 +84,32 @@ pub fn activate_pid(pid: i32) {
     target.activateFromApplication_options(&current, NSApplicationActivationOptions(0));
 }
 
+/// Dock と ⌘Tab に出るアイコンを差し込む。
+///
+/// md は `.app` を作らない（bundle.rs 参照）ので `Info.plist` の `CFBundleIconFile`
+/// が使えず、素の実行ファイルのままだと Dock に汎用の実行ファイルアイコンが出る。
+/// 起動時に NSApplication へ画像を渡せば、バンドル無しでもそこだけ差し替わる。
+/// 512px 1 枚で足りる: Dock の最大表示は 128@2x で、⌘Tab や強制終了ダイアログも
+/// これ以上は要求しない。
+#[cfg(target_os = "macos")]
+pub fn set_dock_icon() {
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    const ICON_PNG: &[u8] = include_bytes!("assets/icon.png");
+
+    let mtm = MainThreadMarker::new().expect("must be on main thread");
+    let data = NSData::with_bytes(ICON_PNG);
+    // 埋め込みの PNG が壊れていることは無いが、デコードに失敗しても起動は止めない
+    // （アイコンが既定のままになるだけ）。
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return;
+    };
+    // SAFETY: image は有効な NSImage で、呼び出しはメインスレッド（mtm で保証）。
+    unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
+}
+
 #[cfg(target_os = "macos")]
 pub fn setup_menu() {
     use objc2::sel;

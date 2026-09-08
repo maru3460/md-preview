@@ -289,7 +289,10 @@ fn main() {
         .expect("Failed to create WebView");
 
     #[cfg(target_os = "macos")]
-    platform::setup_menu();
+    {
+        platform::setup_menu();
+        platform::set_dock_icon();
+    }
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
