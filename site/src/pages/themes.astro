@@ -24,9 +24,12 @@ const groups = [
 
   <section class="section">
     <div class="section-inner">
+      <div class="section-head">
+        <h2>組み込みのテーマ</h2>
+      </div>
       {groups.map(([label, list]) => (
-        <div style="margin-bottom:48px">
-          <h2 style="font-size:18px;margin-bottom:16px">{label}</h2>
+        <div class="theme-group">
+          <h3>{label}</h3>
           <div class="theme-grid">
             {list.map((t) => (
               <button class="theme-card" type="button" data-theme-set={t.name} aria-pressed={t.name === 'default' ? 'true' : 'false'}>
@@ -125,14 +128,14 @@ const groups = [
         <h2>自分のテーマを足す</h2>
       </div>
 
-      <h3 style="font-size:17px;margin-bottom:10px">ユーザーテーマ</h3>
-      <p style="color:var(--fg-dim);margin-bottom:16px">
+      <h3 class="subhead">ユーザーテーマ</h3>
+      <p class="lead">
         <code>~/.config/md-preview/themes/&lt;名前&gt;.css</code> に置くと <code>md theme &lt;名前&gt;</code> で選べるようになる。
         組み込みと同じ名前ならそちらが優先される。テンプレートは <code>default</code> の CSS を写すのが手軽。
       </p>
 
-      <h3 style="font-size:17px;margin:28px 0 10px">カスタム CSS</h3>
-      <p style="color:var(--fg-dim);margin-bottom:16px">
+      <h3 class="subhead">カスタム CSS</h3>
+      <p class="lead">
         <code>~/.config/md-preview/style.css</code> はテーマより後ろに当たる。
         選んでいるテーマはそのままに、細部だけ直したいときに使う。
       </p>

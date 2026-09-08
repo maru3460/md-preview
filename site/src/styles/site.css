@@ -312,6 +312,13 @@ kbd {
 }
 
 /* ── テーマ一覧 ────────────────────────────── */
+/* 見出しの階層: h1 Themes → h2 組み込みのテーマ / 自分のテーマを足す → h3 区分・小節。
+   以前は区分が h2 で 18px、後ろの節の h2 が 30px と、同じ階層で大小が逆だった。 */
+.theme-group { margin-bottom: 48px; }
+.theme-group h3 { font-size: 18px; margin-bottom: 16px; }
+.subhead { font-size: 17px; margin: 28px 0 10px; }
+.subhead:first-of-type { margin-top: 0; }
+.lead { color: var(--fg-dim); margin-bottom: 16px; }
 /* light 6 / dark 6 がそれぞれ 1 行に収まる幅にしている（区分の切れ目が見える）。 */
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 14px; }
 .theme-card {
