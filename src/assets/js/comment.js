@@ -63,16 +63,12 @@
   function canAnchor() { return mode && hasAnchor(hostEl()); }
 
   // ── ユニット/引用の抽出 ───────────────────────────────────────
-  function unitStart(u) { return parseInt(u.dataset.srcLine, 10); }
-  function unitEnd(u) {
-    return u.dataset.srcEndLine ? parseInt(u.dataset.srcEndLine, 10) : unitStart(u);
-  }
-
-  // host 内の全 [data-src-line] ユニットを配列で返す。呼び出し側で 1 回取得して
-  // unitsInRange に渡し回すことで、ドラッグ中や redraw の全走査を減らす。
-  function allUnits(host) {
-    return host ? Array.prototype.slice.call(host.querySelectorAll('[data-src-line]')) : [];
-  }
+  // ユニットの走査と行→ユニットの対応付けは common.js が持つ。読み位置の持ち回り
+  // （raw ⇄ 通常の切替）も同じ規則で錨るので、実装を 2 つに分けない。
+  var unitStart = MdCommon.unitStart;
+  var unitEnd = MdCommon.unitEnd;
+  var allUnits = MdCommon.allUnits;
+  var unitAtLine = MdCommon.unitAtLine;
 
   // [startLine, endLine] に完全に収まるユニットのうち、他の対象ユニットに入れ子で
   // ない「トップレベル」だけを返す。引用テキストの二重取りを防ぐ。
@@ -88,22 +84,6 @@
       while (p) { if (set.has(p)) return false; p = p.parentElement; }
       return true;
     });
-  }
-
-  // 行番号 → 錨ユニット。その行から始まるユニットを優先し、無ければその行を範囲に含む
-  // いちばん小さいユニットへ落とす。raw（1 行 1 ユニット）で段落の途中の行に付けた
-  // コメントも、プレビュー表示（段落は開始〜終了行で 1 ユニット）で錨を見つけられる。
-  // units は allUnits() の結果を使い回すための任意引数。
-  function unitAtLine(host, line, units) {
-    if (!host || !line) return null;
-    var exact = host.querySelector('[data-src-line="' + line + '"]');
-    if (exact) return exact;
-    var best = null, bestSpan = Infinity;
-    (units || allUnits(host)).forEach(function(u) {
-      var s = unitStart(u), e = unitEnd(u);
-      if (s <= line && line <= e && (e - s) < bestSpan) { best = u; bestSpan = e - s; }
-    });
-    return best;
   }
 
   // 1 ユニットの引用テキスト。コードは行を保つ、散文は空白を畳む。
@@ -195,6 +175,10 @@
   // 着地点へ移す（e/x の対象＝視覚的な現在地を一致させる）。
   function landOn(u) {
     if (!u) return null;
+    // 差し替え直後の読み位置の追随に手を離させる。表示を切り替えてから飛ぶ経路
+    // （applyView → 差し替え → landWhenReady）では、追随を張った後にこのジャンプが
+    // 来るので、言わないと高さが落ち着いた時点で元の位置へ引き戻される。
+    MdCommon.dropScrollHold();
     u.scrollIntoView({ block: 'center', behavior: 'smooth' });
     flashUnit(u);
     if (mode) landKbCursor(u);

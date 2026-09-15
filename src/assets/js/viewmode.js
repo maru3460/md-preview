@@ -95,13 +95,20 @@
     // scrollTo に数値を渡すと、取得後にその位置へ着地する（省略時は今の位置を保つ）。
     // 呼び出し側が値で渡せないと、まだ前のファイルの中身が入っているスクローラへ
     // 代入するしかなく、前が短いとブラウザに clamp されて読み位置が消える。
+    //
+    // 位置を「保つ」側はピクセルではなく行（data-src-line）で持ち回る。同じファイルでも
+    // レンダリング結果とソースでは高さが違うので、scrollTop をそのまま入れると
+    // ⌘R のたびに数十行ぶん飛ぶ。数値で渡された時はタブが同じ表示で記録した
+    // ピクセルなので、そのまま使う。
     function show(scrollTo) {
       if (!opts) return;
       var url = opts.url(spec.id);
       var el = container();
       if (!url || !el) { fail(); return; }
       var sc = scroller();
-      var savedScroll = typeof scrollTo === 'number' ? scrollTo : (sc ? sc.scrollTop : 0);
+      var explicit = typeof scrollTo === 'number';
+      var anchor = explicit ? null : MdCommon.readAnchor(sc);
+      var savedScroll = explicit ? scrollTo : (sc ? sc.scrollTop : 0);
       var myReq = ++reqSeq;
       fetch(url, { cache: 'no-store' })
         .then(function(r) { return r.ok ? r.text() : null; })
@@ -112,7 +119,8 @@
           el.innerHTML = html;
           applyWidth(el);
           MdCommon.hydrate(el);
-          if (sc) sc.scrollTop = savedScroll;
+          // 錨れなかった（差分表示・巨大ソース）ならピクセルで妥協する。
+          if (!MdCommon.restoreAnchor(anchor, sc) && sc) sc.scrollTop = savedScroll;
         })
         .catch(function() { if (myReq === reqSeq) fail(); });
     }

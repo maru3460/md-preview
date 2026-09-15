@@ -59,6 +59,28 @@ test('開くたびにタブが増え、現在タブの右隣に挿さる', async
   await expect(tabNames(page)).toHaveText(['a.md', 'notes.txt', 'b.md', 'long.md']);
 });
 
+// 差し替えの後で高さが変わる要素（mermaid / drawio / 画像）が読み位置より上にある
+// ケース。ピクセルは hydrate の前に入れていて、その時点の mermaid はまだ未描画。
+// 入れっぱなしにすると、描画で伸びたぶん読み位置がずれる（600px が 947px になった）。
+test('後から描画される図があっても、タブの読み位置がずれない', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'zz-mermaid.md');
+  // 描画が済んだ高さで位置を作る（未描画のまま作ると、そもそも基準がずれる）。
+  await expect(page.locator('#preview-pane .mermaid svg').first()).toBeVisible();
+  await page.evaluate(() => { document.getElementById('preview-pane').scrollTop = 900; });
+  expect(await pane(page)).toBe(900);
+
+  await openFile(page, 'a.md');
+  await expect.poll(() => pane(page)).toBe(0);
+
+  // 戻る。図は差し替えのたびに描き直されるので、また後から伸びる。
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('zz-mermaid.md');
+  await expect(page.locator('#preview-pane .mermaid svg').first()).toBeVisible();
+  await page.waitForTimeout(2000);   // 追随窓（1.5 秒）より長く待って、動かないことを見る
+  expect(await pane(page)).toBe(900);
+});
+
 test('タブごとに読み位置が復元される', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'long.md');

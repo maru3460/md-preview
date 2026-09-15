@@ -233,6 +233,15 @@
       return;
     }
 
+    // 同じファイルを出し直す時（ホットリロード・raw / diff からの復帰）は、読み位置を
+    // 行（data-src-line）で持ち回る。raw から戻る経路ではソースとレンダリング結果で
+    // 高さが違い、ピクセルの scrollTop をそのまま入れると数十行ぶん飛ぶ。
+    // ファイル切替はタブが同じ表示で記録したピクセルなので錨らない。
+    //
+    // モードの分岐より後で読む。モードが出ているなら show() が自分で錨を読むので、
+    // ここで読むと全ユニットの実測が丸ごと無駄になる（ホットリロードの度に走る）。
+    var anchor = preserveScroll ? MdCommon.readAnchor() : null;
+
     fetch('/?file=' + encodeURIComponent(relPath), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
@@ -242,11 +251,17 @@
         if (html == null) { showLoadError(pane, relPath); return; }
         pane.innerHTML = html;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
-        // （実際に戻すのは中身の load 後、common.js の bindFrame）。
+        // （実際に戻すのは中身の load 後、common.js の bindFrame）。錨が効く md では
+        // この代入は下の restoreAnchor が上書きする（錨れなかった時の受け皿）。
         MdCommon.restoreScroll(savedScroll);
         // html 表示（iframe）の相対リンクは、iframe 内遷移ではなく親のプレビュー遷移に
         // 回す（サイドバーの選択やコメントの現在ファイルを同期させるため）。
         MdCommon.hydrate(pane, { onLinkClick: frameLinkClick });
+        // 読み位置は hydrate の後に入れ直す。行の包み直し・コードハイライト・埋め込み
+        // カードで高さが変わるので、上の代入した値はもう合っていない。錨が使えるなら
+        // そちらを優先し（行なら表示をまたげる）、無ければピクセルで入れ直す
+        // （タブへ戻る経路。同じ表示なので丸めずに exact へ戻せる）。
+        if (!MdCommon.restoreAnchor(anchor)) MdCommon.holdScroll(savedScroll);
       })
       .catch(function() { showLoadError(pane, relPath); });
   }

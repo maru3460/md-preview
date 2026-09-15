@@ -605,7 +605,7 @@
   }
 
   // 読み位置を戻す。html は中身が load されるまで代入しても効かないので、
-  // iframe へ預けて bindFrame に消費させる。
+  // iframe へ預けて bindFrame に消費させる。差し替えの直後（hydrate の前）に呼ぶ。
   function restoreScroll(top) {
     var frame = htmlFrame();
     if (!frame) {
@@ -614,6 +614,263 @@
       return;
     }
     frame.__mdScrollTo = top || 0;
+  }
+
+  // ピクセルの読み位置を入れ直し、本文の高さが落ち着くまで保つ。hydrate の後に呼ぶ。
+  //
+  // ピクセルで戻すのは「同じファイルを同じ表示で開き直す」時だけ（タブへ戻る）。
+  // レイアウトが元と同じになるので、行へ丸めるより exact に戻せる。ただし入れる
+  // 時点の高さはまだ暫定で、hydrate の整形と mermaid / drawio / 画像の遅延描画で
+  // 後から変わる——入れっぱなしにすると、読み位置が伸びたぶんずれる（mermaid の
+  // あるファイルでタブに戻ると 900px が 1439px になった）。錨と同じ扱いにする。
+  //
+  // hydrate より前に呼んではいけない。その hydrate 自身が bodySwaps を進めるので、
+  // 追随が「次の差し替えが来た」と見て最初の通知で手を離してしまう。
+  //
+  // html の iframe 表示では何もしない。あちらの読み位置は中身の load 後に
+  // bindFrame が入れるので、ここで触ると預けた値と二重になる。
+  function holdScroll(top) {
+    if (htmlFrame()) return;
+    var p = getScroller();
+    if (!p) return;
+    var want = top || 0;
+    p.scrollTop = want;
+    holdWhileResizing(p, function() { p.scrollTop = want; });
+  }
+
+  // ── 行アンカー（本文の入れ替えを跨いで読み位置を保つ） ──────────
+  // ピクセルの scrollTop は、中身が入れ替わると意味を失う。同じファイルでも
+  // レンダリング結果とソース（⌘R）では高さが 1.6 倍ほど違うので、そのまま代入すると
+  // 数十行ぶん飛ぶ。行番号（html.rs が振る data-src-line）は表示の種類が変わっても
+  // 同じものを指すので、こちらを持ち回る。
+  //
+  // ユニットは md 側がブロック単位（段落は開始〜終了行）、ソース側が 1 行 1 個。
+  // 対応付けは unitAtLine が吸収する（コメント機能が使っているのと同じ規則）。
+  function unitStart(u) { return parseInt(u.dataset.srcLine, 10); }
+  function unitEnd(u) {
+    return u.dataset.srcEndLine ? parseInt(u.dataset.srcEndLine, 10) : unitStart(u);
+  }
+
+  // scope 内の全 [data-src-line] ユニットを文書順の配列で返す。呼び出し側で 1 回
+  // 取得して使い回せるよう、走査結果をそのまま渡す形にしてある。
+  // scope 省略時に getScroller() へ落とさないのは、渡し漏れ（null）を「ペイン全体」と
+  // 読み替えてしまうと、錨れない表示でも錨れたことになるため。
+  function allUnits(scope) {
+    return scope ? Array.prototype.slice.call(scope.querySelectorAll('[data-src-line]')) : [];
+  }
+
+  // 行番号 → 錨ユニット。その行から始まるユニットを優先し、無ければその行を範囲に
+  // 含むいちばん小さいユニットへ落とす。raw（1 行 1 ユニット）で見ていた行が、
+  // プレビュー側では段落ユニットの内側にしか無い、という非対称をここで吸収する。
+  // units は allUnits() の結果を使い回すための任意引数。
+  //
+  // 見つからない（null）は「この表示にその行は無い」で、コメント側はそれを見て
+  // 印を出さない判断に使う。読み位置の復元はもう一段粘る（下の nearestUnit）。
+  function unitAtLine(scope, line, units) {
+    if (!scope || !line) return null;
+    var exact = scope.querySelector('[data-src-line="' + line + '"]');
+    if (exact) return exact;
+    var best = null, bestSpan = Infinity;
+    (units || allUnits(scope)).forEach(function(u) {
+      var s = unitStart(u), e = unitEnd(u);
+      if (s <= line && line <= e && (e - s) < bestSpan) { best = u; bestSpan = e - s; }
+    });
+    return best;
+  }
+
+  // スクローラの「画面上端」の client 座標。document がスクローラのときは 0 で、
+  // rect.top（= -scrollTop）を使うと二重に引いてしまう。
+  function viewportTop(sc) {
+    if (sc === document.scrollingElement || sc === document.documentElement || sc === document.body) return 0;
+    return sc.getBoundingClientRect().top;
+  }
+
+  // ユニット内の 1 行あたりの高さ。使い道は 2 つで、どちらも「1 行が画面で占める高さ」。
+  // ・複数行ユニット（段落など）を行で按分する。raw は 1 行 1 ユニットなので、
+  //   按分しないと長い段落の頭まで戻される。
+  // ・行内オフセットの上限。1 行しか占めないユニットでも、表示によって高さが桁で
+  //   違う（ファイルリンクのコード埋め込みは md 1 行 = 数百 px、raw では 1 行 20px）。
+  function unitLineHeight(u, rect) {
+    var span = unitEnd(u) - unitStart(u) + 1;
+    return rect.height > 0 ? rect.height / span : 0;
+  }
+
+  // そのユニットが実際に見えているか。閉じた <details> の中身はレイアウトされていて
+  // 矩形も持つ（WebKit で実測。offsetParent も null にならない）ので、rect の有無では
+  // 弾けない。checkVisibility が無い engine では素通しにする——錨が消えて位置が
+  // 飛ぶより、少しズレる方がまし。
+  function isShown(u) {
+    return typeof u.checkVisibility !== 'function' || u.checkVisibility();
+  }
+
+  // いまの読み位置を行で表す。{ line, offset } の offset はその行の上端が画面上端から
+  // どれだけ離れているか。錨れるユニットが無ければ null（html の iframe 表示・
+  // git 差分・ソース行を包まなかった巨大ファイル）。
+  //
+  // 入れ子は内側を採る。<details> は生 HTML 経由なので data-src-end-line を持たず
+  // （html.rs の inject_html_src_line）、本文全体を囲む「1 行のユニット」になる。
+  // 文書順の最初で決めると、開いた <details> の中はどの行も錨になれない。
+  function readAnchor(scroller) {
+    var sc = scroller || getScroller();
+    if (!sc || htmlFrame()) return null;
+    var vt = viewportTop(sc);
+    var units = allUnits(sc);
+    var best = null, bestRect = null;
+    for (var i = 0; i < units.length; i++) {
+      var u = units[i];
+      // 決まったユニットの外に出たら打ち切る。文書順なので後ろは必ず下にある。
+      if (best && !best.contains(u)) break;
+      var r = u.getBoundingClientRect();
+      if (r.bottom <= vt) continue;   // 画面上端より上に抜けたユニット
+      if (!isShown(u)) continue;      // 候補になった時だけ見る（走査全体では引かない）
+      best = u;
+      bestRect = r;
+    }
+    if (!best) return null;
+    var lh = unitLineHeight(best, bestRect);
+    var into = lh ? Math.min(unitEnd(best) - unitStart(best), Math.floor((vt - bestRect.top) / lh)) : 0;
+    if (into < 0) into = 0;
+    var offset = Math.round(bestRect.top + into * lh - vt);
+    // 正のオフセット（錨の行が画面上端より下から始まる）は捨てる。上に空いている
+    // ぶんはユニットに覆われていない領域——ブロックの余白、<hr>、生 HTML のブロック
+    // （html.rs は details / summary の開きタグにしか行番号を振らない）——で、
+    // 高さは表示ごとに違うので持ち回れない。「その行を上端に置く」が正しい持ち回り。
+    return { line: unitStart(best) + into, offset: offset > 0 ? 0 : offset };
+  }
+
+  // 錨の行がこの表示に存在しないときの受け皿。空行・区切り線・コードフェンスの行は
+  // ソース側では 1 行 1 ユニットなのに、レンダリング結果には対応する要素が無い。
+  // ここで諦めるとピクセルのフォールバックへ落ち、⌘R の往復で読み位置が飛ぶ
+  // （見出し直前の空行から戻ると、中見出しの手前まで巻き戻されていた）。
+  //
+  // 読む向き（下）にいちばん近いユニットへ寄せる。行そのものが無いので行内の
+  // オフセットは意味を持たない——頭を画面上端に合わせる。後ろに何も無ければ
+  // 最後のユニットの末尾行へ落とす（末尾の空行から戻る場合）。
+  function nearestUnit(units, line) {
+    for (var i = 0; i < units.length; i++) {
+      if (unitStart(units[i]) >= line && isShown(units[i])) {
+        return { el: units[i], line: unitStart(units[i]) };
+      }
+    }
+    for (var j = units.length - 1; j >= 0; j--) {
+      if (isShown(units[j])) return { el: units[j], line: unitEnd(units[j]) };
+    }
+    return null;
+  }
+
+  // 錨へ寄せる。寄せられるユニットが無ければ false（呼び出し側がピクセルへ落ちる）。
+  function applyAnchor(a, sc) {
+    var units = allUnits(sc);
+    var u = unitAtLine(sc, a.line, units);
+    var line = a.line, offset = a.offset;
+    // 見えていないユニット（閉じた <details> の中身）へ寄せても画面は動かない。
+    if (u && !isShown(u)) u = null;
+    if (!u) {
+      var near = nearestUnit(units, a.line);
+      if (!near) return false;
+      u = near.el;
+      line = near.line;
+      offset = 0;
+    }
+    var vt = viewportTop(sc);
+    var r = u.getBoundingClientRect();
+    var lh = unitLineHeight(u, r);
+    // オフセットは「その行をどれだけ読み進めたか」なので (-lh, 0] に収まる。負側を
+    // 放すと、md で背の高い埋め込み（1 行 = 数百 px）の中ほどから ⌘R したときに
+    // raw の 20px の行へ数百 px が乗って十数行ぶん下へ抜ける。正側は readAnchor が
+    // 既に落としているが、錨は外から来る値なのでここでも閉じておく。
+    if (offset < -lh) offset = -lh;
+    else if (offset > 0) offset = 0;
+    var lineTop = r.top + (line - unitStart(u)) * lh;
+    sc.scrollTop += Math.round(lineTop - vt - offset);
+    return true;
+  }
+
+  // いま張っている追随の手を離す関数（張っていなければ null）。読み位置の持ち主は
+  // 常に 1 つなので、新しく張る時は前のを畳む。
+  var holdRelease = null;
+
+  // 読み位置を意図的に動かす側（コメントのジャンプなど）が、追随に手を離させる。
+  // scrollIntoView は wheel も pointerdown も keydown も出さないので、下の解放条件
+  // では気づけない——気づけないまま高さが変わると、飛んだ先から引き戻してしまう。
+  function dropScrollHold() {
+    if (holdRelease) holdRelease();
+  }
+
+  // この keydown が表示の切り替え（⌘R / ⌘D）か。判定は keymap の表に聞く。ここで
+  // 修飾キーを自前で見ると、割り当てが変わったときに静かに食い違う。
+  function isViewToggleKey(e) {
+    var binds = (window.MdKeymap && MdKeymap.binds) || [];
+    for (var i = 0; i < binds.length; i++) {
+      var b = binds[i];
+      if (!b.run || b.run.indexOf('view-') !== 0 || !b.match) continue;
+      if (b.match(e) && (!b.when || b.when(e))) return true;
+    }
+    return false;
+  }
+
+  // 修飾キー自身の keydown。⌘R は Meta → r の 2 発来るので、1 発目で手を離すと
+  // 表示の切り替えを見分ける前に解放してしまう。
+  function isModifierKey(e) {
+    return e.key === 'Meta' || e.key === 'Control' || e.key === 'Shift' ||
+           e.key === 'Alt' || e.key === 'CapsLock';
+  }
+
+  // 本文の高さが落ち着くまで、読み位置を入れ直し続ける。
+  //
+  // 差し替え直後の高さは暫定値。mermaid / drawio は lib のロードと描画まで、画像は
+  // load まで実寸を持たない（sample.md では hydrate 直後の 2 つの mermaid が 184+162px
+  // で、描画後に 339+519px ——読んでいる場所の上で 512px 伸びる）。上でこれが起きると、
+  // 伸びたぶんそのまま読み位置が抜ける。⌘R を往復するたびに少しずつ上がって、
+  // 読み位置が mermaid 自身に届いたところで止まる、という形で出た。
+  //
+  // WebKit の scroll anchoring が補ってくれることもあるが、当てにしない
+  // （Playwright の WebKit では補われ、実機では抜けた）。apply はその時点の実測から
+  // 入れ直すだけなので、エンジンが既に補っていれば no-op になる。
+  //
+  // 手を離すのは 4 つ。ユーザーが読み進めた（wheel / ドラッグ / キー）・別の誰かが
+  // 読み位置を動かした（dropScrollHold）・次の差し替えが来た・時間切れ。
+  // キーのうち「表示の切り替え」だけは離さない——⌘R の連打が自分の直前の追随を
+  // 止めてしまい、未描画のまま次の錨を読んでズレが積もる。
+  var HOLD_MS = 1500;
+
+  function holdWhileResizing(sc, apply) {
+    dropScrollHold();
+    if (typeof ResizeObserver === 'undefined') return;
+    var gen = bodySwaps;
+    function onKey(e) {
+      if (isModifierKey(e) || isViewToggleKey(e)) return;
+      release();
+    }
+    function release() {
+      if (holdRelease === release) holdRelease = null;
+      ro.disconnect();
+      clearTimeout(timer);
+      window.removeEventListener('wheel', release, true);
+      window.removeEventListener('pointerdown', release, true);
+      window.removeEventListener('keydown', onKey, true);
+    }
+    var ro = new ResizeObserver(function() {
+      if (gen !== bodySwaps) { release(); return; }  // 次の差し替えが自分の読み位置を持っている
+      apply();
+    });
+    var timer = setTimeout(release, HOLD_MS);
+    window.addEventListener('wheel', release, true);
+    window.addEventListener('pointerdown', release, true);
+    window.addEventListener('keydown', onKey, true);
+    holdRelease = release;
+    // document がスクローラのときの本文は body。firstElementChild は <head> になる。
+    ro.observe(sc === document.scrollingElement || sc === document.documentElement
+      ? document.body : (sc.firstElementChild || sc));
+  }
+
+  // 錨へ寄せ、本文の高さが落ち着くまで寄せ直す。
+  function restoreAnchor(a, scroller) {
+    var sc = scroller || getScroller();
+    if (!a || !sc) return false;
+    if (!applyAnchor(a, sc)) return false;
+    holdWhileResizing(sc, function() { applyAnchor(a, sc); });
+    return true;
   }
 
   // ファイルツリー（サイドバー）にフォーカスがあるか。ツリー操作の起点判定。
@@ -966,6 +1223,14 @@
     getScroller: getScroller,
     readScroll: readScroll,
     restoreScroll: restoreScroll,
+    holdScroll: holdScroll,
+    readAnchor: readAnchor,
+    restoreAnchor: restoreAnchor,
+    dropScrollHold: dropScrollHold,
+    unitStart: unitStart,
+    unitEnd: unitEnd,
+    allUnits: allUnits,
+    unitAtLine: unitAtLine,
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
     registerOverlay: registerOverlay,
