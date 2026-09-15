@@ -14,7 +14,7 @@ use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebouncedEvent
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::window::WindowBuilder;
+use tao::window::{Theme as OsTheme, WindowBuilder};
 use wry::{RequestAsyncResponder, WebViewBuilder};
 
 mod platform;
@@ -27,7 +27,6 @@ use md_preview::theme;
 
 enum AppEvent {
     Close,
-    Ready,
     /// 変更されたファイルの識別子（root 相対パス、または root の外なら絶対パス）。
     /// ページ側は「いま開いているファイルか」を照合して再読込するかを決める。
     Reload(String),
@@ -184,7 +183,7 @@ fn main() {
     }
 
     let custom_css = md_preview::user_style_css();
-    let (theme_paint, appearance) = theme::resolve(&theme::read_active_name());
+    let (theme_paint, appearance, active_theme) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
     let config = if stdin_mode {
@@ -214,18 +213,40 @@ fn main() {
     let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
     let ipc_watcher = watcher.clone();
 
-    let window = WindowBuilder::new()
+    // 窓は中身を待たずに出す。webview が最初のフレームを描くまで実測で 160ms 前後
+    // かかるので、そこまで隠すと「打ってから窓が出るまで」がそのぶん丸ごと伸びる。
+    // 代わりに下地をテーマの背景色で塗り、白い板が一瞬見えるのを防ぐ。
+    //
+    // None は「OS の外観が読めなかった」。塗らずに既定の背景色へ任せる方が、
+    // 当てずっぽうで塗って外すより見え方が悪くない（theme::window_bg を参照）。
+    let bg = window_bg_rgba(active_theme, platform::os_is_dark());
+
+    let mut window_builder = WindowBuilder::new()
         .with_title(&title)
-        .with_inner_size(LogicalSize::new(app_config::WINDOW_WIDTH, app_config::WINDOW_HEIGHT))
-        .with_visible(false)
-        .build(&event_loop)
-        .expect("Failed to create window");
+        .with_inner_size(LogicalSize::new(app_config::WINDOW_WIDTH, app_config::WINDOW_HEIGHT));
+    if let Some(color) = bg {
+        window_builder = window_builder.with_background_color(color);
+    }
+    let window = window_builder.build(&event_loop).expect("Failed to create window");
+    apply_window_appearance(&window, appearance);
 
     // 下のカスタムプロトコルのクロージャが `root_dir` をムーブするので、IPC
     // ハンドラが必要とするもの（copy-abs/reveal/open のパス解決用）を先に clone する。
     let ipc_root = root_dir.clone();
 
-    let webview = WebViewBuilder::new()
+    // 窓と同じ色の二重指定に見えるが、消すと webview が乗った時点（実測 149ms）
+    // から先が白に戻る。webview は窓を覆うので、そこから先は窓の背景ではなく
+    // こちらが見える側になる。
+    //
+    // ここで効いているのは underPageBackgroundColor だけ。wry がページ自体の
+    // 背景を透かす drawsBackground=false は transparent feature の中にあり、
+    // その feature を有効にしていないので届いていない。macOS 12 未満でも
+    // 何も起きない（そこは白のまま）。
+    let mut webview_builder = WebViewBuilder::new();
+    if let Some(color) = bg {
+        webview_builder = webview_builder.with_background_color(color);
+    }
+    let webview = webview_builder
         .with_initialization_script(&init_script)
         .with_navigation_handler(|url: String| {
             if url.starts_with("http://") || url.starts_with("https://") {
@@ -271,7 +292,6 @@ fn main() {
             let body = msg.body().as_str();
             match body {
                 "close" => { let _ = proxy.send_event(AppEvent::Close); }
-                "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
                 _ => {
                     if let Some(rest) = body.strip_prefix("menu:") {
                         let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
@@ -316,8 +336,18 @@ fn main() {
                 }
                 *control_flow = ControlFlow::Exit;
             }
-            Event::UserEvent(AppEvent::Ready) => {
-                window.set_visible(true);
+            Event::WindowEvent {
+                event: WindowEvent::ThemeChanged(os_theme),
+                ..
+            } => {
+                // 下地は窓を作るときに一度塗るだけなので、OS の外観が変わると
+                // 取り残される。webview が覆っている間は見えないが、リサイズで
+                // 新しく広がった領域と、行き過ぎスクロールの跳ね返りに古い色が出る。
+                // 外観を固定したテーマなら同じ色が返るので実質なにも起きない。
+                if let Some(color) = window_bg_rgba(active_theme, Some(os_theme == OsTheme::Dark)) {
+                    window.set_background_color(Some(color));
+                    platform::set_webview_under_page_color(&webview, color);
+                }
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
@@ -326,6 +356,28 @@ fn main() {
             _ => {}
         }
     });
+}
+
+/// 窓の外観（タイトルバーと信号ボタン）をテーマに合わせる。
+///
+/// 外観を固定したテーマだけ指定する。OS 追従のテーマに指定してしまうと、OS の設定を
+/// 変えても窓だけ古い外観に取り残される。
+/// OS の外観が変わっても呼び直さなくてよい。指定しなかった窓（OS 追従テーマ）は
+/// macOS が勝手に追随し、指定した窓（固定テーマ）は追随しないのが正しい姿だから。
+fn apply_window_appearance(window: &tao::window::Window, appearance: theme::Appearance) {
+    match appearance {
+        theme::Appearance::Dark => platform::set_window_appearance(window, true),
+        theme::Appearance::Light => platform::set_window_appearance(window, false),
+        theme::Appearance::Auto => {}
+    }
+}
+
+/// 窓と webview に渡す下地色。色を決められないときは None（塗らない）。
+fn window_bg_rgba(
+    active_theme: Option<&theme::Theme>,
+    os_dark: Option<bool>,
+) -> Option<(u8, u8, u8, u8)> {
+    theme::window_bg(active_theme, os_dark).map(|[r, g, b]| (r, g, b, 255))
 }
 
 /// 右クリックメニュー由来の IPC（`menu:<verb>:<payload>`）を処理する。

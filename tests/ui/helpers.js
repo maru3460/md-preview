@@ -19,8 +19,8 @@ async function open(page, url) {
     try { localStorage.setItem('md-help-onboarded', '1'); } catch (e) {}
   });
   await page.goto(url || FOLDER_URL);
-  // 初期描画の完了（folder.js が ready を投げたところ）を待つ。
-  await page.waitForFunction(() => window.__mdIpc && window.__mdIpc.includes('ready'));
+  // 初期描画の完了を待つ。印は folder.js の markInitialRenderDone が付ける。
+  await page.waitForFunction(() => document.documentElement.dataset.mdReady === '1');
 }
 
 /// フォルダ起動で、ツリーが描かれるのを待つ。

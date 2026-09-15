@@ -1,7 +1,7 @@
 (function() {
   var expandedDirs = new Set();
   var currentFilePath = null;
-  var windowReady = false;
+  var initialRenderDone = false;
   var mdCheckQueue = [];
   var mdDotCache = {};
   var sidebarOpen = true;
@@ -25,7 +25,7 @@
   }
 
   function scheduleHasMdCheck(path, row) {
-    if (windowReady) {
+    if (initialRenderDone) {
       doHasMdCheck(path, row);
     } else {
       mdCheckQueue.push({path: path, row: row});
@@ -565,6 +565,13 @@
       });
     }
 
+    // 初期描画が済んだ印。窓を出す合図ではない（窓は中身を待たず Rust が先に出す）。
+    // UI テストがこの印を待つので、消すなら tests/ui/helpers.js も一緒に直すこと。
+    function markInitialRenderDone() {
+      initialRenderDone = true;
+      document.documentElement.dataset.mdReady = '1';
+    }
+
     fetch('/?dir=')
       .then(function(r) { return r.json(); })
       .then(function(items) {
@@ -580,8 +587,7 @@
           focusPreview();
         }
         setTimeout(function() {
-          window.ipc.postMessage('ready');
-          windowReady = true;
+          markInitialRenderDone();
           mdCheckQueue.forEach(function(item) { doHasMdCheck(item.path, item.row); });
           mdCheckQueue = [];
           // ファイル検索の一覧を先に温めておく（初回の ⌘P を待たせない）。
@@ -590,7 +596,7 @@
         }, 0);
       })
       .catch(function() {
-        setTimeout(function() { window.ipc.postMessage('ready'); windowReady = true; }, 0);
+        setTimeout(function() { markInitialRenderDone(); }, 0);
       });
   });
 

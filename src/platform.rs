@@ -36,6 +36,139 @@ pub fn reveal_in_finder(_path: &Path) {}
 #[cfg(not(target_os = "macos"))]
 pub fn open_default(_path: &Path) {}
 
+/// OS がダークモードか。テーマが OS 追従（[`md_preview::theme::Appearance::Auto`]）の
+/// ときだけ、窓の下地色をどちらへ寄せるかの判断に使う。
+///
+/// 判定できなければ None。当てずっぽうで「ライト」を返すと、ダークな OS で白い板を
+/// 出すことになり、窓を先に出す変更でいちばん避けたかった見え方になる。
+/// 受け手（[`md_preview::theme::window_bg`]）が None を色なしへ伝えるのは、テーマが
+/// OS 追従のときだけ。外観を固定したテーマは OS 設定を見ないので、ここが None でも
+/// 色は決まる。
+///
+/// 見るのは `NSApp` の実効 appearance。`NSUserDefaults` の `AppleInterfaceStyle` は
+/// アプリ側の上書きを映さないし、WKWebView の `prefers-color-scheme` が降りてくる
+/// 元とも切れてしまう。同じ実効 appearance を見ておけば下地とページが食い違わない。
+///
+/// **イベントループを作った後に呼ぶこと。** `sharedApplication` は `NSApp` が
+/// 居なければ自分で作ってしまうが、tao は最初の `sharedApplication` で自前の
+/// `NSApplication` サブクラスを焼き込む。先に呼ぶとそれを奪って、tao のイベント
+/// 処理が壊れる。
+///
+/// 名前の直接比較ではなく `bestMatchFromAppearancesWithNames` を通す。
+/// アクセシビリティ設定で `NSAppearanceNameAccessibilityHighContrastDarkAqua` に
+/// なることがあり、直接比較ではそれを「ライト」と取り違える。
+#[cfg(target_os = "macos")]
+pub fn os_is_dark() -> Option<bool> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication};
+    use objc2_foundation::NSArray;
+
+    let mtm = MainThreadMarker::new()?;
+    let appearance = NSApplication::sharedApplication(mtm).effectiveAppearance();
+    // unsafe が要るのは extern static の読み出しだけ。配列の生成も比較も safe。
+    let (aqua, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+    let names = NSArray::from_slice(&[aqua, dark]);
+    // どちらにも寄らなかったときも「判らない」を通す。false（＝ライト）を返すと、
+    // ダークな OS で白い板を出すという、この関数が避けようとしている形になる。
+    appearance
+        .bestMatchFromAppearancesWithNames(&names)
+        .map(|best| best.isEqualToString(dark))
+}
+
+/// macOS 以外に OS の外観を読む手立てを持たない。色を決めずに窓の既定へ任せる。
+#[cfg(not(target_os = "macos"))]
+pub fn os_is_dark() -> Option<bool> {
+    None
+}
+
+/// 窓そのものの外観（タイトルバーと信号ボタン）をテーマに合わせる。
+///
+/// 背景色を塗るだけでは足りない。地色は変わってもタイトル文字と信号ボタンは OS の
+/// 外観のまま残るので、ダークなテーマをライトな OS で開くと、暗いタイトルバーに
+/// ライト用の部品が乗ってちぐはぐになる。
+///
+/// **窓の中の描画にも及ぶ。** WKWebView は窓の `NSAppearance` を継承するので、ページが
+/// 見る `prefers-color-scheme` が OS ではなくテーマ側になる。効くのは html を描く
+/// iframe（`base.css` の `.html-frame`）と、`prefers-color-scheme` を見る同梱ライブラリ
+/// （draw.io の自動ダーク）。窓全体の見え方を揃えるための意図した挙動で、`.html-frame`
+/// 側のコメントもそう書いてある。
+///
+/// 呼ぶのは外観を固定したテーマのときだけ。OS 追従のテーマでは OS の設定がそのまま
+/// 正解なので、何も指定せず OS に任せる。
+///
+/// **tao の `Window::set_theme` は使えない。** あちらの実装は `NSApp` へ `setAppearance`
+/// するので、窓ではなくアプリ全体の外観が変わる。[`os_is_dark`] が読む実効 appearance
+/// まで固定値に化けて、OS の設定を知る手段が無くなる。
+///
+/// 前提は「起動時に一度だけ呼ぶ」こと。実行中にテーマを切り替えられるようにする
+/// とき（#38）は、固定テーマから OS 追従へ戻す経路で `setAppearance(None)` を呼んで
+/// 指定を外す必要がある。呼ばないと古い固定外観が残る。
+///
+/// 外観固定テーマの窓は、アクセシビリティの「コントラストを上げる」にも追随しなく
+/// なる（素の `NSAppearanceNameDarkAqua` で固定するため）。テーマが外観を決める以上は
+/// 筋が通るが、[`os_is_dark`] が高コントラスト版まで拾うのと非対称なのは承知の上。
+#[cfg(target_os = "macos")]
+pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+        NSWindow,
+    };
+    use tao::platform::macos::WindowExtMacOS;
+
+    let ptr = window.ns_window() as *mut NSWindow;
+    // 引き受けている不変条件は 2 つ。tao が「Window が生きている間だけ有効」と言って
+    // いる生ポインタであること（呼ぶのは窓を作った直後だけなので生きている）と、
+    // `NSWindow` がメインスレッド専用であること（tao のイベントループがメインスレッド
+    // でしか回らないので満たされる）。
+    let Some(ns_window) = (unsafe { ptr.as_ref() }) else {
+        return;
+    };
+    let name = unsafe {
+        if dark {
+            NSAppearanceNameDarkAqua
+        } else {
+            NSAppearanceNameAqua
+        }
+    };
+    ns_window.setAppearance(NSAppearance::appearanceNamed(name).as_deref());
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_window_appearance(_window: &tao::window::Window, _dark: bool) {}
+
+/// webview の「ページ範囲外」の色を塗り直す。行き過ぎスクロールの跳ね返り領域が
+/// これにあたる。
+///
+/// wry の `WebView::set_background_color` は使えない。macOS 側の実装が丸ごと
+/// `transparent` feature の中にあり、その feature を有効にしていないので、呼んでも
+/// 何もせず `Ok(())` が返るだけになる。起動時にビルダーへ渡す分だけは feature の
+/// 外（`setUnderPageBackgroundColor`）なので効いている。後から変えるには、こうして
+/// 直接叩くしかない。
+///
+/// `setUnderPageBackgroundColor` は macOS 12 以降にしかないので、応答するか確かめて
+/// から呼ぶ。11 以下では跳ね返りの色が起動時のまま残る。
+#[cfg(target_os = "macos")]
+pub fn set_webview_under_page_color(webview: &wry::WebView, (r, g, b, a): (u8, u8, u8, u8)) {
+    use objc2::{sel, runtime::NSObjectProtocol};
+    use objc2_app_kit::NSColor;
+    use wry::WebViewExtMacOS;
+
+    let view = webview.webview();
+    if !view.respondsToSelector(sel!(setUnderPageBackgroundColor:)) {
+        return;
+    }
+    let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+        r as f64 / 255.0,
+        g as f64 / 255.0,
+        b as f64 / 255.0,
+        a as f64 / 255.0,
+    );
+    unsafe { view.setUnderPageBackgroundColor(Some(&color)) };
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_webview_under_page_color(_webview: &wry::WebView, _color: (u8, u8, u8, u8)) {}
+
 #[cfg(target_os = "macos")]
 pub fn get_frontmost_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;

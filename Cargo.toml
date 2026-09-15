@@ -22,6 +22,12 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
     "NSWorkspace", "NSRunningApplication",
     "NSApplication", "NSMenu", "NSMenuItem", "NSEvent",
-    "NSPasteboard", "NSImage",
+    "NSPasteboard", "NSImage", "NSAppearance", "NSResponder", "NSWindow",
 ] }
 objc2-foundation = "0.3"
+# setUnderPageBackgroundColor（platform.rs）のためだけに要る。default は旧 WebKit の
+# DOM バインディング一式まで引き込むので切る。NSColor を受けるメソッドなので
+# objc2-app-kit も要る（wry も有効にしているが、他所の設定に乗らず自分で宣言する）。
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std", "WKWebView", "objc2-app-kit",
+] }

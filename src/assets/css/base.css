@@ -468,10 +468,12 @@ body:has(> .html-page),
     width: 100%;
     height: calc(100vh - var(--md-pad) * 2 - var(--md-tabbar-h));
     border: 0;
-    /* アプリのテーマ(dracula 等)の color-scheme に引きずられず OS 準拠で描画する
-       （ブラウザでファイルを直接開いたときに寄せる）。実際の地色は読込後に JS が
-       中身のキャンバス色へ合わせる（common.js の syncFrameBackground）。これはその前・
-       クロスオリジンで中身を読めない時のフォールバック。Canvas は color-scheme に追従。 */
+    /* light dark と書いて、どちらに倒すかは外側（窓の外観）に委ねる。外観を固定した
+       テーマでは窓ごとそちらへ倒れるので、html もアプリと同じ明暗で描かれる
+       （platform.rs の set_window_appearance を参照）。OS 追従テーマなら OS 準拠のまま。
+       実際の地色は読込後に JS が中身のキャンバス色へ合わせる（common.js の
+       syncFrameBackground）。これはその前・クロスオリジンで中身を読めない時の
+       フォールバック。Canvas は color-scheme に追従。 */
     color-scheme: light dark;
     background: Canvas;
     /* 読み込み中の地色フラッシュ（Canvas→中身の背景の切り替わり等）を隠す。読み込み完了時に

@@ -34,7 +34,7 @@ fn main() {
     }
 
     let custom_css = md_preview::user_style_css();
-    let (paint, appearance) = theme::resolve(&theme::read_active_name());
+    let (paint, appearance, _) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &paint);
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
@@ -92,7 +92,8 @@ fn parse_args(args: Vec<String>) -> (u16, Vec<String>) {
 }
 
 /// `window.ipc` のスタブ。ウィンドウ側では Rust が受けるものを、ここでは記録だけする
-/// （テストから `window.__mdIpc` を見れば ready / close の発火を確認できる）。
+/// （テストから `window.__mdIpc` を見れば close などの発火を確認できる。初期描画の
+/// 完了は IPC ではなく `document.documentElement.dataset.mdReady` に出る）。
 const IPC_STUB: &str = "window.__mdIpc = []; \
 window.ipc = { postMessage: function(m) { window.__mdIpc.push(m); } };";
 

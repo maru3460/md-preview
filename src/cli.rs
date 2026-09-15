@@ -156,7 +156,7 @@ pub fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     let theme_name = theme_override
         .map(String::from)
         .unwrap_or_else(theme::read_active_name);
-    let (theme_paint, appearance) = theme::resolve(&theme_name);
+    let (theme_paint, appearance, _) = theme::resolve(&theme_name);
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
     // 単体のファイルなので root はその親ディレクトリ。相対 src / href は
