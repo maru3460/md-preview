@@ -136,39 +136,6 @@ pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_appearance(_window: &tao::window::Window, _dark: bool) {}
 
-/// webview の「ページ範囲外」の色を塗り直す。行き過ぎスクロールの跳ね返り領域が
-/// これにあたる。
-///
-/// wry の `WebView::set_background_color` は使えない。macOS 側の実装が丸ごと
-/// `transparent` feature の中にあり、その feature を有効にしていないので、呼んでも
-/// 何もせず `Ok(())` が返るだけになる。起動時にビルダーへ渡す分だけは feature の
-/// 外（`setUnderPageBackgroundColor`）なので効いている。後から変えるには、こうして
-/// 直接叩くしかない。
-///
-/// `setUnderPageBackgroundColor` は macOS 12 以降にしかないので、応答するか確かめて
-/// から呼ぶ。11 以下では跳ね返りの色が起動時のまま残る。
-#[cfg(target_os = "macos")]
-pub fn set_webview_under_page_color(webview: &wry::WebView, (r, g, b, a): (u8, u8, u8, u8)) {
-    use objc2::{sel, runtime::NSObjectProtocol};
-    use objc2_app_kit::NSColor;
-    use wry::WebViewExtMacOS;
-
-    let view = webview.webview();
-    if !view.respondsToSelector(sel!(setUnderPageBackgroundColor:)) {
-        return;
-    }
-    let color = NSColor::colorWithSRGBRed_green_blue_alpha(
-        r as f64 / 255.0,
-        g as f64 / 255.0,
-        b as f64 / 255.0,
-        a as f64 / 255.0,
-    );
-    unsafe { view.setUnderPageBackgroundColor(Some(&color)) };
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn set_webview_under_page_color(_webview: &wry::WebView, _color: (u8, u8, u8, u8)) {}
-
 #[cfg(target_os = "macos")]
 pub fn get_frontmost_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;

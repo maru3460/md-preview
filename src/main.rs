@@ -219,6 +219,11 @@ fn main() {
     //
     // None は「OS の外観が読めなかった」。塗らずに既定の背景色へ任せる方が、
     // 当てずっぽうで塗って外すより見え方が悪くない（theme::window_bg を参照）。
+    //
+    // Why not: None のときは下の透過も効かない。色を渡さないと wry の is_some() が
+    // 偽になり drawsBackground が既定の true のまま残るので、この経路だけは
+    // 「OS 既定の窓色 → 白 → ページ」の二段のちらつきが残る。塗る色が無い以上
+    // 透かしても白の代わりが無いので、直しようが無い方を選んでいる。
     let bg = window_bg_rgba(active_theme, platform::os_is_dark());
 
     let mut window_builder = WindowBuilder::new()
@@ -234,14 +239,16 @@ fn main() {
     // ハンドラが必要とするもの（copy-abs/reveal/open のパス解決用）を先に clone する。
     let ipc_root = root_dir.clone();
 
-    // 窓と同じ色の二重指定に見えるが、消すと webview が乗った時点（実測 149ms）
-    // から先が白に戻る。webview は窓を覆うので、そこから先は窓の背景ではなく
-    // こちらが見える側になる。
+    // 窓と同じ色の二重指定に見えるが、引き金になっているのは色の中身ではなく
+    // 「色を渡したこと」の方である。wry の transparent feature は is_some() だけを
+    // 見て drawsBackground=false を立てる。これを消すと WKWebView が既定どおり
+    // 白を敷き、webview が乗ってから最初のフレームが届くまで（打鍵から数えて
+    // 149ms → 259ms の 110ms）が白に戻る。上の 160ms は窓が出た 95ms から数えた
+    // 長さなので、こちらより一回り長い。
     //
-    // ここで効いているのは underPageBackgroundColor だけ。wry がページ自体の
-    // 背景を透かす drawsBackground=false は transparent feature の中にあり、
-    // その feature を有効にしていないので届いていない。macOS 12 未満でも
-    // 何も起きない（そこは白のまま）。
+    // 色の中身が使われるのは underPageBackgroundColor（行き過ぎスクロールの
+    // 跳ね返り、macOS 12 以降）だけ。透けた先に見えるのは窓側に塗った色なので、
+    // ここを別の色にしても隙間の見え方は変わらない。
     let mut webview_builder = WebViewBuilder::new();
     if let Some(color) = bg {
         webview_builder = webview_builder.with_background_color(color);
@@ -341,12 +348,13 @@ fn main() {
                 ..
             } => {
                 // 下地は窓を作るときに一度塗るだけなので、OS の外観が変わると
-                // 取り残される。webview が覆っている間は見えないが、リサイズで
-                // 新しく広がった領域と、行き過ぎスクロールの跳ね返りに古い色が出る。
+                // 取り残される。描き終わったページの背景が覆っている間は見えないが、
+                // リサイズで新しく広がった領域と、行き過ぎスクロールの跳ね返りに
+                // 古い色が出る。
                 // 外観を固定したテーマなら同じ色が返るので実質なにも起きない。
                 if let Some(color) = window_bg_rgba(active_theme, Some(os_theme == OsTheme::Dark)) {
                     window.set_background_color(Some(color));
-                    platform::set_webview_under_page_color(&webview, color);
+                    let _ = webview.set_background_color(color);
                 }
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
