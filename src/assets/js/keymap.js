@@ -11,6 +11,10 @@
 // JS を通らないキーもある: ⌃⌘F（フルスクリーン）と ⌘Q ⌘Z ⌘X ⌘C ⌘V は macOS の
 // メニュー項目（platform.rs の setup_menu）が処理するので keydown が WebView に届かない。
 // それらは表示専用の行（run 無し）として並べる。
+//
+// 製品サイトの doc/keys も、ビルド時にこのファイルを読んで（site/src/keymap.js が
+// window と document.addEventListener のスタブを差して評価する）、キーの取りこぼしを
+// 突き合わせている。トップレベルで他の DOM API を触るとサイトのビルドが落ちる。
 (function() {
   // カテゴリ。BINDS の並びもこの順に揃える。`?` 一覧は見出しを出さず平坦に流すので、
   // ここでの順序がそのまま表示順になる。

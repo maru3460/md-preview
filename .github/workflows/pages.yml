@@ -1,19 +1,22 @@
 name: Deploy site to Pages
 
-# サイトだけの変更で走らせる。Rust のビルドとは無関係なので、
-# src/ を触っただけでデプロイが動くと待ち時間が無駄になる。
+# サイトの見た目に効く変更だけで走らせる。Rust のビルドとは無関係なので、
+# src/ を触っただけでデプロイが動くと待ち時間が無駄になる（keymap.js だけは
+# doc/keys がビルド時に読むので例外）。
 on:
   push:
     branches: [main]
     paths:
       - 'site/**'
       - 'Cargo.toml' # バージョンをフッタに出しているので、上がったら焼き直す
+      - 'src/assets/js/keymap.js' # doc/keys がビルド時に読んで、キーの取りこぼしを突き合わせる
       - '.github/workflows/pages.yml'
   # PR ではビルドだけ通す（デプロイは main への push のみ）。
   pull_request:
     paths:
       - 'site/**'
       - 'Cargo.toml'
+      - 'src/assets/js/keymap.js'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
