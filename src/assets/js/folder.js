@@ -1,5 +1,4 @@
 (function() {
-  var expandedDirs = new Set();
   var currentFilePath = null;
   var initialRenderDone = false;
   var mdCheckQueue = [];
@@ -61,7 +60,6 @@
         function expand() {
           children.classList.add('open');
           row.classList.add('dir-open');
-          expandedDirs.add(item.path);
           if (loaded) return Promise.resolve();
           loaded = true;
           return fetch('/?dir=' + encodeURIComponent(item.path))
@@ -77,7 +75,6 @@
           if (children.classList.contains('open')) {
             children.classList.remove('open');
             row.classList.remove('dir-open');
-            expandedDirs.delete(item.path);
           } else {
             expand();
           }
@@ -395,7 +392,9 @@
     if (!cursorRow) return;
     if (cursorRow.dataset.kind === 'dir') {
       if (!cursorRow.classList.contains('dir-open')) {
-        cursorRow.click(); // 既存ハンドラで展開（expandedDirs も同期される）
+        // expand() を直接呼ばないのは、閉じる側の処理とキーの往復をクリック
+        // ハンドラ 1 箇所に集めておくため。
+        cursorRow.click();
       } else {
         var children = cursorRow.nextSibling;
         var first = (children && children.querySelector) ? children.querySelector('.tree-item') : null;
