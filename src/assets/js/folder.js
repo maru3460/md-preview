@@ -1,33 +1,90 @@
 (function() {
   var currentFilePath = null;
+  // ポンプを回してよいかのゲート。初期描画中は ?dir= / ?file= に帯域を譲る。
   var initialRenderDone = false;
+  // 未送信の {path, row}。サーバに走査を止める手段が無いので、こちら側にできるのは
+  // 「まだ投げていないものを投げない」ことだけ。そのための待ち行列。
   var mdCheckQueue = [];
-  var mdDotCache = {};
+  var mdCheckInflight = 0;
+  // 同時に飛ばす本数。投げたぶんは畳んでも取り返せないので小さく、点が出揃う速さは
+  // 保ちたいので 1 本（完全直列）にはしない。幅の広い root で点が遅ければ上げ、
+  // 畳んだ後も焼けるなら下げる。触るのはこの 1 個だけで済むようにしてある。
+  var MD_CHECK_LIMIT = 3;
   var sidebarOpen = true;
 
-  function doHasMdCheck(path, row) {
-    if (path in mdDotCache) {
-      if (mdDotCache[path]) {
-        row.classList.add('has-md');
-      }
-      return;
+  // 畳んだ祖先の下にいる行。offsetParent を見ないのは、(1) ポンプのループの中で
+  // 毎回レイアウトを強制するため、(2) ⌘B でサイドバーごと畳んだ時も「隠れている」と
+  // 答えてしまうため。サイドバーは開き直した瞬間に点が要るので、それは別の問い。
+  function isRowHidden(row) {
+    return !!row.closest('.tree-children:not(.open)');
+  }
+
+  // 判定結果は行が持つ（data-md-dot: pending / yes / no / unknown）。パス→結果の
+  // 辞書を別に置かないのは、1 パスにつき行は 1 個しか存在しない（loaded フラグが
+  // 同じ dir の再描画を防ぐ）ので、辞書が同じ事実の二重帳簿になるため。
+  function setMdDot(row, state) {
+    row.dataset.mdDot = state;
+    if (state === 'yes') {
+      row.classList.add('has-md');
     }
-    fetch('/?has_md=' + encodeURIComponent(path))
-      .then(function(r) { return r.json(); })
+  }
+
+  function sendHasMdCheck(path, row) {
+    // 加算は fetch を呼んだ後。先に増やすと、fetch が同期的に throw した時に
+    // 減らす者が居なくなり、上限が恒久的に目減りする。
+    var pending = fetch('/?has_md=' + encodeURIComponent(path));
+    mdCheckInflight++;
+    pending
+      .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
-        mdDotCache[path] = !!data.has_md;
-        if (data.has_md) {
-          row.classList.add('has-md');
-        }
+        // 値は文字列。"no" は truthy なので !! や if で判定してはいけない。
+        var v = data && data.has_md;
+        // 予算切れ(unknown)・非 200・壊れた応答は確定させない。確定させると点が
+        // 二度と出ない（再判定の契機は「畳んで開き直す」だけなので、それを潰す）。
+        setMdDot(row, v === 'yes' ? 'yes' : v === 'no' ? 'no' : 'unknown');
       })
-      .catch(function() {});
+      .catch(function() { setMdDot(row, 'unknown'); })
+      .then(function() {
+        mdCheckInflight--;
+        pumpMdChecks();
+      });
+  }
+
+  function pumpMdChecks() {
+    if (!initialRenderDone) return;
+    while (mdCheckInflight < MD_CHECK_LIMIT && mdCheckQueue.length) {
+      // 先入れ先出し。後入れ先出しにすると「最後に展開した場所を優先できる」が、
+      // 起動時は root の全行が積まれてから動き出すので、文書順の逆＝画面の下から
+      // ドットが埋まる。一番目に付く先頭行が最後に点くほうが損。畳んだ行は送信前に
+      // 捨てるので、古い積み残しが新しい展開を待たせ続けることもない。
+      var next = mdCheckQueue.shift();
+      if (next.row.dataset.mdDot !== 'pending') continue;
+      if (isRowHidden(next.row)) {
+        delete next.row.dataset.mdDot;
+        continue;
+      }
+      sendHasMdCheck(next.path, next.row);
+    }
   }
 
   function scheduleHasMdCheck(path, row) {
-    if (initialRenderDone) {
-      doHasMdCheck(path, row);
-    } else {
-      mdCheckQueue.push({path: path, row: row});
+    if (row.dataset.mdDot === 'pending') return;
+    row.dataset.mdDot = 'pending';
+    mdCheckQueue.push({path: path, row: row});
+    pumpMdChecks();
+  }
+
+  // 再び見えるようになった dir 行のうち、判定が確定していないものを積み直す。
+  // 自動では再試行しない（unknown が返るのは最も重い枝なので、タイマーやホバーで
+  // 再走査すると消したはずの CPU 焼きが戻る）。畳んで開き直すのは関心の表明なので、
+  // 再走査の対価はそこで払う。
+  function recheckDots(container) {
+    var rows = container.querySelectorAll('.tree-item[data-kind="dir"]');
+    for (var i = 0; i < rows.length; i++) {
+      var state = rows[i].dataset.mdDot;
+      if (state === 'yes' || state === 'no' || state === 'pending') continue;
+      if (isRowHidden(rows[i])) continue;
+      scheduleHasMdCheck(rows[i].dataset.path, rows[i]);
     }
   }
 
@@ -58,8 +115,15 @@
 
         // 子要素を読み込んで展開する。子の描画完了で解決する Promise を返す。
         function expand() {
+          var wasOpen = children.classList.contains('open');
           children.classList.add('open');
           row.classList.add('dir-open');
+          // 畳んでいる間に捨てた判定と、予算切れで不明だったものをここで拾い直す。
+          // 開いているものを開き直した時にやらないのは、revealFile が祖先の _expand を
+          // 開閉に関係なく呼ぶから。そこで積み直すと、ファイルを開くたびに（タブ切替も
+          // ⌘P も）一番重い枝の再走査が走り、起動時のバーストをクリックごとのバースト
+          // に置き換えることになる。
+          if (!wasOpen) recheckDots(children);
           if (loaded) return Promise.resolve();
           loaded = true;
           return fetch('/?dir=' + encodeURIComponent(item.path))
@@ -569,6 +633,8 @@
     function markInitialRenderDone() {
       initialRenderDone = true;
       document.documentElement.dataset.mdReady = '1';
+      // 成功・失敗どちらの経路から来てもここで待ち行列が動き出す。
+      pumpMdChecks();
     }
 
     fetch('/?dir=')
@@ -587,8 +653,6 @@
         }
         setTimeout(function() {
           markInitialRenderDone();
-          mdCheckQueue.forEach(function(item) { doHasMdCheck(item.path, item.row); });
-          mdCheckQueue = [];
           // ファイル検索の一覧を先に温めておく（初回の ⌘P を待たせない）。
           // 初期表示より後に投げるので、起動の体感速度は落とさない。
           if (window.MdPalette) window.MdPalette.prefetch();

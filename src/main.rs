@@ -505,6 +505,9 @@ fn spawn_watcher(
 
     // root 配下は再帰で見る。root の外のファイルはページから watch: が飛んでくるので
     // watch_extra が個別に足す。
+    //
+    // root を `/` にできない理由の 1 つがここ。再帰監視はボリューム全体の FSEvents を
+    // 受けることになり、走査に予算を付けても減らせない（`app_config::files_root` の門）。
     debouncer.watcher().watch(&root, RecursiveMode::Recursive).ok()?;
     Some(debouncer)
 }

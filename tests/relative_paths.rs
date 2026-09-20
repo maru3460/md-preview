@@ -156,6 +156,8 @@ fn the_sidebar_tree_still_stops_at_the_root() {
         get(&root, "/", &format!("dir={}", outside.to_string_lossy())).status,
         404
     );
+    // ドットの判定も同じゲート。`?dir=` だけ守って `?has_md=` が素通り、を防ぐ。
+    assert_eq!(get(&root, "/", "has_md=../outside").status, 404);
     // アセットの素の traversal も従来どおり弾く。
     assert_eq!(get(&root, "/../outside/out.png", "").status, 404);
 }

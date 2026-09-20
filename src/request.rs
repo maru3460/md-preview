@@ -98,21 +98,6 @@ pub fn extension_to_hljs_lang(path: &Path) -> &'static str {
     }
 }
 
-pub fn has_md_descendant(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else { return false };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if has_md_descendant(&p) {
-                return true;
-            }
-        } else if classify_ext(&p) == ViewKind::Markdown {
-            return true;
-        }
-    }
-    false
-}
-
 pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
     let mut dirs: Vec<(String, String)> = Vec::new();
     let mut files: Vec<(String, String)> = Vec::new();
@@ -156,9 +141,25 @@ const FILE_LIST_MAX: usize = 20_000;
 const FILE_LIST_MAX_DEPTH: usize = 16;
 const FILE_LIST_MAX_DIRS: usize = 50_000;
 
+/// ツリーのドット判定（`md_presence`）の上限。ファイル一覧と別の値なのは、走り方が
+/// 違うから。一覧は ⌘P を開いた時に 1 本だけ走り、1 回で全部を出し切る必要がある。
+/// ドットは折りたたみを開くたびにフォルダ行の数だけ走り、聞かれたディレクトリが毎回
+/// 起点になる（1 段開けば予算が補充される）。だから浅く・少なく切ってよい。
+/// 件数に相当する上限が無いのは、返すのが 3 値で「出力の大きさ」という概念が無いため。
+/// 実コストは `read_dir` の回数にほぼ比例するので、それを直接縛れば足りる。
+const HAS_MD_MAX_DEPTH: usize = 8;
+const HAS_MD_MAX_DIRS: usize = 2_000;
+
 /// 再帰探索から外すディレクトリ名。「読む対象ではないのに数万ファイルある」ものだけを
 /// 挙げる（VCS の内部・依存物・ビルド生成物）。ここで外してもサイドバーのツリーは
 /// 従来どおり全部見せるので、到達できなくなるファイルは無い。
+///
+/// 利用者は `collect_files`（⌘P の一覧）と `md_presence`（ツリーのドット）の 2 つ。
+/// ドット側に通したことで、その意味は「配下のどこかに md」ではなく「除外リストの外の
+/// どこかに md」になった。結果として `proj/node_modules/pkg/readme.md` だけを持つ
+/// `proj` は暗いまま、その中の `node_modules` 行にはドットが点く、という見え方になる。
+/// 親より子が明るいのは妙だが、ドットは「読む価値のある md の在り処」の印なので、
+/// 依存物の同梱 README で親を光らせるほうが誤りだと判断した。
 /// 逆に `.github` `.vscode` のような設定系は読みたい対象なので、隠しディレクトリを
 /// 一律で外すことはしない。
 fn is_skipped_dir(name: &str) -> bool {
@@ -271,6 +272,80 @@ fn collect_files(root: &Path, out: &mut Vec<String>) -> Option<Truncation> {
         Some(Truncation::Depth)
     } else {
         None
+    }
+}
+
+/// 配下に Markdown があるか。予算を使い切って答えが出なければ `Unknown`。
+///
+/// `Truncation` を使い回さないのは、`Truncation::Files` がこちらでは絶対に起きない
+/// ＝到達しない variant を型に抱えることになるため。`Option<bool>` も採らない
+/// （`None` が「不明」なのか「読めなかった」なのか、呼ぶ側から区別できない）。
+#[derive(Debug, PartialEq, Eq)]
+enum MdPresence {
+    Yes,
+    No,
+    /// 予算を使い切って答えが出なかった。「無い」と言い切らないための 3 つ目。
+    Unknown,
+}
+
+/// `dir` の配下に Markdown があるかを、予算の範囲で調べる。
+///
+/// **幅優先で辿る**。理由は `collect_files` と共通（深さ優先は上限に当たったときに
+/// 「名前順で最初の枝だけ深く」という偏り方をする）だが、こちらにはもう 1 つある。
+/// 大多数のフォルダは直下に README.md を持つので、幅優先なら `read_dir` 1 回で
+/// `Yes` が返る。深さ優先だと名前順で最初のサブディレクトリへ先に潜ってしまう。
+///
+/// 時間による打ち切りは置かない。マシンの負荷で同じフォルダの答えが変わると、
+/// ドットが点いたり消えたりする。件数で切れば同じ木には必ず同じ答えが出る。
+///
+/// 走査の中断（`AtomicBool` 等）も持たない。畳んだフォルダの走査を止めたくなるが、
+/// 予算が入った今は 1 本の最悪コストが `read_dir` を `HAS_MD_MAX_DIRS` 回で有界。
+/// 止めるには wry のカスタムプロトコルとは別の通知経路と、パスごとのフラグ登録簿が
+/// 要る（`RequestContext` に共有可変状態が生える）。割に合わないので、
+/// 「要らなくなったものを投げない」側は `folder.js` の待ち行列が持つ。
+fn md_presence(dir: &Path) -> MdPresence {
+    // (ディレクトリ, 深さ)。pop_front / push_back で階層順に処理する。
+    let mut queue: std::collections::VecDeque<(PathBuf, usize)> = std::collections::VecDeque::new();
+    queue.push_back((dir.to_path_buf(), 0));
+    let mut visited_dirs = 0usize;
+    // 深さ上限で刈った枝があったか。刈っても他の枝は歩くので、最後まで回してから使う。
+    let mut deep_skipped = false;
+
+    while let Some((current, depth)) = queue.pop_front() {
+        visited_dirs += 1;
+        if visited_dirs > HAS_MD_MAX_DIRS {
+            return MdPresence::Unknown;
+        }
+        // 読めないディレクトリは展開しても空なので、提示できる md は無い＝ No 側へ倒す。
+        // Unknown にはしない。Unknown は「予算切れ」だけを指す語に保ちたいため
+        // （引き換えに、権限で読めない枝は畳んで開き直しても再挑戦しない）。
+        let Ok(entries) = std::fs::read_dir(&current) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                // 除外リストは意図した除外なので Unknown にしない。Unknown は
+                // 「予算切れ」だけを指す語に保つ。起点そのものは除外しないので、
+                // `?has_md=node_modules` と聞かれれば中身を見る。
+                if is_skipped_dir(&name.to_string_lossy()) {
+                    continue;
+                }
+                if depth + 1 > HAS_MD_MAX_DEPTH {
+                    deep_skipped = true;
+                    continue;
+                }
+                queue.push_back((entry.path(), depth + 1));
+            } else if classify_ext(Path::new(&name)) == ViewKind::Markdown {
+                return MdPresence::Yes;
+            }
+        }
+    }
+
+    // 刈った枝があっても、他の枝で見つかっていれば上で Yes を返している。
+    // ここに来るのは「見つからなかった」場合だけなので、刈った＝答えが出ていない。
+    if deep_skipped {
+        MdPresence::Unknown
+    } else {
+        MdPresence::No
     }
 }
 
@@ -552,18 +627,19 @@ fn serve_builtin_lib(name: &str) -> Response {
     ok_response("application/javascript; charset=utf-8", js.as_bytes().to_vec())
 }
 
+/// ツリーの 2 つの経路（`?dir=` と `?has_md=`）が見てよいディレクトリ。
+///
+/// 同じ入力に同じ挙動を返す、を人力のコメントではなく 1 つの関数で担保する。
+/// `rel` が空なら root 自身。root の外とディレクトリでないものは None（＝ 404）。
+fn resolve_tree_dir(rel: &str, root_dir: &Path) -> Option<PathBuf> {
+    let target = if rel.is_empty() { Some(root_dir.to_path_buf()) } else { safe_join(root_dir, rel) };
+    target.filter(|p| p.is_dir())
+}
+
 fn handle_dir(rel: &str, root_dir: &Path) -> Response {
-    let target_dir = if rel.is_empty() {
-        Some(root_dir.to_path_buf())
-    } else {
-        safe_join(root_dir, rel)
-    };
-    match target_dir {
-        Some(dir) if dir.is_dir() => ok_response(
-            "application/json; charset=utf-8",
-            list_dir_json(&dir, root_dir),
-        ),
-        _ => not_found_response(),
+    match resolve_tree_dir(rel, root_dir) {
+        Some(dir) => ok_response("application/json; charset=utf-8", list_dir_json(&dir, root_dir)),
+        None => not_found_response(),
     }
 }
 
@@ -791,8 +867,6 @@ pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Resp
     match parse_route(url_path, query) {
         Route::BuiltinLib(name) => serve_builtin_lib(name),
         Route::Dir(rel) => handle_dir(&rel, &ctx.root_dir),
-        // サイドバーの「md を含むフォルダ」の点。深さ無制限の全走査になりうるが、
-        // ハンドラ自体が別スレッドで走るのでここで完結してよい。
         Route::HasMd(rel) => handle_has_md(&rel, &ctx.root_dir),
         Route::Files => handle_files(&ctx.root_dir),
         Route::Changed => handle_changed(&ctx.root_dir),
@@ -806,12 +880,28 @@ pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Resp
 }
 
 /// サイドバーのフォルダに「中に md がある」点を出すかの判定。
+///
+/// 返すのは `{"has_md":"yes"|"no"|"unknown"}`。**値は bool ではなく文字列**で、
+/// JS では `"no"` も truthy になる。`if (data.has_md)` と書くと全フォルダに点が付く。
+///
+/// `handle_files` のように `reason` / `limit` は添えない。あちらは JS が数値入りの
+/// 警告文を出すためだが、ここで JS がするのはクラスを足すか足さないかだけなので、
+/// 渡しても表示するあてが無い。
 fn handle_has_md(rel: &str, root_dir: &Path) -> Response {
-    let found = safe_join(root_dir, rel).map(|p| has_md_descendant(&p)).unwrap_or(false);
-    ok_response(
-        "application/json; charset=utf-8",
-        format!(r#"{{"has_md":{}}}"#, found).into_bytes(),
-    )
+    match resolve_tree_dir(rel, root_dir) {
+        Some(dir) => {
+            let md = match md_presence(&dir) {
+                MdPresence::Yes => "yes",
+                MdPresence::No => "no",
+                MdPresence::Unknown => "unknown",
+            };
+            ok_response(
+                "application/json; charset=utf-8",
+                format!(r#"{{"has_md":"{}"}}"#, md).into_bytes(),
+            )
+        }
+        None => not_found_response(),
+    }
 }
 
 #[cfg(test)]
@@ -1048,6 +1138,175 @@ mod tests {
     }
 
     #[test]
+    fn has_md_finds_markdown_directly_below_and_nested() {
+        let root = std::env::temp_dir().join("md-hasmd-yes-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("nested/sub/deep")).unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+        // 拡張子は .markdown も Markdown 扱い（classify_ext と揃っていること）。
+        std::fs::write(root.join("nested/sub/deep/d.markdown"), "x").unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::Yes);
+        assert_eq!(md_presence(&root.join("nested")), MdPresence::Yes);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_answers_no_for_a_tree_without_markdown() {
+        let root = std::env::temp_dir().join("md-hasmd-no-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+        std::fs::write(root.join("note.txt"), "x").unwrap();
+        std::fs::write(root.join("sub/deep/main.rs"), "x").unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::No);
+
+        let resp = handle_has_md("", &root);
+        assert_eq!(resp.status(), 200);
+        let body = String::from_utf8_lossy(resp.body()).into_owned();
+        assert!(body.contains(r#"{"has_md":"no"}"#), "{body}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_answers_unknown_when_the_depth_budget_cuts_the_branch() {
+        let root = std::env::temp_dir().join("md-hasmd-depth-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut deep = root.clone();
+        for _ in 0..(HAS_MD_MAX_DEPTH + 2) {
+            deep = deep.join("d");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("buried.md"), "x").unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::Unknown);
+
+        let resp = handle_has_md("", &root);
+        let body = String::from_utf8_lossy(resp.body()).into_owned();
+        assert!(body.contains(r#"{"has_md":"unknown"}"#), "{body}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_still_reaches_the_deepest_allowed_level() {
+        // 境界の内側。予算を締めすぎる回帰（`depth + 1 > MAX` を `depth >= MAX` に
+        // するなど）は、超えた側のテストだけでは捕まらない。
+        let root = std::env::temp_dir().join("md-hasmd-depth-edge-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut deep = root.clone();
+        for _ in 0..HAS_MD_MAX_DEPTH {
+            deep = deep.join("d");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("edge.md"), "x").unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::Yes);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_finishes_within_the_directory_budget() {
+        // 境界の内側。予算ちょうどまでは Unknown にせず No と言い切ること。
+        // 起点自身も 1 つと数えるので、サブディレクトリは上限より 1 つ少なくする。
+        let root = std::env::temp_dir().join("md-hasmd-dirs-edge-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..(HAS_MD_MAX_DIRS - 1) {
+            std::fs::create_dir(root.join(format!("d{i:05}"))).unwrap();
+        }
+
+        assert_eq!(md_presence(&root), MdPresence::No);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_prefers_a_found_answer_over_a_cut_branch() {
+        // 刈られた枝があっても、他の枝で見つかれば Yes。不明が答えを覆い隠さないこと。
+        let root = std::env::temp_dir().join("md-hasmd-mixed-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut deep = root.clone();
+        for _ in 0..(HAS_MD_MAX_DEPTH + 2) {
+            deep = deep.join("d");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("buried.md"), "x").unwrap();
+        std::fs::write(root.join("top.md"), "x").unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::Yes);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_answers_unknown_when_the_directory_budget_runs_out() {
+        // 予算が実際に走査を止めること。深さ 1 に平らに並べるので、深さ予算は発火しない。
+        let root = std::env::temp_dir().join("md-hasmd-dirs-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..(HAS_MD_MAX_DIRS + 1) {
+            std::fs::create_dir(root.join(format!("d{i:05}"))).unwrap();
+        }
+
+        assert_eq!(md_presence(&root), MdPresence::Unknown);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_ignores_markdown_inside_denylisted_dirs() {
+        // 除外リストの中の md は数えない（⌘P の一覧と見え方を揃える）。
+        // ただし聞かれた起点そのものは除外しない。
+        let root = std::env::temp_dir().join("md-hasmd-deny-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/readme.md"), "x").unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::No);
+        assert_eq!(md_presence(&root.join("node_modules")), MdPresence::Yes);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn has_md_does_not_follow_directory_symlinks() {
+        // No が返ること。リンクを辿っていたら自己ループが深さ予算に当たって
+        // Unknown になるので、この値が「辿っていない」を区別している。
+        let root = std::env::temp_dir().join("md-hasmd-link-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("loop")).unwrap();
+        std::os::unix::fs::symlink(root.join("loop"), root.join("loop/self")).unwrap();
+
+        assert_eq!(md_presence(&root), MdPresence::No);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_md_rejects_paths_outside_the_root() {
+        // safe_join は root が正規化済みであることを前提にする（実アプリの root は
+        // resolve_arg_path が canonicalize している）。macOS の temp_dir は
+        // /var/folders/... で /private/var/... へのリンクなので、ここで揃える。
+        let root = std::env::temp_dir().canonicalize().unwrap().join("md-hasmd-guard-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.md"), "x").unwrap();
+
+        assert_eq!(handle_has_md("../outside", &root).status(), 404);
+        // ディレクトリでないものを聞かれても 404（?dir= と同じゲート）。
+        assert_eq!(handle_has_md("a.md", &root).status(), 404);
+        assert_eq!(handle_has_md("", &root).status(), 200);
+        assert_eq!(handle_has_md("sub", &root).status(), 200);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn file_list_does_not_report_denylisted_dirs_as_truncation() {
         // 除外リストは意図した除外なので、警告（打ち切り）扱いにしないこと。
         let root = std::env::temp_dir().join("md-filelist-deny-test");
@@ -1070,6 +1329,7 @@ mod tests {
         assert_eq!(parse_route("/", "changed=1"), Route::Changed);
         assert_eq!(parse_route("/", "file=a.md"), Route::View("a.md".to_string()));
         assert_eq!(parse_route("/", "diffstat=a.md"), Route::DiffStat("a.md".to_string()));
+        assert_eq!(parse_route("/", "has_md=sub"), Route::HasMd("sub".to_string()));
         // 値は percent-decode される。
         assert_eq!(
             parse_route("/", "file=sub%20dir%2Fa.md"),

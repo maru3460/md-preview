@@ -160,9 +160,13 @@ fn files_root(paths: &[PathBuf], current_dir: &Option<PathBuf>) -> PathBuf {
         .filter(|cwd| paths.iter().all(|p| p.starts_with(cwd)))
         .or_else(|| common_ancestor(paths))
         .unwrap_or_else(|| PathBuf::from("/"));
-    // root がファイルシステムの根まで広がったら開かない。root は再帰監視され、
-    // ツリーは各ディレクトリに has_md を投げて全走査するので、`/` を掴むと
-    // `/System` などを舐めて固まる。
+    // root がファイルシステムの根まで広がったら開かない。ツリーのドット判定は
+    // 予算付きになった（`request::md_presence`）ので、もう門の理由ではない。残る
+    // 理由は 2 つで、どちらも走査の予算では消せない。(1) root はまるごと再帰監視
+    // されるので、`/` ではボリューム全体の FSEvents を受ける（`main.rs` の watcher）。
+    // (2) ⌘P のファイル一覧が 20,000 件の予算を `/System` などの浅い階層で使い切り、
+    // 目的のファイルが載らない一覧になる（`request::FILE_LIST_MAX`）。幅優先なので
+    // `/Users` に届かないわけではないが、届いた先にはもう予算が残っていない。
     if root.parent().is_none() {
         eprintln!("md: root がファイルシステムの根（'/'）に広がるため開けません");
         eprintln!("    同じフォルダのファイルを指定するか、フォルダごと開いてください");
@@ -196,8 +200,8 @@ fn resolve_arg_path(arg: &str) -> PathBuf {
 }
 
 /// stdin を開くときの root。作業ディレクトリを使うが、そこが `/` のときだけは
-/// 一時ファイルの置き場所へ逃がす。`/` を root にすると再帰監視とツリーの
-/// 全走査が `/System` などを舐めて固まる（`files_root` の門と同じ理由）。
+/// 一時ファイルの置き場所へ逃がす。`/` を root にするとボリューム全体が再帰監視の
+/// 対象になり、ファイル一覧も予算を使い切る（`files_root` の門と同じ理由）。
 /// ファイル指定と違ってユーザーは root を指定していないので、ここは終了させずに畳む。
 fn stdin_root(doc: &Path, current_dir: &Option<PathBuf>) -> PathBuf {
     let cwd = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -317,8 +321,8 @@ mod tests {
             files_root(&paths(&["/work/docs/a.md", "/work/lib/b.md"]), &None),
             PathBuf::from("/work")
         );
-        // 共通の親が `/` まで広がるケースは値を返さずプロセスを終える（ツリーの
-        // 全走査で固まるため）ので、ここでは呼ばない。
+        // 共通の親が `/` まで広がるケースは値を返さずプロセスを終える（ボリューム
+        // 全体の再帰監視になるため）ので、ここでは呼ばない。
     }
 
     /// `spool_stdin` が作るのと同じ形の（存在しない）パス。
@@ -358,7 +362,7 @@ mod tests {
 
     #[test]
     fn stdin_root_never_becomes_the_filesystem_root() {
-        // cwd が `/` のときに root を `/` にすると、再帰監視とツリーの全走査で固まる。
+        // cwd が `/` のときに root を `/` にすると、ボリューム全体が再帰監視される。
         // ユーザーは root を指定していないので、終了させずに一時ファイルの場所へ逃がす。
         let doc = spooled("slash");
         assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/"))), doc.parent().unwrap());

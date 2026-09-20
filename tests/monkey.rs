@@ -3,9 +3,10 @@
 //! 相当に叩き込み、(1) パニックが起きないこと、(2) どの操作も一定時間内に返る
 //! （＝固まらない）ことを確認する。
 //!
-//! `md /` で「ツリーをいじってたら固まった」現象を炙り出すのが主目的。犯人候補は
-//! `has_md_descendant` の深さ無制限な全走査で、サイドバーに見えるサブフォルダの数
-//! だけ同時に走ると重くなる。
+//! `md /` で「ツリーをいじってたら固まった」現象を炙り出すのが主目的。犯人だった
+//! ドット判定の全走査は予算付きになった（`request::md_presence`）ので、いまここが
+//! 守っているのは「予算が実際に効いていること」である。最遅の操作が `HasMd` に
+//! 戻ったら、予算が素通りしているか、どこかで予算の外を歩いている。
 //!
 //! 通常の `cargo test` では走らせない（`#[ignore]`）。明示的に:
 //!   cargo test --test monkey -- --ignored --nocapture
@@ -25,7 +26,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use md_preview::request::{handle_request, has_md_descendant, safe_join, RequestContext};
+use md_preview::request::{handle_request, RequestContext};
 
 /// 決定論のための小さな PRNG（splitmix64）。乱数クレートを足さずに、シードから
 /// 完全に再現可能な操作列を作るために自前で持つ。
@@ -115,12 +116,7 @@ fn perform(action: &Action, root: &Path) {
     };
     match action {
         Action::ListDir(rel) => drop(handle_request(&ctx, "/", &format!("dir={}", rel))),
-        Action::HasMd(rel) => {
-            // has_md= 経路と同じ。safe_join を通してから全走査する。
-            if let Some(p) = safe_join(&ctx.root_dir, rel) {
-                let _ = has_md_descendant(&p);
-            }
-        }
+        Action::HasMd(rel) => drop(handle_request(&ctx, "/", &format!("has_md={}", rel))),
         Action::OpenFile(rel) => drop(handle_request(&ctx, "/", &format!("file={}", rel))),
         Action::Raw(rel) => drop(handle_request(&ctx, "/", &format!("raw={}", rel))),
         Action::Diff(rel) => drop(handle_request(&ctx, "/", &format!("diff={}", rel))),
@@ -280,8 +276,8 @@ impl Fixture {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("フィクスチャ root を作れない");
 
-        // (1) 横に広く、md を 1 つも置かない枝。has_md_descendant を最後まで
-        //     歩かせる worst case。
+        // (1) 横に広く、md を 1 つも置かない枝。サブディレクトリが無いので予算には
+        //     届かないが、早期 return が効かない（＝最後まで舐める）形の再現。
         for w in 0..width {
             let d = root.join(format!("wide{:02}", w));
             std::fs::create_dir_all(&d).unwrap();
@@ -291,7 +287,8 @@ impl Fixture {
             }
         }
 
-        // (2) 縦に深いネスト。深さ無制限の再帰を刺激する。最深部にだけ md を置く。
+        // (2) 縦に深いネスト。最深部にだけ md を置くので、ドット判定は深さ予算で
+        //     刈られて Unknown を返す（それが期待挙動）。
         let mut deep = root.join("deep");
         std::fs::create_dir_all(&deep).unwrap();
         for level in 0..depth {
@@ -338,7 +335,8 @@ impl Fixture {
         s.push_str("\n> [!NOTE]\n> unterminated ```rust\nfn f(){\n");
         write_file(&md, s.as_bytes());
 
-        // (6) symlink ループ（has_md_descendant は辿らない想定だが、他経路の保険）。
+        // (6) symlink ループ。走査系は file_type() でリンクを追わないので辿らない
+        //     （request.rs の単体テストで担保済み）。ここは他経路の保険。
         #[cfg(unix)]
         {
             let loop_dir = root.join("loopdir");
