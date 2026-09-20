@@ -96,8 +96,9 @@
 
   // .source-view（.md 以外のソース表示）に行番号ガターを付ける。多重付与は防ぐ。
   // ガターは .source-main 内で <pre> の兄弟として置くので hljs のハイライトには触れない。
-  // 行包み済み（wrapSourceLines）のソースは各行の ::before が番号を出すので付けない——
-  // 行間にコメントカードが挟まると、別カラムのガターでは番号が行とずれるため。
+  // こちらは 1 本のテキストで出す簡易版で、行を包まなかった巨大ファイル専用。
+  // 包んだソースの番号は wrapSourceLines が 1 行 1 セルで組む（行間に何か挟まっても
+  // ずれないようにするため。下の buildSrcGutter / syncSrcGutter）。
   function addLineNumbers(scope) {
     var root = scope || document;
     root.querySelectorAll('.source-main').forEach(function(main) {
@@ -178,20 +179,119 @@
       }
       code.innerHTML = out.join('');
       code.dataset.srcWrapped = '1';
-      // 行番号（::before）の桁数と、横スクロール時に番号の下へ敷く地色を CSS 変数で渡す。
-      code.style.setProperty('--md-gutter-ch', String(String(parts.length).length));
-      // 最長行の幅も配る。行の塗り・帯を全行この幅（min-width）に揃えるため——
+      // 行番号の桁数を CSS 変数で渡す（ガターの幅がこれで決まる）。main に置くのは、
+      // ガターが code の外（兄弟）にいて、code に置いた変数を読めないため。
+      main.style.setProperty('--md-gutter-ch', String(String(parts.length).length));
+      buildSrcGutter(main, parts.length);
+      // 最長行の幅を配る。行の塗り・帯を全行この幅（min-width）に揃えるため——
       // CSS の 100% は可視幅（code = スクローラ）にしかならず、横スクロールすると
       // 短い行の塗りが途中で切れる。コンテンツ幅はフォント固定なのでリサイズ不変。
+      // ガターを入れた後に測る。先に測ると、ガターぶん狭まる前の可視幅が焼き付いて、
+      // はみ出していないファイルにもガター幅ぶんの横スクロールが出る。
       code.style.setProperty('--md-src-content-w', code.scrollWidth + 'px');
-      for (var n = main; n; n = n.parentElement) {
-        var c = getComputedStyle(n).backgroundColor;
-        if (c && c !== 'transparent' && c !== 'rgba(0, 0, 0, 0)') {
-          code.style.setProperty('--md-src-gutter-bg', c);
-          break;
-        }
-      }
+      observeSrcCode(code);
+      scheduleGutterSync();
     });
+  }
+
+  // ── 行番号のガター（横スクローラの外の 1 カラム） ──────────────────
+  // 番号を行の中（::before）に置くと、横スクロールで流れないようにするための sticky が
+  // 行数ぶん必要になり、スクロールのたびに全部の貼り付き位置が解き直されて重い
+  // （3073 行のソースで、縦スクロール 30 回ぶんのレイアウトが 992ms。外に出すと 30ms）。
+  // 外に出すぶん、縦位置は自分で合わせる（syncSrcGutter）。
+  function buildSrcGutter(main, count) {
+    var old = main.querySelector(':scope > .source-gutter');
+    if (old) old.remove();
+    var gutter = document.createElement('div');
+    // aria-hidden は飾りの印であると同時に、検索（search.js）と選択コピー
+    // （mirrorMarkdown）から番号を外す印でもある。外すと数字が本文に混ざる。
+    gutter.className = 'source-gutter source-gutter-rows';
+    gutter.setAttribute('aria-hidden', 'true');
+    var cells = new Array(count);
+    for (var i = 0; i < count; i++) {
+      // data-src-line は付けない。コメントの錨（[data-src-line]）として拾われて、
+      // 番号のセルに 💬 が付いたりカーソルが乗ったりしてしまう。
+      cells[i] = '<div class="src-num">' + (i + 1) + '</div>';
+    }
+    gutter.innerHTML = cells.join('');
+    main.insertBefore(gutter, main.firstChild);
+  }
+
+  // 行と行の間に何か（コメントカード）が挟まったぶん、番号の側にも同じ隙間を空ける。
+  // 挟まっているものの正体も高さも見ない——実際に空いた距離だけを測る。こうしておくと
+  // カードが折り返しで伸びても、2 件並んでも、この先べつの物が挟まっても同じ式で合う。
+  function syncSrcGutter(scope) {
+    var root = scope || document;
+    root.querySelectorAll('.source-main').forEach(function(main) {
+      var gutter = main.querySelector(':scope > .source-gutter-rows');
+      var code = main.querySelector('pre code[data-src-wrapped]');
+      if (!gutter || !code) return;
+      var cells = gutter.children;
+      var prev = gutter.__mdGaps || [];
+      var boxes = code.querySelectorAll('.md-cmt-embed');
+      // 速い道: 何も挟まっていないなら行は詰まっている。前回空けたぶんを畳んで終わり。
+      if (!boxes.length) {
+        prev.forEach(function(i) { if (cells[i]) cells[i].style.marginBottom = ''; });
+        gutter.__mdGaps = [];
+        return;
+      }
+      // 測る（読み）と空ける（書き）を分ける。1 行ずつ測っては書くと、そのたびに
+      // レイアウトを取り立てることになる。
+      var gaps = [];
+      boxes.forEach(function(box) {
+        var above = box.previousElementSibling;
+        while (above && !above.classList.contains('md-src-row')) above = above.previousElementSibling;
+        var below = box.nextElementSibling;
+        while (below && !below.classList.contains('md-src-row')) below = below.nextElementSibling;
+        // 最終行の下に出たカードは、番号を押し下げる相手がいないので何もしない。
+        if (!above || !below) return;
+        var i = parseInt(above.dataset.srcLine, 10) - 1;
+        if (!(i >= 0) || !cells[i]) return;
+        // 端数まで測る。offsetTop / offsetHeight は整数に丸まるので、1 行 20.15px の
+        // ような高さだと隙間が 1px ずれ、カードより下の番号が全部そのぶん狂う。
+        gaps.push([i, below.getBoundingClientRect().top - above.getBoundingClientRect().bottom]);
+      });
+      var now = gaps.map(function(g) { return g[0]; });
+      prev.forEach(function(i) { if (now.indexOf(i) < 0 && cells[i]) cells[i].style.marginBottom = ''; });
+      gaps.forEach(function(g) { cells[g[0]].style.marginBottom = g[1] + 'px'; });
+      gutter.__mdGaps = now;
+    });
+  }
+
+  // 行に対応するガターのセル。コメントの 💬 バッジを番号の上に載せる（comment.js）。
+  function srcGutterCell(row) {
+    var main = row.closest && row.closest('.source-main');
+    var gutter = main && main.querySelector(':scope > .source-gutter-rows');
+    var i = parseInt(row.dataset.srcLine, 10) - 1;
+    return gutter && i >= 0 ? gutter.children[i] : null;
+  }
+
+  var gutterQueued = false;
+  function scheduleGutterSync() {
+    if (gutterQueued) return;
+    gutterQueued = true;
+    // 挿さった直後のカードはまだ高さを持たないので、1 フレーム待ってから測る。
+    requestAnimationFrame(function() { gutterQueued = false; syncSrcGutter(document); });
+  }
+
+  // カードの高さは窓幅（折り返し）や編集で変わる。code の高さが動いたら測り直す
+  // ——隙間を空けるのはガター側なので、これが自分を呼び戻すことはない。
+  var srcResize = typeof ResizeObserver === 'function'
+    ? new ResizeObserver(scheduleGutterSync) : null;
+  var srcObserved = [];
+  window.addEventListener('resize', scheduleGutterSync);
+
+  // ResizeObserver は観測先を強く掴むので、本文の差し替えで切り離された <code> を
+  // 外さないと、ファイル切替や ⌘R のたびに数千行ぶんの DOM が観測対象として残る。
+  function observeSrcCode(code) {
+    if (!srcResize) return;
+    srcObserved = srcObserved.filter(function(el) {
+      if (el.isConnected) return true;
+      srcResize.unobserve(el);
+      return false;
+    });
+    srcResize.observe(code);
+    srcObserved.push(code);
   }
 
   // scope 内のコードブロックを構文ハイライトする。hljs.highlightAll() は毎回
@@ -1215,6 +1315,8 @@
     addLineNumbers: addLineNumbers,
     highlightIn: highlightIn,
     wrapSourceLines: wrapSourceLines,
+    syncSrcGutter: syncSrcGutter,
+    srcGutterCell: srcGutterCell,
     hydrate: hydrate,
     bodyGen: function() { return bodySwaps; },
     runMermaid: runMermaid,

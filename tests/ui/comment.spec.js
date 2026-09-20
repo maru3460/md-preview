@@ -16,6 +16,13 @@ function withFixture(name, body, fn) {
   return fn(name).finally(() => fs.rmSync(file, { force: true }));
 }
 
+/// ソース表示の 💬 バッジ。行ではなく、その行の番号のセル（横スクローラの外の
+/// ガター）に載る——行の中に置くとコードの先頭文字に重なるため。
+function srcBadge(page, line) {
+  return page.locator('#preview-pane .source-gutter-rows .src-num')
+    .nth(line - 1).locator('.md-cmt-badge');
+}
+
 /// #preview-pane が確実にスクロールできる高さを作る（本文が 1 画面に収まると
 /// j を押しても動かず、スクロールへ戻ったことを見分けられないため）。
 async function padPane(page) {
@@ -152,9 +159,10 @@ test('raw / ソース表示でも行にコメントできる', async ({ page }) 
   expect(copied).toContain('- notes.txt:5-6\n>\n> 空行のあとの行。');
 
   // モードを抜けても 💬 バッジは押せる／ホバーで内容が出る（行レイヤ自体は通り抜ける）。
+  // バッジが載るのは行ではなく行番号のセル（横スクローラの外のガター）。
   await page.keyboard.press('Escape');
   await expect(page.locator('body')).not.toHaveClass(/md-cmt-mode/);
-  await page.locator('.md-src-row[data-src-line="3"] .md-cmt-badge').hover();
+  await srcBadge(page, 3).hover();
   await expect(page.locator('.md-cmt-preview')).toContainText('ここに質問');
 });
 
@@ -376,8 +384,8 @@ test('錨が同じユニットに重なった 💬 バッジは 1 個にまと�
   await expect(page.locator('body')).not.toHaveClass(/md-cmt-mode/);
   await expect(row13).toHaveClass(/md-cmt-marked/);
   // 錨が同じ要素なので、バッジは 2 個並ばず「💬2」の 1 個になる。
-  await expect(row13.locator('.md-cmt-badge')).toHaveCount(1);
-  await expect(row13.locator('.md-cmt-badge')).toHaveText('💬2');
+  await expect(srcBadge(page, 13)).toHaveCount(1);
+  await expect(srcBadge(page, 13)).toHaveText('💬2');
 });
 
 test('別ファイルの raw コメントへ飛ぶと、raw のまま着地する', async ({ page }) => {

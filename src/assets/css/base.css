@@ -558,10 +558,12 @@ body:has(> .html-page),
 
 /* ── ソースビューの 1 行 1 要素（common.js の wrapSourceLines が包む） ──
    行コメントの埋め込み（カードを行の直後に兄弟挿入）を成立させる構造。行番号は
-   各行の ::before で出す——別カラムのガター（.source-gutter）だと、行間にカードが
-   挟まったとき番号と行がずれる。ガターは包まなかった巨大ファイル専用になる。 */
-/* 横スクロールの主体は code に固定する。sticky（行番号・埋め込みカード）は WebKit
-   ではスクローラの孫以深だと効かないことがあり、pre をスクローラにすると番号が
+   横スクローラ（code）の外のガター（.source-gutter-rows）に 1 行 1 セルで並ぶ。
+   行の中（::before）に置くと、横スクロールで流れないための sticky が行数ぶん要り、
+   スクロールのたびに全部の貼り付き位置が解き直されて重くなる（3073 行のソースで
+   縦スクロール 30 回ぶんのレイアウトが 992ms。外へ出すと 30ms）。 */
+/* 横スクロールの主体は code に固定する。sticky（埋め込みカード）は WebKit では
+   スクローラの孫以深だと効かないことがあり、pre をスクローラにするとカードが
    流れてしまう（行は code の直接の子なので、code がスクローラなら効く）。 */
 .source-main pre code[data-src-wrapped] {
     display: block;
@@ -569,49 +571,36 @@ body:has(> .html-page),
 }
 .source-main .md-src-row {
     position: relative;
+    /* 中身も改行も無い行（0 バイトのファイルの 1 行目）でも 1 行ぶんの高さを持たせる。
+       以前は行番号の ::before が高さを保証していたが、番号はガターへ出た。 */
+    min-height: 1lh;
     /* 全行を最長行と同じ幅に揃える（塗り・帯・選択が右端まで届くように）。
        最長行の幅は wrapSourceLines が実測して CSS 変数で配る——100% は可視幅
        （code = スクローラ）にしかならないため。 */
     width: max-content;
     min-width: max(100%, var(--md-src-content-w, 100%));
 }
-/* 行番号。テキストではないので選択コピーに混ざらない。sticky で横スクロールに
-   置いていかれない。空行（中身が改行だけ）の高さもこの番号が保証する。 */
-.source-main .md-src-row::before {
-    content: attr(data-src-line);
-    position: sticky;
-    left: 0;
-    display: inline-block;
-    /* border-box にして「ガターの実幅 = この width」を一本の式に保つ。埋め込みカードの
-       left / margin-left（下の .md-cmt-embed）が同じ式でコード開始位置を指せるように。 */
-    box-sizing: border-box;
+/* 行番号のセル。1 行 1 セルなのは、行間にカードが挟まったときに syncSrcGutter が
+   その 1 セルだけ下へ押し下げられるようにするため（1 本のテキストだと押せない）。
+   幅は桁数から決まる（--md-gutter-ch は wrapSourceLines が .source-main へ置く）。 */
+.source-gutter-rows {
+    padding: 0;
     width: calc(var(--md-gutter-ch, 4) * 1ch + 20px);
-    padding-right: 16px;
-    text-align: right;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color: color-mix(in srgb, currentColor 30%, transparent);
-    /* 横スクロールでコードが番号の下へ潜るので地色で敷く（実際の背景色は
-       wrapSourceLines が CSS 変数で渡す。取れなければ OS 色）。 */
-    background: var(--md-src-gutter-bg, Canvas);
-    user-select: none;
-    -webkit-user-select: none;
 }
-/* コメント済みの行では、数字はガター扱いでマークの外に置く（GitHub blob 風）。
-   行全体に付く 12% の塗りと左帯は、不透明な番号の地色が数字の上から隠すので、
-   見た目の塗りはコード開始位置から始まる。帯（4px）はガター右端 = コード開始位置に
-   引き直す。カーソル・選択・起点も同じ「コードから」の体系に揃える（下）。 */
-.source-main .md-src-row.md-cmt-marked::before {
-    box-shadow: inset -4px 0 0 var(--md-accent, Highlight);
+.source-gutter-rows .src-num {
+    /* 💬 バッジ（comment.js がここへ載せる）の位置の基準。 */
+    position: relative;
+    padding-right: 16px;
 }
 /* j/k のカーソル。プレビューの外側 outline は、余白なしで密着するソースの行では
-   上下の行に食い込むので、「濃いめの塗り + コード開始位置の帯」（エディタの
-   現在行ハイライト風）にする。マーク行の 12% と重なっても読めるよう塗りは 24%。 */
+   上下の行に食い込むので、「濃いめの塗り + 行頭の帯」（エディタの現在行ハイライト風）
+   にする。マーク行の 12% と重なっても読めるよう塗りは 24%。
+   コメント済み行（.md-cmt-marked）の塗りと帯は .markdown-body の共通規則がそのまま
+   効く——番号がガターへ出たので、行の左端 = コードの左端になった。 */
 .source-main .md-src-row.md-cmt-kbcursor {
     outline: none;
     background: color-mix(in srgb, var(--md-accent, Highlight) 24%, transparent);
-}
-.source-main .md-src-row.md-cmt-kbcursor::before {
-    box-shadow: inset -4px 0 0 var(--md-accent, Highlight);
+    box-shadow: inset 4px 0 0 var(--md-accent, Highlight);
 }
 /* レンジ選択の起点（破線枠）とパネルホバーの強調（実線枠）は、外へ食み出さない
    内側の枠にする（外側 offset のままだと隣の行のテキストに重なる）。 */
@@ -1581,20 +1570,16 @@ body.md-cmt-mode .source-main {
 /* raw / ソース表示の行ユニット（1 行 1 要素の構造・行番号は .source-main まわりで
    定義済み）。ここではコメント UI との取り合いだけを持つ。 */
 /* 💬 バッジは右上に置くと横に長い行（width: max-content）では画面外に出るので、
-   行頭の番号ガターの上に浮かせる（コードブロックの左寄せ回避と同系）。 */
-.md-src-row > .md-cmt-badge {
-    right: auto;
-    left: 2px;
+   行ではなくガターのセル（番号の上）に載せる。載せ先は comment.js が選ぶ。 */
+.src-num > .md-cmt-badge {
+    right: 1px;
 }
 /* 埋め込みカードは行の兄弟として <code>（white-space: pre・横スクロール内容）に
    入るので、書字を本文向けに戻し、sticky で横スクロールに置いていかれないようにする。
-   左端はコード開始位置（番号ガターの右）に揃える——GitHub の diff コメント風で、
-   数字より左に食み出さない。ch はこの要素も pre のモノスペースを継承しているので、
-   行番号（::before）側と同じ幅に解決される。 */
+   左端は code の左端そのまま——番号はガター（code の外）にいるので、寄せる必要がない。 */
 .source-main code .md-cmt-embed {
     position: sticky;
-    left: calc(var(--md-gutter-ch, 4) * 1ch + 20px);
-    margin-left: calc(var(--md-gutter-ch, 4) * 1ch + 20px);
+    left: 0;
     /* 幅はブロックの自動幅のまま（code = スクローラの可視幅からガター分を引いた幅）。
        code の中身は最長行分だけ横に伸びるが、カードは可視幅に収まり sticky で追従する。 */
     white-space: normal;

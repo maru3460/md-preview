@@ -408,6 +408,9 @@
         badge.className = 'md-cmt-badge';
         badge.setAttribute('contenteditable', 'false');
         badge.textContent = slot.list.length > 1 ? ('💬' + slot.list.length) : '💬';
+        // 載せ先がユニットの外（ソースのガター）になることがあるので、指している行を
+        // バッジ自身に持たせる。ホバープレビューが closest で辿れないため。
+        badge.__mdUnit = slot.el;
         badge.addEventListener('click', function(e) {
           e.stopPropagation();
           // 複数件でもパネル（モード）を確実に開いた上で、先頭コメントの編集を開く。
@@ -418,7 +421,13 @@
         // mermaid はユニットの textContent がそのまま図のソースで、ホットリロード時は
         // バッジ貼り(reanchor・同期)の後に mermaid.run(非同期)が走るため、中に置くと
         // 「💬」が混ざって構文エラーになる。0 高さのホルダーを直前に挟んでそこへ載せる。
-        if (slot.el.classList.contains('mermaid')) {
+        // ソースの行は、番号のセル（横スクローラの外のガター）へ載せる。行の中に
+        // 置くとコードの先頭文字に重なる——番号が外へ出たぶん、行頭 = コードの頭。
+        var cell = slot.el.classList.contains('md-src-row')
+          && MdCommon.srcGutterCell(slot.el);
+        if (cell) {
+          cell.appendChild(badge);
+        } else if (slot.el.classList.contains('mermaid')) {
           var holder = document.createElement('div');
           holder.className = 'md-cmt-badge-holder';
           holder.setAttribute('contenteditable', 'false');
@@ -434,6 +443,9 @@
           tail.parentNode.insertBefore(embed, tail.nextSibling);
         });
       }
+      // ソース表示では、挟まったカードのぶん行番号のガターに隙間を空け直す。
+      // 挿さった直後のカードはまだ高さを持たないので、1 フレーム待ってから測る。
+      requestAnimationFrame(function() { MdCommon.syncSrcGutter(host); });
 
       // 本文が入れ替わった可能性があるのでユニット配列キャッシュを捨てる。
       invalidateKbUnits();
@@ -1224,6 +1236,12 @@
       var host = hostEl();
       if (!host || !host.contains(e.target)) { return; }
       var u = e.target.closest('.md-cmt-marked');
+      // ソースの 💬 バッジは行番号のセル（行の外）に載るので、closest では行に届かない。
+      // バッジが指している行から引き直す。
+      if (!u) {
+        var badge = e.target.closest('.md-cmt-badge');
+        u = badge && badge.__mdUnit;
+      }
       if (!u) return;
       // レンジコメントは 2 行目以降のユニットにも色帯が付くので、ホバー行を範囲に
       // 含む全コメントを出す（バッジの束ね先＝先頭行のユニットだけを見ると 2 行目以降で出ない）。
