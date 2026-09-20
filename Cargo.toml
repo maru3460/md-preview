@@ -18,10 +18,21 @@ notify-debouncer-mini = "0.4"
 opt-level = 2
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = [
-    "NSWorkspace", "NSRunningApplication",
-    "NSApplication", "NSMenu", "NSMenuItem", "NSEvent",
-    "NSPasteboard", "NSImage", "NSAppearance", "NSResponder", "NSWindow",
+# feature は依存全体で和集合が取られるので、ここに並ぶ大半は tao と wry も要求して
+# いる。つまり消してもビルドは通る。それでも platform.rs が使うものを全部書くのは、
+# このリストを「何を使っているか」の宣言として読めるようにするため。最小にすると
+# ビルドは通るのに使用実態と食い違い、次に触る人が足すべき feature を判断できない。
+# default を切らないと objc2-app-kit の default(ほぼ全クラス)に乗ってしまい、
+# 何を書いても結果が変わらない。
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    # NSRunningApplication の pid 系メソッドが libc::pid_t を受け渡しする
+    "libc",
+    "NSAppearance", "NSApplication", "NSEvent", "NSImage", "NSMenu",
+    "NSMenuItem", "NSPasteboard", "NSRunningApplication", "NSWindow",
+    "NSWorkspace",
 ] }
-objc2-foundation = "0.3"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std", "NSArray", "NSData", "NSString",
+] }
