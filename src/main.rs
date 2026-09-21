@@ -17,6 +17,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::{Theme as OsTheme, WindowBuilder};
 use wry::{RequestAsyncResponder, WebViewBuilder};
 
+mod focus_probe;
 mod platform;
 
 use md_preview::app_config::{self, AppConfig};
@@ -30,6 +31,10 @@ enum AppEvent {
     /// 変更されたファイルの識別子（root 相対パス、または root の外なら絶対パス）。
     /// ページ側は「いま開いているファイルか」を照合して再読込するかを決める。
     Reload(String),
+    /// spike/activation: 送り側からの「起こしてくれ」。(受け側の動作, 送り側の pid)
+    Probe(String, i32),
+    /// spike/activation: 遅れて撮る状態。Space の切り替えは 250〜1500ms 後に終わる。
+    Snap(&'static str),
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -208,6 +213,8 @@ fn main() {
     let proxy = event_loop.create_proxy();
 
     let watcher = spawn_watcher(root_dir.clone(), proxy.clone());
+    let probe_proxy = proxy.clone();
+    let snap_proxy = proxy.clone();
     // root の外のファイルを開いたときに、そのファイルを監視へ足すため IPC から触る。
     // 監視は root の再帰監視だけなので、これが無いと root 外はホットリロードが効かない。
     let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
@@ -321,6 +328,17 @@ fn main() {
         platform::set_dock_icon();
     }
 
+    // spike/activation の足場。MD_FOCUS_LOG が無ければ何も起きない。
+    if focus_probe::enabled() {
+        #[cfg(target_os = "macos")]
+        focus_probe::announce(launcher_pid);
+        #[cfg(not(target_os = "macos"))]
+        focus_probe::announce(None);
+        focus_probe::spawn_poller(move |action, pid| {
+            let _ = probe_proxy.send_event(AppEvent::Probe(action, pid));
+        });
+    }
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -356,6 +374,22 @@ fn main() {
                     window.set_background_color(Some(color));
                     let _ = webview.set_background_color(color);
                 }
+            }
+            Event::UserEvent(AppEvent::Probe(action, sender_pid)) => {
+                focus_probe::log("recv", &format!("poke action={} sender={}", action, sender_pid));
+                focus_probe::log("recv", &format!("before   {}", focus_probe::state()));
+                focus_probe::act(&action, sender_pid);
+                focus_probe::log("recv", &format!("after0   {}", focus_probe::state()));
+                let p = snap_proxy.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(300));
+                    let _ = p.send_event(AppEvent::Snap("after300"));
+                    std::thread::sleep(Duration::from_millis(1200));
+                    let _ = p.send_event(AppEvent::Snap("after1500"));
+                });
+            }
+            Event::UserEvent(AppEvent::Snap(tag)) => {
+                focus_probe::log("recv", &format!("{} {}", tag, focus_probe::state()));
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
