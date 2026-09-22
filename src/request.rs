@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
-use crate::urlpath::{asset_url, DocBase, ABS_PREFIX};
+use crate::urlpath::{asset_url, display_id, DocBase, ABS_PREFIX};
 pub use crate::urlpath::{file_id, percent_decode};
 
 
@@ -98,7 +98,7 @@ pub fn extension_to_hljs_lang(path: &Path) -> &'static str {
     }
 }
 
-pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
+pub fn list_dir_json(dir: &Path) -> Vec<u8> {
     let mut dirs: Vec<(String, String)> = Vec::new();
     let mut files: Vec<(String, String)> = Vec::new();
 
@@ -106,16 +106,12 @@ pub fn list_dir_json(dir: &Path, root_dir: &Path) -> Vec<u8> {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let entry_path = entry.path();
-            let rel = entry_path
-                .strip_prefix(root_dir)
-                .unwrap_or(&entry_path)
-                .to_string_lossy()
-                .into_owned();
+            let id = file_id(&entry_path);
 
             if entry_path.is_dir() {
-                dirs.push((name, rel));
+                dirs.push((name, id));
             } else {
-                files.push((name, rel));
+                files.push((name, id));
             }
         }
     }
@@ -204,7 +200,7 @@ enum Truncation {
     Depth,
 }
 
-/// root 以下のファイルを root 相対パスで `out` に集める。打ち切ったら理由を返す。
+/// root 以下のファイルを識別子（絶対パス）で `out` に集める。打ち切ったら理由を返す。
 ///
 /// **幅優先で辿る**。深さ優先だと、上限に当たったときに「名前順で最初の枝だけ全部」という
 /// 偏り方をする。例えば `md /` では `/Applications` の `.app` の中身で 20,000 件を使い切り、
@@ -257,12 +253,11 @@ fn collect_files(root: &Path, out: &mut Vec<String>) -> Option<Truncation> {
         files.sort();
         subdirs.sort();
 
-        let prefix = dir.strip_prefix(root).unwrap_or(Path::new("")).to_string_lossy().into_owned();
         for name in files {
             if out.len() >= FILE_LIST_MAX {
                 return Some(Truncation::Files);
             }
-            out.push(if prefix.is_empty() { name } else { format!("{}/{}", prefix, name) });
+            out.push(file_id(&dir.join(name)));
         }
         for sub in subdirs {
             queue.push_back((sub, depth + 1));
@@ -349,7 +344,8 @@ fn md_presence(dir: &Path) -> MdPresence {
     }
 }
 
-/// ファイル検索（⌘P）用に、root 以下の全ファイルを root 相対パスの JSON で返す。
+/// ファイル検索（⌘P）用に、root 以下の全ファイルを識別子（絶対パス）の JSON で返す。
+/// 画面に出す形へ畳むのは JS 側（`MdCommon.idToDisplay`）。
 ///
 /// 打ち切った時は `reason` と、その理由に対応する上限値 `limit` を添える。上限の数値を
 /// JS 側に二重定義せず、警告文を必ず実際の上限と一致させるため（片方だけ直して文面が
@@ -377,6 +373,9 @@ fn handle_files(root_dir: &Path) -> Response {
 /// 変更のあるファイルの一覧（⌘P が変更のあるファイルを先に出すために使う）。
 /// ファイル一覧（files=1）とは別エンドポイントにしてある。git を叩くので失敗しても
 /// ファイル一覧の取得を巻き込まない（その場合パレットは並べ替えなしで普通に動く）。
+///
+/// パスは `?files=1` と同じ識別子（絶対パス）。⌘P は 2 つの一覧を突き合わせるので、
+/// 片方だけ形が違うとバッジが一生付かず、並べ替えも効かない。
 fn handle_changed(root_dir: &Path) -> Response {
     let items: Vec<String> = crate::diff::changed_files(root_dir)
         .iter()
@@ -388,7 +387,17 @@ fn handle_changed(root_dir: &Path) -> Response {
     ok_response("application/json; charset=utf-8", body.into_bytes())
 }
 
-pub fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
+/// URL パス（`/docs/fig.png`）を root 配下の実ファイルへ畳む。
+///
+/// **識別子ではなく URL の関門**。識別子は [`id_to_path`] が受ける。こちらを残して
+/// あるのは、root の中から外へ出る道が 2 つあるため——iframe 内の html が組んだ
+/// `../` と、root の中にある root の外を指すシンボリックリンク。`canonicalize` して
+/// から `starts_with` で見るので、どちらもここで 404 になる。
+///
+/// 結果として、そのシンボリックリンクは `?file=` なら本文として開けるのに、画像
+/// としては引けない。非対称だが、URL の側を緩めると `/__abs/` を置いた意味
+/// （root の外は「外だと分かる形」で配る）が消えるので、こちらに寄せてある。
+fn safe_join(canonical_root: &Path, rel: &str) -> Option<PathBuf> {
     // 本物の親ディレクトリ参照（`..` パス要素）だけを拒否し、単に `..` を部分
     // 文字列として含むだけのファイル名（例: `my..file.md`）は拒否しない。
     if Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
@@ -494,7 +503,7 @@ pub fn render_file(path: &Path, root: &Path, mode: ViewMode) -> Option<RenderedF
     if kind == ViewKind::HtmlPage {
         return Some(RenderedFile {
             kind,
-            html: render_html_iframe(&asset_url(root, path), &file_id(root, path)),
+            html: render_html_iframe(&asset_url(root, path), &display_id(root, &file_id(path))),
             body_class: "html-page",
         });
     }
@@ -630,15 +639,18 @@ fn serve_builtin_lib(name: &str) -> Response {
 /// ツリーの 2 つの経路（`?dir=` と `?has_md=`）が見てよいディレクトリ。
 ///
 /// 同じ入力に同じ挙動を返す、を人力のコメントではなく 1 つの関数で担保する。
-/// `rel` が空なら root 自身。root の外とディレクトリでないものは None（＝ 404）。
-fn resolve_tree_dir(rel: &str, root_dir: &Path) -> Option<PathBuf> {
-    let target = if rel.is_empty() { Some(root_dir.to_path_buf()) } else { safe_join(root_dir, rel) };
-    target.filter(|p| p.is_dir())
+/// 受けるのは識別子だけ（root 自身も識別子で名指す）。root の外とディレクトリで
+/// ないものは None（＝ 404）。
+///
+/// root の外を断るのはセキュリティの境界ではない（`?file=` も `/__abs/` も外を開ける）。
+/// ツリーは root を見せる部品だ、という表示上の取り決めを 1 か所で守っているだけ。
+fn resolve_tree_dir(id: &str, root_dir: &Path) -> Option<PathBuf> {
+    id_to_path(id).filter(|p| p.is_dir() && p.starts_with(root_dir))
 }
 
-fn handle_dir(rel: &str, root_dir: &Path) -> Response {
-    match resolve_tree_dir(rel, root_dir) {
-        Some(dir) => ok_response("application/json; charset=utf-8", list_dir_json(&dir, root_dir)),
+fn handle_dir(id: &str, root_dir: &Path) -> Response {
+    match resolve_tree_dir(id, root_dir) {
+        Some(dir) => ok_response("application/json; charset=utf-8", list_dir_json(&dir)),
         None => not_found_response(),
     }
 }
@@ -754,7 +766,8 @@ fn inject_style_gate(bytes: Vec<u8>) -> Vec<u8> {
 /// 参照ではなく所有した値で持つ。引数を 7 つ引き回していた頃と違い、配信に必要な
 /// ものを足すときの変更がこの構造体の中だけで済む。
 pub struct RequestContext {
-    /// 配信を許可する範囲の頂点。`safe_join` はここから出るパスを拒否する。
+    /// ツリーが見せる範囲の頂点。URL（`safe_join`）もここから出るものを拒否する。
+    /// 識別子（`?file=`）は root の外も指せるので、これは配信の境界ではない。
     pub root_dir: PathBuf,
     /// `/` で返す初期ページ。起動時に組み立て済み。
     pub index_html: Vec<u8>,
@@ -769,9 +782,9 @@ pub struct RequestContext {
 /// 保たれていた（そのためのテストまであった）。キーで厳密に分けることで、
 /// エンドポイントを足しても前方一致の衝突が起きえなくなる。
 ///
-/// 対象を持つルートが載せているのは識別子（root 相対パス、または root の外なら
-/// 絶対パス）。以前は 1 枚もの表示用の「引数なし番兵」（`?body=1` など）も
-/// あったが、起動モードがフォルダ 1 本になったので指し方も 1 通りになった。
+/// 対象を持つルートが載せているのは識別子（常に絶対パス）。以前は 1 枚もの表示用の
+/// 「引数なし番兵」（`?body=1` など）もあったが、起動モードがフォルダ 1 本に
+/// なったので指し方も 1 通りになった。
 #[derive(Debug, PartialEq, Eq)]
 enum Route<'a> {
     BuiltinLib(&'a str),
@@ -815,16 +828,22 @@ fn parse_route<'a>(url_path: &'a str, query: &str) -> Route<'a> {
     Route::Asset(url_path)
 }
 
-/// `?file=` などの識別子を実ファイルへ解決する。root 相対の識別子は `safe_join` で
-/// root 内に限定し、絶対パス（先頭 `/`）の識別子は root の外でも開く。
-/// 開くのはこの明示ルート（`?file=` / `?raw=` / `?diff=`）と `/__abs/` 配下だけで、
-/// サイドバーのツリー（`?dir=` / `?has_md=`）は root 内に留める。
-pub fn id_to_path(root: &Path, id: &str) -> Option<PathBuf> {
-    if id.starts_with('/') {
-        PathBuf::from(id).canonicalize().ok()
-    } else {
-        safe_join(root, id)
+/// 識別子を実ファイルへ解決する。**識別子とファイルの唯一の関門**で、
+/// `?file=` / `?raw=` / `?diff=` / `?dir=` / メニューの IPC / 監視の追加登録が
+/// 全部ここを通る。
+///
+/// 絶対パスでないものは弾く。root 相対を黙って受けると、root が動いたときに
+/// 同じ文字列が別のファイルを指す（#33 が消したかった状態）。受けずに 404 にすれば、
+/// 形の違う識別子を作った経路がその場で分かる。
+///
+/// `canonicalize` はここで済ませる。`/tmp` と `/private/tmp`、`$TMPDIR`、
+/// symlink 経由のリポジトリが別物の識別子にならないのは、外から来たパスが
+/// ここ（と `resolve_arg_path`）を通るため。
+pub fn id_to_path(id: &str) -> Option<PathBuf> {
+    if !id.starts_with('/') {
+        return None;
     }
+    PathBuf::from(id).canonicalize().ok()
 }
 
 /// 本文 HTML をプレビュー枠ごと差し替えるフラグメントにして返す。
@@ -841,21 +860,21 @@ fn respond_fragment(body_class: &str, html: String) -> Response {
 }
 
 fn serve_view(ctx: &RequestContext, id: &str, mode: ViewMode) -> Response {
-    let Some(path) = id_to_path(&ctx.root_dir, id) else { return not_found_response() };
+    let Some(path) = id_to_path(id) else { return not_found_response() };
     let Some(r) = render_file(&path, &ctx.root_dir, mode) else { return not_found_response() };
     respond_fragment(r.body_class, r.html)
 }
 
 /// diff はレンダリング結果ではなくソース差分なので、md / 非md を問わず全幅
 /// （`source-page`）で出す。バイナリ・巨大ファイルは diff 側が中で弾く。
-fn serve_diff(ctx: &RequestContext, id: &str) -> Response {
-    let Some(path) = id_to_path(&ctx.root_dir, id) else { return not_found_response() };
+fn serve_diff(id: &str) -> Response {
+    let Some(path) = id_to_path(id) else { return not_found_response() };
     respond_fragment("source-page", crate::diff::render_diff_inner(&path))
 }
 
 /// トグルボタンのバッジ用に、追加/削除行数だけを返す（軽量・非ブロッキング用途）。
-fn serve_diffstat(ctx: &RequestContext, id: &str) -> Response {
-    let Some(path) = id_to_path(&ctx.root_dir, id) else { return not_found_response() };
+fn serve_diffstat(id: &str) -> Response {
+    let Some(path) = id_to_path(id) else { return not_found_response() };
     let (add, del) = crate::diff::diff_stat(&path);
     ok_response(
         "application/json; charset=utf-8",
@@ -866,14 +885,14 @@ fn serve_diffstat(ctx: &RequestContext, id: &str) -> Response {
 pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Response {
     match parse_route(url_path, query) {
         Route::BuiltinLib(name) => serve_builtin_lib(name),
-        Route::Dir(rel) => handle_dir(&rel, &ctx.root_dir),
-        Route::HasMd(rel) => handle_has_md(&rel, &ctx.root_dir),
+        Route::Dir(id) => handle_dir(&id, &ctx.root_dir),
+        Route::HasMd(id) => handle_has_md(&id, &ctx.root_dir),
         Route::Files => handle_files(&ctx.root_dir),
         Route::Changed => handle_changed(&ctx.root_dir),
         Route::View(id) => serve_view(ctx, &id, ViewMode::Normal),
         Route::Raw(id) => serve_view(ctx, &id, ViewMode::RawSource),
-        Route::Diff(id) => serve_diff(ctx, &id),
-        Route::DiffStat(id) => serve_diffstat(ctx, &id),
+        Route::Diff(id) => serve_diff(&id),
+        Route::DiffStat(id) => serve_diffstat(&id),
         Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html.clone()),
         Route::Asset(p) => handle_asset(p, &ctx.root_dir, &ctx.theme_css, &ctx.custom_css),
     }
@@ -887,8 +906,8 @@ pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Resp
 /// `handle_files` のように `reason` / `limit` は添えない。あちらは JS が数値入りの
 /// 警告文を出すためだが、ここで JS がするのはクラスを足すか足さないかだけなので、
 /// 渡しても表示するあてが無い。
-fn handle_has_md(rel: &str, root_dir: &Path) -> Response {
-    match resolve_tree_dir(rel, root_dir) {
+fn handle_has_md(id: &str, root_dir: &Path) -> Response {
+    match resolve_tree_dir(id, root_dir) {
         Some(dir) => {
             let md = match md_presence(&dir) {
                 MdPresence::Yes => "yes",
@@ -1084,20 +1103,22 @@ mod tests {
         let mut out = Vec::new();
         assert_eq!(collect_files(&root, &mut out), None);
 
+        // 一覧が返すのは識別子（絶対パス）。root を剥いで中身を見る。
+        let ids: Vec<String> = out.iter().map(|p| display_id(&root, p)).collect();
         // 幅優先なので浅い階層が必ず先。各階層は名前順。
-        assert_eq!(out[0], "a.md");
-        assert_eq!(out[1], "b.md");
+        assert_eq!(ids[0], "a.md");
+        assert_eq!(ids[1], "b.md");
         // 深さ 1 のファイルは、深さ 2 のファイルより必ず前に来る。
-        let i_shallow = out.iter().position(|p| p == "sub/c.txt").unwrap();
-        let i_deep = out.iter().position(|p| p == "sub/deep/d.md").unwrap();
-        assert!(i_shallow < i_deep, "{out:?}");
+        let i_shallow = ids.iter().position(|p| p == "sub/c.txt").unwrap();
+        let i_deep = ids.iter().position(|p| p == "sub/deep/d.md").unwrap();
+        assert!(i_shallow < i_deep, "{ids:?}");
         // 依存物・VCS 内部は除外、設定系の隠しディレクトリは残す。
-        assert!(!out.iter().any(|p| p.starts_with("node_modules/")), "{out:?}");
-        assert!(!out.iter().any(|p| p.starts_with(".git/")), "{out:?}");
-        assert!(out.contains(&".github/ci.yml".to_string()), "{out:?}");
-        // 入れ子も root 相対パスで拾う。
-        assert!(out.contains(&"sub/c.txt".to_string()), "{out:?}");
-        assert!(out.contains(&"sub/deep/d.md".to_string()), "{out:?}");
+        assert!(!ids.iter().any(|p| p.starts_with("node_modules/")), "{ids:?}");
+        assert!(!ids.iter().any(|p| p.starts_with(".git/")), "{ids:?}");
+        assert!(ids.contains(&".github/ci.yml".to_string()), "{ids:?}");
+        // 入れ子も拾う。
+        assert!(ids.contains(&"sub/c.txt".to_string()), "{ids:?}");
+        assert!(ids.contains(&"sub/deep/d.md".to_string()), "{ids:?}");
 
         // レスポンスは {"files":[...],"truncated":false}。
         let resp = handle_files(&root);
@@ -1105,7 +1126,7 @@ mod tests {
         let body = String::from_utf8_lossy(resp.body()).into_owned();
         assert!(body.starts_with(r#"{"files":["#), "{body}");
         assert!(body.contains(r#""truncated":false"#), "{body}");
-        assert!(body.contains(r#""sub/deep/d.md""#), "{body}");
+        assert!(body.contains(&json_string(&root.join("sub/deep/d.md").to_string_lossy())), "{body}");
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1126,7 +1147,7 @@ mod tests {
 
         let mut out = Vec::new();
         assert_eq!(collect_files(&root, &mut out), Some(Truncation::Depth));
-        assert!(out.contains(&"top.md".to_string()), "{out:?}");
+        assert!(out.contains(&file_id(&root.join("top.md"))), "{out:?}");
         assert!(!out.iter().any(|p| p.ends_with("buried.md")), "{out:?}");
 
         let body = String::from_utf8_lossy(handle_files(&root).body()).into_owned();
@@ -1154,7 +1175,8 @@ mod tests {
 
     #[test]
     fn has_md_answers_no_for_a_tree_without_markdown() {
-        let root = std::env::temp_dir().join("md-hasmd-no-test");
+        // root は正規化済みであることが前提（`resolve_tree_dir` が識別子と突き合わせる）。
+        let root = std::env::temp_dir().canonicalize().unwrap().join("md-hasmd-no-test");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sub/deep")).unwrap();
         std::fs::write(root.join("note.txt"), "x").unwrap();
@@ -1162,7 +1184,7 @@ mod tests {
 
         assert_eq!(md_presence(&root), MdPresence::No);
 
-        let resp = handle_has_md("", &root);
+        let resp = handle_has_md(&file_id(&root), &root);
         assert_eq!(resp.status(), 200);
         let body = String::from_utf8_lossy(resp.body()).into_owned();
         assert!(body.contains(r#"{"has_md":"no"}"#), "{body}");
@@ -1172,7 +1194,7 @@ mod tests {
 
     #[test]
     fn has_md_answers_unknown_when_the_depth_budget_cuts_the_branch() {
-        let root = std::env::temp_dir().join("md-hasmd-depth-test");
+        let root = std::env::temp_dir().canonicalize().unwrap().join("md-hasmd-depth-test");
         let _ = std::fs::remove_dir_all(&root);
         let mut deep = root.clone();
         for _ in 0..(HAS_MD_MAX_DEPTH + 2) {
@@ -1183,7 +1205,7 @@ mod tests {
 
         assert_eq!(md_presence(&root), MdPresence::Unknown);
 
-        let resp = handle_has_md("", &root);
+        let resp = handle_has_md(&file_id(&root), &root);
         let body = String::from_utf8_lossy(resp.body()).into_owned();
         assert!(body.contains(r#"{"has_md":"unknown"}"#), "{body}");
 
@@ -1289,21 +1311,28 @@ mod tests {
 
     #[test]
     fn has_md_rejects_paths_outside_the_root() {
-        // safe_join は root が正規化済みであることを前提にする（実アプリの root は
-        // resolve_arg_path が canonicalize している）。macOS の temp_dir は
-        // /var/folders/... で /private/var/... へのリンクなので、ここで揃える。
+        // root が正規化済みであることを前提にする（実アプリの root は resolve_arg_path が
+        // canonicalize している）。macOS の temp_dir は /var/folders/... で
+        // /private/var/... へのリンクなので、ここで揃える。
         let root = std::env::temp_dir().canonicalize().unwrap().join("md-hasmd-guard-test");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(root.parent().unwrap().join("md-hasmd-guard-outside")).unwrap();
         std::fs::write(root.join("a.md"), "x").unwrap();
 
-        assert_eq!(handle_has_md("../outside", &root).status(), 404);
+        let id = |rel: &str| file_id(&root.join(rel));
+        // root の外のディレクトリは、実在していてもツリーには出さない。
+        let outside = file_id(&root.parent().unwrap().join("md-hasmd-guard-outside"));
+        assert_eq!(handle_has_md(&outside, &root).status(), 404);
+        // 識別子でないもの（root 相対）は関門を通らない。
+        assert_eq!(handle_has_md("sub", &root).status(), 404);
         // ディレクトリでないものを聞かれても 404（?dir= と同じゲート）。
-        assert_eq!(handle_has_md("a.md", &root).status(), 404);
-        assert_eq!(handle_has_md("", &root).status(), 200);
-        assert_eq!(handle_has_md("sub", &root).status(), 200);
+        assert_eq!(handle_has_md(&id("a.md"), &root).status(), 404);
+        assert_eq!(handle_has_md(&file_id(&root), &root).status(), 200);
+        assert_eq!(handle_has_md(&id("sub"), &root).status(), 200);
 
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap().join("md-hasmd-guard-outside"));
     }
 
     #[test]
@@ -1317,7 +1346,7 @@ mod tests {
 
         let mut out = Vec::new();
         assert_eq!(collect_files(&root, &mut out), None);
-        assert_eq!(out, vec!["a.md".to_string()]);
+        assert_eq!(out, vec![file_id(&root.join("a.md"))]);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1340,7 +1369,7 @@ mod tests {
     #[test]
     fn every_target_route_takes_an_identifier() {
         // 対象の指し方は識別子 1 通りだけ（番兵クエリ `?raw=1` はもう無い）。
-        // root 相対でも絶対パスでも、そのまま id_to_path へ渡る。
+        // parse_route は形を見ない。絶対パスかどうかを見るのは id_to_path。
         assert_eq!(parse_route("/", "raw=a.md"), Route::Raw("a.md".to_string()));
         assert_eq!(parse_route("/", "diff=/out/a.md"), Route::Diff("/out/a.md".to_string()));
         // かつて番兵だった "1" は、いまはそういう名前のファイル指定（無ければ 404）。

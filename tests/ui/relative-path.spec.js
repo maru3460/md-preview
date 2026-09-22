@@ -5,13 +5,13 @@
 // サーバ側の HTML を見るだけでは「相対のまま」が壊れていると分からない。
 // なので実際に画像が読めたか（naturalWidth）まで確かめる。
 const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { id, openFolder, treeItem, tab } = require('./helpers');
 
 /// 折り畳まれている sub/ を開いて、子の行が出るまで待つ。
 async function openSubA(page) {
-  await page.locator('.tree-item[data-path="sub"]').click();
-  await page.locator('.tree-item[data-path="sub/a.md"]').click();
-  await expect(page.locator('.md-tab[data-path="sub/a.md"]')).toHaveClass(/active/);
+  await treeItem(page, 'sub').click();
+  await treeItem(page, 'sub/a.md').click();
+  await expect(tab(page, 'sub/a.md')).toHaveClass(/active/);
 }
 
 /// 本文の n 枚目の画像が実際に読めたか（読めていなければ naturalWidth は 0）。
@@ -41,9 +41,10 @@ test('root の外を指すリンクを踏むと、絶対パスのタブとして
   await page.locator('#preview-pane .markdown-body a', { hasText: 'root の外へ' }).click();
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('root の外の見出し');
 
-  // 識別子は root 相対に潰れず、絶対パスのまま持っている。
+  // 識別子は絶対パス。root の外なので root を接頭辞に持たない。
   const path = await page.locator('.md-tab.active').getAttribute('data-path');
   expect(path.startsWith('/')).toBe(true);
+  expect(path.startsWith(page.mdRoot + '/')).toBe(false);
   expect(path).toMatch(/\/tests\/ui-outside\/out\.md$/);
 
   // root の外のファイルの、さらに相対画像も引ける（/__abs/ 経由）。
@@ -58,13 +59,54 @@ test('root の外を指すリンクを踏むと、絶対パスのタブとして
 
 test('iframe の中の相対リンクは、その html の場所を基準に解決する', async ({ page }) => {
   await openFolder(page);
-  await page.locator('.tree-item[data-path="sub"]').click();
-  await page.locator('.tree-item[data-path="sub/page.html"]').click();
-  await expect(page.locator('.md-tab[data-path="sub/page.html"]')).toHaveClass(/active/);
+  await treeItem(page, 'sub').click();
+  await treeItem(page, 'sub/page.html').click();
+  await expect(tab(page, 'sub/page.html')).toHaveClass(/active/);
 
   // iframe の中身はサーバが書き換えていないので、解決するのは JS 側（MdCommon.resolvePath）。
   // `../a.md` を root で黙って止めず、sub/ の親＝root 直下の a.md を開く。
   await page.frameLocator('iframe.html-frame').locator('a', { hasText: '上の a.md へ' }).click();
-  await expect(page.locator('.md-tab.active')).toHaveAttribute('data-path', 'a.md');
+  await expect(page.locator('.md-tab.active')).toHaveAttribute('data-path', id(page, 'a.md'));
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
+});
+
+// `md /` は塞がれていない（`app_config::plan_paths` は単一のディレクトリ引数を
+// `files_root` の `/` 拒否より前に返す）。root が `/` のとき、素朴に `root + '/'` で
+// 前方一致を見ると `'//'` になって root 配下が 1 つも一致せず、ツリーの祖先展開が
+// 止まり、⌘P の全行にホームパスが並び、「相対パスをコピー」が絶対パスの複製になる。
+// サーバを `/` で立てるのは現実的でないので、ヘルパを直に呼んで押さえる。
+test('root が / でも、その配下は root の中だと判定される', async ({ page }) => {
+  await openFolder(page);
+  const r = await page.evaluate(() => {
+    const saved = window.MD_ROOT_DIR;
+    try {
+      window.MD_ROOT_DIR = '/';
+      return {
+        outside: MdCommon.isOutsideRoot('/Applications/x.md'),
+        display: MdCommon.idToDisplay('/Applications/x.md'),
+        rootItself: MdCommon.idToDisplay('/'),
+      };
+    } finally {
+      window.MD_ROOT_DIR = saved;
+    }
+  });
+  expect(r.outside).toBe(false);
+  expect(r.display).toBe('Applications/x.md');
+  // root 自身は剥ぐと名前が消えるので、識別子のまま返す（Rust の display_id と同じ）。
+  expect(r.rootItself).toBe('/');
+});
+
+test('root 自身と、名前が root で始まるだけのパスを取り違えない', async ({ page }) => {
+  await openFolder(page);
+  const r = await page.evaluate(() => {
+    const root = window.MD_ROOT_DIR;
+    return {
+      rootItself: MdCommon.idToDisplay(root),
+      lookalike: MdCommon.idToDisplay(root + '-backup/x.md'),
+      inside: MdCommon.idToDisplay(root + '/a.md'),
+    };
+  });
+  expect(r.rootItself).toBe(await page.evaluate(() => window.MD_ROOT_DIR));
+  expect(r.lookalike).toMatch(/-backup\/x\.md$/);
+  expect(r.inside).toBe('a.md');
 });

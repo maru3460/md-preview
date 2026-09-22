@@ -17,7 +17,7 @@
     { id: 'diff', label: 'Diff', title: 'Toggle git diff (Cmd/Ctrl+D)', global: 'MdDiff', badge: true }
   ];
 
-  var opts = null;      // { getContainer, getScroller, url(id), getStatUrl, reloadNormal }
+  var opts = null;      // { getContainer, getScroller, url(mode), getStatUrl, reloadNormal }
   var activeId = null;  // 同時に active になれるのは 1 つだけ
   var wired = false;
 
@@ -209,7 +209,9 @@
   }
 
   window.MdViewModes = {
-    // o: { getContainer(), getScroller(), url(id), getStatUrl(), reloadNormal() }
+    // o: { getContainer(), getScroller(), url(mode), getStatUrl(), reloadNormal() }
+    // url の引数は raw / diff というモードのキー（クエリのキーになる）。
+    // 開いているファイルの識別子を知っているのは呼ぶ側（folder.js）。
     // 2 回目以降の呼び出しは入出力の差し替えだけ（ボタンとリスナは作り直さない）。
     initAll: function(o) {
       opts = o;

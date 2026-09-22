@@ -69,6 +69,9 @@ fn fold_inline_assets(html: &str) -> String {
 
 fn normalize(html: &str) -> String {
     let mut s = fold_inline_assets(html);
+    // 識別子は絶対パスなので、そのまま焼くと機械ごとに違うスナップショットになる。
+    // 出力に出るのは fixtures の下だけなので、その接頭辞だけを畳む。
+    s = s.replace(&fixtures().to_string_lossy().into_owned(), "<FIXTURES>");
     if !s.ends_with('\n') {
         s.push('\n');
     }
@@ -122,6 +125,11 @@ fn assert_snapshot(name: &str, actual: &str) {
          意図した変更なら UPDATE_SNAPSHOTS=1 cargo test --test render で更新すること。",
         first_diff(&expected, &actual)
     );
+}
+
+/// fixtures 配下の識別子（絶対パス）。`?file=` などに載せる形。
+fn id(rel: &str) -> String {
+    fixtures().join(rel).to_string_lossy().into_owned()
 }
 
 /// `handle_request` を叩いて本文を取り出す。ステータスも一緒に固定する。
@@ -189,7 +197,7 @@ fn html_iframe_page() {
 
 #[test]
 fn folder_shell_page() {
-    let files = vec!["kitchen-sink.md".to_string()];
+    let files = vec![id("kitchen-sink.md")];
     let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &files);
     assert_snapshot("page-folder-shell", &html);
 }
@@ -198,10 +206,13 @@ fn folder_shell_page() {
 /// 先頭が最初に見えるタブになるので、順序が入れ替わると開くファイルが変わる。
 #[test]
 fn folder_shell_page_lists_every_initial_file() {
-    let files = vec!["kitchen-sink.md".to_string(), "code/sample.rs".to_string()];
+    let files = vec![id("kitchen-sink.md"), id("code/sample.rs")];
     let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &files);
     assert!(
-        html.contains(r#"var INITIAL_FILES = ["kitchen-sink.md","code/sample.rs"];"#),
+        html.contains(&format!(
+            r#"var INITIAL_FILES = ["{}","{}"];"#,
+            files[0], files[1]
+        )),
         "INITIAL_FILES が期待どおりでない"
     );
 }
@@ -210,39 +221,39 @@ fn folder_shell_page_lists_every_initial_file() {
 
 #[test]
 fn fragment_markdown() {
-    assert_snapshot("fragment-markdown", &request("file=kitchen-sink.md"));
+    assert_snapshot("fragment-markdown", &request(&format!("file={}", id("kitchen-sink.md"))));
 }
 
 #[test]
 fn fragment_html_is_iframe() {
-    assert_snapshot("fragment-html", &request("file=page.html"));
+    assert_snapshot("fragment-html", &request(&format!("file={}", id("page.html"))));
 }
 
 #[test]
 fn fragment_source() {
-    assert_snapshot("fragment-source", &request("file=code%2Fsample.rs"));
+    assert_snapshot("fragment-source", &request(&format!("file={}", id("code/sample.rs"))));
 }
 
 #[test]
 fn fragment_binary() {
-    assert_snapshot("fragment-binary", &request("file=blob.bin"));
+    assert_snapshot("fragment-binary", &request(&format!("file={}", id("blob.bin"))));
 }
 
 #[test]
 fn fragment_raw() {
-    assert_snapshot("fragment-raw", &request("raw=kitchen-sink.md"));
+    assert_snapshot("fragment-raw", &request(&format!("raw={}", id("kitchen-sink.md"))));
 }
 
 #[test]
 fn fragment_not_found() {
-    assert_snapshot("fragment-not-found", &request("file=nope.md"));
+    assert_snapshot("fragment-not-found", &request(&format!("file={}", id("nope.md"))));
 }
 
 // ── JSON エンドポイント ─────────────────────────────────────────────
 
 #[test]
 fn dir_listing_json() {
-    assert_snapshot("json-dir", &request("dir="));
+    assert_snapshot("json-dir", &request(&format!("dir={}", id(""))));
 }
 
 #[test]

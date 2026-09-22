@@ -21,6 +21,30 @@ async function open(page, url) {
   await page.goto(url || FOLDER_URL);
   // 初期描画の完了を待つ。印は folder.js の markInitialRenderDone が付ける。
   await page.waitForFunction(() => document.documentElement.dataset.mdReady === '1');
+  // ツリー・タブが持つ識別子は絶対パスなので、root をここで拾って id() に渡す。
+  // サーバごとに root が違う（フォルダ起動はフィクスチャ、ファイル起動は一時ディレクトリ）。
+  page.mdRoot = await page.evaluate(() => window.MD_ROOT_DIR);
+}
+
+/// root 配下のファイル / ディレクトリの識別子。`rel` 省略で root 自身。
+function id(page, rel) {
+  return rel ? page.mdRoot + '/' + rel : page.mdRoot;
+}
+
+/// ツリーの行。`rel` は root 相対で書く（data-path は識別子なのでここで組む）。
+function treeItem(page, rel) {
+  return page.locator(`.tree-item[data-path="${id(page, rel)}"]`);
+}
+
+/// タブ。`rel` は root 相対。
+function tab(page, rel) {
+  return page.locator(`.md-tab[data-path="${id(page, rel)}"]`);
+}
+
+/// 識別子 → root 相対（root の外はそのまま）。data-path を読み出して比べるとき用。
+function display(page, id) {
+  if (!id) return id;
+  return id.startsWith(page.mdRoot + '/') ? id.slice(page.mdRoot.length + 1) : id;
 }
 
 /// フォルダ起動で、ツリーが描かれるのを待つ。
@@ -34,4 +58,8 @@ async function nextFrames(page) {
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
 
-module.exports = { FOLDER_URL, ONE_FILE_URL, MULTI_URL, open, openFolder, nextFrames };
+module.exports = {
+  FOLDER_URL, ONE_FILE_URL, MULTI_URL,
+  open, openFolder, nextFrames,
+  id, treeItem, tab, display,
+};

@@ -400,13 +400,19 @@
   }
 
   // ── パスと URL ────────────────────────────────────────────────
-  // 「識別子」は ?file= / ?raw= / タブが持つ文字列。root 配下なら root 相対パス、
-  // root の外なら絶対パス（先頭 /）。Rust 側 urlpath.rs と同じ規則で、
-  // 本文中の href / src はサーバが既に URL へ畳んである（相対パスの基準は root では
-  // なく開いているファイルの場所）。ここはその逆変換と、サーバを通らない経路
-  // （iframe 内の相対リンク）のための解決を持つ。
+  // 「識別子」は ?file= / ?raw= / ?dir= / タブ・ツリーが持つ文字列で、**常に絶対パス**。
+  // root の内も外も同じ形なので、root が動いても同じファイルは同じ識別子のまま
+  // （タブの同一判定は文字列一致なので、ここに 2 つ目の形を混ぜるとタブが二重化する）。
+  // Rust 側 urlpath.rs の `file_id` と同じ規則。
+  //
+  // URL は別の名前空間で、root 配下なら `/docs/a.md`、外なら `/__abs/...`。本文中の
+  // href / src はサーバが既にこちらへ畳んである（相対パスの基準は root ではなく
+  // 開いているファイルの場所）。ここが持つのはその逆変換（urlToId）、サーバを通らない
+  // 経路（iframe 内の相対リンク）のための解決、そして画面に出す名前（idToDisplay）。
 
   var ABS_PREFIX = '/__abs/';
+
+  function rootDir() { return window.MD_ROOT_DIR || ''; }
 
   // 絶対パスの `.` / `..` を畳む。
   function normalizeAbs(abs) {
@@ -419,26 +425,40 @@
     return '/' + parts.join('/');
   }
 
-  // 識別子 → 絶対パス。
-  function idToAbs(id) {
-    if (!id) return '';
-    var root = window.MD_ROOT_DIR || '';
-    return normalizeAbs(id.charAt(0) === '/' ? id : root + '/' + id);
+  // root 配下の識別子に共通する接頭辞。`md /` では root 自身が "/" なので、
+  // 素朴に root + '/' と書くと "//" になって配下が 1 つも一致しなくなる。
+  function rootPrefix() {
+    var root = rootDir();
+    if (!root) return '';
+    return root === '/' ? '/' : root + '/';
   }
 
-  // 絶対パス → 識別子。root の外なら絶対パスのまま返す（黙って root で止めない）。
-  function absToId(abs) {
-    var root = window.MD_ROOT_DIR || '';
-    if (root && abs.indexOf(root + '/') === 0) return abs.slice(root.length + 1);
-    return abs;
+  // 識別子が root の外を指しているか。ホットリロードの個別監視（loadPreview）と、
+  // ツリーのハイライト（revealFile）が「ツリーに行が無い」を判定するのに使う。
+  function isOutsideRoot(id) {
+    var pre = rootPrefix();
+    return !pre || !id || id.indexOf(pre) !== 0;
+  }
+
+  // 識別子 → 画面に出す名前。root 配下なら root 相対、外なら絶対パスのまま。
+  // ⌘P の行・「相対パスをコピー」・コメントパネルのラベルがこれを通る。識別子そのものを
+  // 出すと、どの行にも自分のホームパスが並び、あいまい検索がそこにヒットする。
+  // Rust 側の対は `urlpath::display_id`。root 自身を渡されたときに空文字を返さない
+  // のは、名前の無いラベルを画面に出さないため（Rust 側もそれに合わせてある）。
+  function idToDisplay(id) {
+    if (!id) return '';
+    if (isOutsideRoot(id)) return id;
+    // root 自身を渡されると剥いだ残りが空になる。名前の無いラベルは画面に出せない
+    // ので識別子のまま返す（Rust 側 `display_id` も同じ）。
+    return id.slice(rootPrefix().length) || id;
   }
 
   // 本文の href / src（サーバが畳んだ絶対 URL）を識別子へ戻す。
   function urlToId(url) {
     var p = url;
     try { p = decodeURIComponent(url); } catch (_) {}
-    if (p.indexOf(ABS_PREFIX) === 0) return '/' + p.slice(ABS_PREFIX.length);
-    return p.replace(/^\//, '');
+    if (p.indexOf(ABS_PREFIX) === 0) return normalizeAbs('/' + p.slice(ABS_PREFIX.length));
+    return normalizeAbs(rootDir() + '/' + p);
   }
 
   // 開いているファイル（識別子）を基準に、相対パスを識別子へ解決する。
@@ -446,8 +466,8 @@
   function resolvePath(baseId, rel) {
     if (!rel) return baseId;
     if (rel.charAt(0) === '/') return urlToId(rel);
-    var dir = idToAbs(baseId).replace(/\/[^/]*$/, '');
-    return absToId(normalizeAbs(dir + '/' + rel));
+    var dir = normalizeAbs(baseId).replace(/\/[^/]*$/, '');
+    return normalizeAbs(dir + '/' + rel);
   }
 
   // 横スクロールする表(.table-wrap)の上でホイールを回すと、横にまだ動かせる間は
@@ -1344,8 +1364,10 @@
     toast: toast,
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,
-    idToAbs: idToAbs,
-    absToId: absToId,
+    idToDisplay: idToDisplay,
+    isOutsideRoot: isOutsideRoot,
+    rootDir: rootDir,
+    rootPrefix: rootPrefix,
     urlToId: urlToId,
     resolvePath: resolvePath,
     cornerStack: cornerStack,

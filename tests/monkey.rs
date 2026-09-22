@@ -62,7 +62,10 @@ fn time_seed() -> u64 {
 
 /// 1 操作の実行結果。
 enum Outcome {
-    Ok(Duration),
+    /// 所要時間と HTTP ステータス。ステータスを持ち帰るのは、**このテストが的に
+    /// 当たっているかを測る唯一の手段**だから。アサーションが無い（固まらないことだけを
+    /// 見る）ので、全部 404 で即返っていても走り切ってしまう。
+    Ok(Duration, u16),
     Panic,
     Freeze,
 }
@@ -70,16 +73,16 @@ enum Outcome {
 /// クロージャを別スレッドで走らせ、パニックを捕捉しつつタイムアウトを監視する。
 /// タイムアウトしたスレッドは（Rust ではスレッドを殺せないので）そのままリーク
 /// させる。固まりを「発見する」のが目的なので、発見後はテストを終わらせて OK。
-fn run_guarded<F: FnOnce() + Send + 'static>(f: F, freeze: Duration) -> Outcome {
+fn run_guarded<F: FnOnce() -> u16 + Send + 'static>(f: F, freeze: Duration) -> Outcome {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let start = Instant::now();
-        let ok = std::panic::catch_unwind(AssertUnwindSafe(f)).is_ok();
-        let _ = tx.send((ok, start.elapsed()));
+        let status = std::panic::catch_unwind(AssertUnwindSafe(f)).ok();
+        let _ = tx.send((status, start.elapsed()));
     });
     match rx.recv_timeout(freeze) {
-        Ok((true, dt)) => Outcome::Ok(dt),
-        Ok((false, _)) => Outcome::Panic,
+        Ok((Some(status), dt)) => Outcome::Ok(dt, status),
+        Ok((None, _)) => Outcome::Panic,
         Err(_) => Outcome::Freeze,
     }
 }
@@ -100,14 +103,29 @@ enum Action {
     Diff(String),
     /// アセット直開き（GET /rel）。
     Asset(String),
-    /// ハンドラを直接殴る不正・境界クエリ。
-    Garbage(String),
+    /// ハンドラを直接殴る不正・境界クエリ。`bool` は 404 を期待するか
+    /// （識別子として不正な形＝`GARBAGE_REJECTED` なら true）。
+    Garbage(String, bool),
 }
 
-/// root を空文字（ルート自身）と与えられた相対パスから、各操作を実行する。
+/// プールが持つ root 相対パスを、ページが投げるのと同じ識別子（絶対パス）にする。
+///
+/// **ここを通さないと、このテストは丸ごと空振りする。** `request::id_to_path` は
+/// 絶対パスでない識別子を 1 バイト目で弾くので、root 相対のまま載せると全アクションが
+/// 404 で即返り、深いネストも巨大ファイルも一度も踏まない（アサーションが無く
+/// 「固まらないこと」だけを見るテストなので、空振りしていても緑のままになる）。
+fn id_of(root: &Path, rel: &str) -> String {
+    if rel.is_empty() { root.to_string_lossy().into_owned() } else { root.join(rel).to_string_lossy().into_owned() }
+}
+
+/// root と与えられた相対パスから、各操作を実行する。
 /// `RequestContext` の付随フィールドは空で構わない（本文 HTML 生成やテーマは
 /// 固まり/パニックの判定に関係しないため）。
-fn perform(action: &Action, root: &Path) {
+///
+/// クエリに載せる形は 2 通りある。`dir` / `has_md` / `file` / `raw` / `diff` は
+/// **識別子**（絶対パス）、`Asset` は **URL**（root 相対）。名前空間が違うので
+/// 混ぜないこと——混ぜると片方の関門（`id_to_path` / `safe_join`）に一度も届かない。
+fn perform(action: &Action, root: &Path) -> u16 {
     let ctx = RequestContext {
         root_dir: root.to_path_buf(),
         index_html: Vec::new(),
@@ -115,14 +133,16 @@ fn perform(action: &Action, root: &Path) {
         custom_css: String::new(),
     };
     match action {
-        Action::ListDir(rel) => drop(handle_request(&ctx, "/", &format!("dir={}", rel))),
-        Action::HasMd(rel) => drop(handle_request(&ctx, "/", &format!("has_md={}", rel))),
-        Action::OpenFile(rel) => drop(handle_request(&ctx, "/", &format!("file={}", rel))),
-        Action::Raw(rel) => drop(handle_request(&ctx, "/", &format!("raw={}", rel))),
-        Action::Diff(rel) => drop(handle_request(&ctx, "/", &format!("diff={}", rel))),
-        Action::Asset(rel) => drop(handle_request(&ctx, &format!("/{}", rel), "")),
-        Action::Garbage(q) => drop(handle_request(&ctx, "/", q)),
+        Action::ListDir(rel) => handle_request(&ctx, "/", &format!("dir={}", id_of(root, rel))),
+        Action::HasMd(rel) => handle_request(&ctx, "/", &format!("has_md={}", id_of(root, rel))),
+        Action::OpenFile(rel) => handle_request(&ctx, "/", &format!("file={}", id_of(root, rel))),
+        Action::Raw(rel) => handle_request(&ctx, "/", &format!("raw={}", id_of(root, rel))),
+        Action::Diff(rel) => handle_request(&ctx, "/", &format!("diff={}", id_of(root, rel))),
+        Action::Asset(rel) => handle_request(&ctx, &format!("/{}", rel), ""),
+        Action::Garbage(q, _) => handle_request(&ctx, "/", q),
     }
+    .status()
+    .as_u16()
 }
 
 /// 実ツリーを浅く探索して、既知ディレクトリ / ファイルの相対パスプールを更新する。
@@ -145,9 +165,13 @@ fn discover(rel: &str, root: &Path, dirs: &mut Vec<String>, files: &mut Vec<Stri
     }
 }
 
-/// 不正・境界クエリの種。percent_decode / safe_join / json_string を意地悪な
-/// 入力で殴る。
-const GARBAGE: &[&str] = &[
+/// 識別子として不正な種。percent_decode を殴りつつ、`id_to_path` の
+/// 「絶対パスでなければ弾く」に必ず引っかかる。
+///
+/// **404 が返ることをアサートする。** ここを通ってしまったら関門が緩んだということ
+/// で、それはタブの二重化（#33）が戻ってくる入口になる。コメントで期待を書くだけに
+/// すると、通るようになっても緑のまま気づけない。
+const GARBAGE_REJECTED: &[&str] = &[
     "dir=../../../../etc",
     "file=../../../../etc/passwd",
     "raw=%2e%2e%2f%2e%2e%2fetc",
@@ -162,6 +186,22 @@ const GARBAGE: &[&str] = &[
     "file=a b c/スペース入り.md",
     "raw=very/deep/../../..//./x",
     "file=..%2f..%2fsecret",
+];
+
+/// 識別子として形は正しい（絶対パス）が、意地の悪い種。`id_to_path` の関門を
+/// 越えて canonicalize と root の内外判定まで届く。ステータスは問わない
+/// （200 も 404 もありうる）。固まらないこと・パニックしないことだけを見る。
+/// `{ROOT}` は実行時に root の絶対パスへ差し替える。
+const GARBAGE_ABSOLUTE: &[&str] = &[
+    "dir=/etc",
+    "dir=/",
+    "file=/etc/passwd",
+    "file={ROOT}/../outside/x.md",
+    "dir={ROOT}/../..",
+    "file={ROOT}/%00",
+    "raw={ROOT}/日本語/../のファイル.md",
+    "has_md={ROOT}",
+    "file={ROOT}",
 ];
 
 #[test]
@@ -196,6 +236,11 @@ fn monkey_folder_navigation() {
 
     let mut slowest = Duration::ZERO;
     let mut slowest_action: Option<Action> = None;
+    // 識別子を載せる操作の命中を**種別ごと**に数える。全体で 1 本にすると、
+    // 比率の小さい `?file=` / `?raw=` / `?diff=` が全滅しても合計は半分を割らず、
+    // いちばんありそうな事故を見逃す。添字は KIND_NAMES と対応。
+    let mut aimed = [0usize; 5];
+    let mut hit = [0usize; 5];
 
     for i in 0..iters {
         // 操作をランダムに選ぶ。フォルダ展開系（ListDir/HasMd）を厚めにして、
@@ -216,7 +261,11 @@ fn monkey_folder_navigation() {
         } else if roll < 95 {
             match rng.pick(&files) { Some(f) => Action::Asset(f.clone()), None => Action::ListDir(String::new()) }
         } else {
-            Action::Garbage(rng.pick(GARBAGE).unwrap().to_string())
+            // 半々で「弾かれるべき種」と「関門の向こうへ届く種」を投げる。
+            let rejected = rng.below(2) == 0;
+            let pool = if rejected { GARBAGE_REJECTED } else { GARBAGE_ABSOLUTE };
+            let seed = rng.pick(pool).unwrap();
+            Action::Garbage(seed.replace("{ROOT}", &root.to_string_lossy()), rejected)
         };
 
         // ListDir は「展開」なので、実行のついでに子を発見してプールを広げる
@@ -230,7 +279,22 @@ fn monkey_folder_navigation() {
         let outcome = run_guarded(move || perform(&act_for_thread, &root_for_thread), freeze);
 
         match outcome {
-            Outcome::Ok(dt) => {
+            Outcome::Ok(dt, status) => {
+                if let Some(k) = kind_index(&action) {
+                    aimed[k] += 1;
+                    if status == 200 {
+                        hit[k] += 1;
+                    }
+                }
+                // 識別子として不正な種は必ず弾かれること。ここが 404 でなくなったら、
+                // root 相対がまた通るようになったということ（タブ二重化の入口）。
+                if let Action::Garbage(q, true) = &action {
+                    assert_eq!(
+                        status, 404,
+                        "識別子として不正な種が通った: {:?} → {}\n再現: MONKEY_SEED={}",
+                        q, status, seed
+                    );
+                }
                 if dt > slowest {
                     slowest = dt;
                     slowest_action = Some(action.clone());
@@ -252,15 +316,60 @@ fn monkey_folder_navigation() {
         }
 
         if i % 500 == 499 {
-            eprintln!("  {} 操作完了 / 既知dir={} file={} / 最遅={}ms",
-                i + 1, dirs.len(), files.len(), slowest.as_millis());
+            eprintln!("  {} 操作完了 / 既知dir={} file={} / 最遅={}ms / 命中={}",
+                i + 1, dirs.len(), files.len(), slowest.as_millis(), hit_summary(&hit, &aimed));
         }
     }
 
     eprintln!(
-        "=== 完走: {} 操作, パニック/固まり無し。最遅操作={}ms {:?} ===",
-        iters, slowest.as_millis(), slowest_action
+        "=== 完走: {} 操作, パニック/固まり無し。最遅操作={}ms {:?} / 命中={} ===",
+        iters, slowest.as_millis(), slowest_action, hit_summary(&hit, &aimed)
     );
+
+    // 命中率の下限。守っているのは「このテストが的に当たっていること」そのもの。
+    // 識別子の形を変えたときに全アクションが 404 で即返るようになっても、パニックも
+    // 固まりも起きないので、ここが無いと緑のまま気づけない（#33 で実際にそうなった）。
+    //
+    // プールは `discover` が使う直前に実ツリーを舐め直して作るので、ほぼ全部が
+    // 200 になるのが正常（実測 99.9%）。9 割で切ってあるのは、走っている間に
+    // 外からファイルが消える余地だけを残すため。
+    for (k, name) in KIND_NAMES.iter().enumerate() {
+        assert!(
+            aimed[k] > 0,
+            "{} を一度も投げていない。アクションの抽選かプールが壊れている",
+            name
+        );
+        assert!(
+            hit[k] * 10 >= aimed[k] * 9,
+            "{} の命中が {}/{} しかない。識別子の形がサーバと食い違っていないか\n\
+             （root={} / 200 以外はほぼ 404 のはず）",
+            name, hit[k], aimed[k], root.display()
+        );
+    }
+}
+
+/// 命中を数える対象の種別。`Asset` は URL 名前空間、`Garbage` は落ちるのが正常
+/// なので、どちらもここには入れない。
+const KIND_NAMES: [&str; 5] = ["?dir=", "?has_md=", "?file=", "?raw=", "?diff="];
+
+fn kind_index(action: &Action) -> Option<usize> {
+    match action {
+        Action::ListDir(_) => Some(0),
+        Action::HasMd(_) => Some(1),
+        Action::OpenFile(_) => Some(2),
+        Action::Raw(_) => Some(3),
+        Action::Diff(_) => Some(4),
+        Action::Asset(_) | Action::Garbage(..) => None,
+    }
+}
+
+fn hit_summary(hit: &[usize; 5], aimed: &[usize; 5]) -> String {
+    KIND_NAMES
+        .iter()
+        .enumerate()
+        .map(|(k, name)| format!("{}{}/{}", name, hit[k], aimed[k]))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// 病的なディレクトリツリー。Drop で自動削除する。
@@ -275,6 +384,10 @@ impl Fixture {
         let root = std::env::temp_dir().join(format!("md-monkey-{}", seed));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("フィクスチャ root を作れない");
+        // 実アプリの root は必ず canonicalize 済み（`app_config::resolve_arg_path`）。
+        // 揃えないと、macOS の temp_dir が `/var` → `/private/var` のリンクなので
+        // `resolve_tree_dir` の root 内判定が全部外れ、ツリー系が 404 で空振りする。
+        let root = root.canonicalize().expect("フィクスチャ root を解決できない");
 
         // (1) 横に広く、md を 1 つも置かない枝。サブディレクトリが無いので予算には
         //     届かないが、早期 return が効かない（＝最後まで舐める）形の再現。

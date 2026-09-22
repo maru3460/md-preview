@@ -10,7 +10,7 @@
 // そのためには navigator.clipboard 側を失敗させて Rust への経路へ落とす必要がある
 // ——実機の mdpreview:// でも、ユーザー ジェスチャの外から呼ぶと同じ道を通る。
 const { test, expect } = require('@playwright/test');
-const { MULTI_URL, open, openFolder } = require('./helpers');
+const { MULTI_URL, open, openFolder, treeItem } = require('./helpers');
 
 /// clipboard を必ず失敗させて IPC 経路に寄せる。中身を観測するのはこの道しかない。
 async function stubClipboard(page) {
@@ -66,7 +66,7 @@ const tick = (page) => page.locator('.md-copy-tick');
 test('本文をなぞるとコピーされ、選択は残り、カーソル脇にチェックが出る', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="a.md"]').click();
+  await treeItem(page, 'a.md').click();
   const para = page.locator('.markdown-body p').first();
   await expect(para).toBeVisible();
 
@@ -101,7 +101,7 @@ test('本文をなぞるとコピーされ、選択は残り、カーソル脇�
 test('ただのクリックでは走らない', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="a.md"]').click();
+  await treeItem(page, 'a.md').click();
   const para = page.locator('.markdown-body p').first();
   await expect(para).toBeVisible();
 
@@ -113,7 +113,7 @@ test('ただのクリックでは走らない', async ({ page }) => {
 test('選択が残ったままでも、右クリックでは再コピーされない', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="a.md"]').click();
+  await treeItem(page, 'a.md').click();
   const para = page.locator('.markdown-body p').first();
   await expect(para).toBeVisible();
   await dragAcross(page, para);
@@ -161,7 +161,7 @@ test('検索バーの入力欄でなぞってもクリップボードを奪わ�
 test('コメントモード中は走らない（ドラッグが行の範囲選択に割り当たっている）', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="a.md"]').click();
+  await treeItem(page, 'a.md').click();
   const para = page.locator('.markdown-body p').first();
   await expect(para).toBeVisible();
 
@@ -176,7 +176,7 @@ test('コメントモード中は走らない（ドラッグが行の範囲選�
 test('html の iframe 内でも効き、合図は親の画面に出る', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="page.html"]').click();
+  await treeItem(page, 'page.html').click();
   const frame = page.locator('iframe.html-frame');
   await expect(frame).toBeVisible();
 
@@ -205,7 +205,7 @@ test('html の iframe 内でも効き、合図は親の画面に出る', async (
 test('チェックは画面の端で内側へ折り返す', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="a.md"]').click();
+  await treeItem(page, 'a.md').click();
   await expect(page.locator('.markdown-body p').first()).toBeVisible();
 
   // 座標だけを指定してジェスチャを合成する（端まで実際にドラッグできる本文が
@@ -260,7 +260,7 @@ test('NUL を含むテキストは黙って切らずに失敗として返す', a
 test('インラインコードを含む段落は ` 付きでコピーされる', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="zz-code.md"]').click();
+  await treeItem(page, 'zz-code.md').click();
   const para = page.locator('.markdown-body p', { hasText: 'inline code' }).first();
   await expect(para).toBeVisible();
 
@@ -277,7 +277,7 @@ test('インラインコードを含む段落は ` 付きでコピーされる',
 test('インラインコードの中だけをなぞっても ` が付く', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="zz-code.md"]').click();
+  await treeItem(page, 'zz-code.md').click();
   const code = page.locator('.markdown-body p code', { hasText: 'inline code' }).first();
   await expect(code).toBeVisible();
 
@@ -292,7 +292,7 @@ test('インラインコードの中だけをなぞっても ` が付く', async
 test('コードブロックはフェンス付きでコピーされ、Copy ボタンの文字は混ざらない', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="zz-code.md"]').click();
+  await treeItem(page, 'zz-code.md').click();
   const code = page.locator('.code-wrapper.has-filename pre code');
   await expect(code).toBeVisible();
 
@@ -308,7 +308,7 @@ test('コードブロックはフェンス付きでコピーされ、Copy ボタ
 test('段落からコードブロックへ跨いだ選択でも、記法が戻り UI の文字は混ざらない', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="zz-code.md"]').click();
+  await treeItem(page, 'zz-code.md').click();
   const para = page.locator('.markdown-body p', { hasText: 'inline code' }).first();
   const block = page.locator('.code-wrapper.has-filename');
   await expect(block).toBeVisible();
@@ -334,7 +334,7 @@ test('段落からコードブロックへ跨いだ選択でも、記法が戻�
 test('raw 表示は原文なので触らない（フェンスを二重に足さない）', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
-  await page.locator('.tree-item[data-path="zz-code.md"]').click();
+  await treeItem(page, 'zz-code.md').click();
   await page.keyboard.press('Meta+r');
   await expect(page.locator('.source-view')).toBeVisible();
 
