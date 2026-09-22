@@ -405,6 +405,23 @@
     loadPreview(currentFilePath, true);
   };
 
+  // 別プロセスの md から転送されてきたファイル（#31）を開く唯一の入口。
+  // 引数は識別子（絶対パス）の配列で、先頭が表示され残りはタブに載るだけ。
+  // 空配列は「窓を前に出すだけ」で、ここでは何もしない（前面化は Rust の仕事）。
+  //
+  // オーバーレイを先に畳む。畳まずに開くと (1) ⌘P やヘルプが別ファイルの上に居残り、
+  // (2) 入力欄にフォーカスが残っている間は focusPreview が譲るので、本文は変わった
+  // のに j/k が効かない窓になる。順序がそのまま両方の理由。
+  //
+  // Why not loadPreview の中で畳む: あそこはツリー・[ ]・⌘P・本文リンク・iframe 内
+  // リンク・コメントのジャンプが通る共有の道で、どのオーバーレイを残すかは本来
+  // 呼び出し側の方針である。入れると 6 経路の挙動が同時に変わる。
+  window.MdOpenFiles = function(ids) {
+    if (!ids || !ids.length || !window.MdTabs) return;
+    if (window.MdCommon && MdCommon.closeOverlays) MdCommon.closeOverlays();
+    MdTabs.openMany(ids);
+  };
+
   // ── キーボードナビ ────────────────────────────────────────────
   // ・[ / ] : 表示中の描画可能ファイルを巡回して即プレビュー
   // ・Tab   : 本文ペイン ⇄ ファイルツリー のフォーカス切替
@@ -705,6 +722,11 @@
     function markInitialRenderDone() {
       initialRenderDone = true;
       document.documentElement.dataset.mdReady = '1';
+      // ここまで来て初めて MdOpenFiles が効く（MdTabs.init は DOMContentLoaded）。
+      // main.rs はこの合図まで転送を溜めるので、窓が出た直後に届いた `md b.md` が
+      // 黙って消えない。ツリーの取得に失敗した経路もここを通るので、木が読めなかった
+      // 窓にも転送は届く。
+      if (window.ipc) window.ipc.postMessage('ready');
       // 成功・失敗どちらの経路から来てもここで待ち行列が動き出す。
       pumpMdChecks();
     }
