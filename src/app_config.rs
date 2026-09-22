@@ -50,7 +50,7 @@ impl AppConfig {
     ///                       名前を作るのと、本文の URL（root 相対）を識別子へ戻すのに
     ///                       要る。`MdCommon.idToDisplay` / `urlToId` の基準。
     /// - `MD_STDIN_PREFIX`   パイプ入力を実体化する一時ディレクトリの名前の頭。
-    ///                       定義元は [`STDIN_DIR_PREFIX`]。タブが「同名なら親の名前を
+    ///                       定義元はこのモジュールの `STDIN_DIR_PREFIX`。タブが「同名なら親の名前を
     ///                       添える」規則を、パイプの置き場所には当てないために要る。
     pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
         let renderable = request::RENDERABLE_EXT
@@ -248,8 +248,11 @@ pub fn owned_stdin_dir(doc: &Path) -> Option<PathBuf> {
     Some(dir.to_path_buf())
 }
 
-/// stdin の markdown を実体のファイルにする。自己デタッチした場合は親が読んで
-/// 書き出しているので、そのパスをそのまま使う（子は標準入力を持たない）。
+/// stdin の markdown を実体のファイルにする。
+///
+/// 実体化は `main` の頭で 1 回だけ行い、`STDIN_FILE_ENV` に置いて全経路で持ち回る
+/// （転送・exec・spawn・前景）。なので**ここへ来るときは環境変数が必ず立っている**。
+/// `None` の枝は、この関数をライブラリとして単体で呼ぶ経路のための受け皿である。
 fn materialize_stdin() -> PathBuf {
     match std::env::var_os(STDIN_FILE_ENV) {
         Some(p) => canonical(PathBuf::from(p)),
