@@ -426,6 +426,8 @@
     cursor = 0;
   }
 
+  function isOpen() { return !!overlay; }
+
   function toggle() {
     if (overlay) close(); else open();
   }
@@ -500,7 +502,7 @@
       if (window.MdCommon && MdCommon.registerOverlay) {
         MdCommon.registerOverlay({
           id: 'md-pal-backdrop',
-          isOpen: function() { return !!overlay; },
+          isOpen: isOpen,
           close: close,
           priority: 30,
           // 検索の途中を転送で捨てない。一覧は root のファイル一覧で、
@@ -514,6 +516,8 @@
     },
     // 起動直後に一覧を温めておく（初回の ⌘P を待たせない）。
     prefetch: function() { load(); },
+    // 転送（#31）の受け側が「作業の途中か」を見るのに使う（folder.js）。
+    isOpen: isOpen,
     open: open,
     close: close,
     toggle: toggle

@@ -121,7 +121,7 @@ test('root の外のファイルも転送でタブに乗り、監視を頼む', 
   expect(watched).toContain('watch:' + out);
 });
 
-test('⌘P の検索は転送で畳まれず、入力も残る', async ({ page }) => {
+test('⌘P の検索は転送で畳まれず、入力も表示も残る', async ({ page }) => {
   // 転送はこちらから叩いた結果なのに、検索の途中を巻き添えにする理由が無い。
   // 一覧は root のファイル一覧なので、裏のファイルが変わっても中身は有効なまま。
   await openFolder(page);
@@ -134,7 +134,27 @@ test('⌘P の検索は転送で畳まれず、入力も残る', async ({ page }
 
   await expect(page.locator('#md-pal-backdrop')).toBeVisible();
   await expect(page.locator('#md-pal-backdrop input')).toHaveValue('long');
-  await expect(body(page)).toContainText('長い見出し');
+  // 届いたファイルはタブに載るだけで、表示は a.md のまま。
+  await expect(tabNames(page)).toHaveText(['a.md', 'long.md']);
+  expect(await activePath(page)).toBe('a.md');
+  await expect(body(page)).toContainText('見出し A');
+  await expect(body(page)).not.toContainText('長い見出し');
+});
+
+test('パレットを閉じても、開いたつもりのないファイルは出てこない', async ({ page }) => {
+  // 表示を譲る理由はここにある。パレットは画面を覆っているので差し替えは見えず、
+  // 奪われていると Esc を押した瞬間に別のファイルが出る。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('Meta+p');
+  await expect(page.locator('#md-pal-backdrop')).toBeVisible();
+
+  await forward(page, [page.mdRoot + '/long.md']);
+  await page.keyboard.press('Escape');
+
+  await expect(page.locator('#md-pal-backdrop')).toHaveCount(0);
+  await expect(body(page)).toContainText('見出し A');
+  expect(await activePath(page)).toBe('a.md');
 });
 
 test('ヘルプを開いたまま転送されると畳まれ、フォーカスが本文へ戻る', async ({ page }) => {

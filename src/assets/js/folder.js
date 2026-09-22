@@ -424,12 +424,27 @@
   // Why not loadPreview の中で畳む: あそこはツリー・[ ]・⌘P・本文リンク・iframe 内
   // リンク・コメントのジャンプが通る共有の道で、どのオーバーレイを残すかは本来
   // 呼び出し側の方針である。入れると 6 経路の挙動が同時に変わる。
+  // 表示まで譲る相手。オーバーレイを残す（`keepOnOpen`）だけでは足りないもの——
+  // コメントの入力欄と ⌘P の検索は、どちらも**手を止めて画面の前に居る**状態で、
+  // 転送は止められない（外から来る）ので受ける側で譲るしかない。届いたことは
+  // タブとトーストで見える。
+  //
+  // 入力欄は本文の上に浮いているので差し替えはその場で見えるが、パレットは画面を
+  // 覆っているので見えない。**Esc を押した瞬間に、自分が開いたつもりのないファイルが
+  // 出る**ことになる。見えないぶん、こちらの方が譲る理由は強い。
+  //
+  // Why not コメントモード（`c`）も足す: あれは印を追って読み歩いている状態で、
+  // 手は止まっていない。表示が変わるのはツリーや ⌘P で開いた時と同じことで、
+  // 巻き添えにする「書きかけ」が無い。
+  function keepsView() {
+    if (window.MdComment && MdComment.isPopoverOpen && MdComment.isPopoverOpen()) return true;
+    if (window.MdPalette && MdPalette.isOpen && MdPalette.isOpen()) return true;
+    return false;
+  }
+
   window.MdOpenFiles = function(ids) {
     if (!ids || !ids.length || !window.MdTabs) return;
-    // コメントを書いている最中は、表示を奪わずタブに載せるだけにする。書いている
-    // 対象が目の前から消えると何に書いているのか分からなくなるし、転送は止められない
-    // （外から来る）ので、受ける側で譲るしかない。届いたことはタブとトーストで見える。
-    if (window.MdComment && MdComment.isPopoverOpen && MdComment.isPopoverOpen()) {
+    if (keepsView()) {
       var before = MdTabs.count();
       MdTabs.openMany(ids, { keepView: true });
       var added = MdTabs.count() - before;
