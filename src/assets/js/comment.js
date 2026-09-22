@@ -1276,7 +1276,10 @@
         isOpen: function() { return mode; },
         close: function() { setMode(false); },
         priority: 10,
-        blocksKeys: false
+        blocksKeys: false,
+        // 転送（#31）でも解除しない。画面を覆わない「モード」で、ツリークリックでも
+        // ⌘P でも解除されないのに転送だけ解除すると、入口ごとに挙動が割れる。
+        keepOnOpen: true
       });
     }
 

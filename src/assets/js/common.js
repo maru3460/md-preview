@@ -1013,7 +1013,13 @@
   //   id, isOpen(), close(),
   //   priority   … 大きいほど前面。Esc はこれが最大の 1 つだけを閉じる
   //   blocksKeys … 開いている間、本文の素キーを止めるか（既定 true）
+  //   keepOnOpen … 外から画面の中身が差し替わるとき（closeOverlays）に残すか（既定 false）
   // }
+  //
+  // Why not keepOnOpen を blocksKeys で兼ねる: いまは「素キーを止めない」のと
+  // 「掃かれない」の母集団がコメントモード 1 つで一致しているが、前者は入力の話、
+  // 後者は画面を覆うかの話で、同じ命題ではない。「キーは止めないが画面は覆う」
+  // ものを足した人が、気付かずに「別ファイルの上に居残る」を踏む。
   var overlays = [];
 
   function registerOverlay(spec) {
@@ -1026,6 +1032,22 @@
     return overlays.filter(function(o) {
       if (o.id === exceptId) return false;
       try { return !!o.isOpen(); } catch (e) { return false; }
+    });
+  }
+
+  // 画面を覆っているオーバーレイをまとめて畳む。ユーザーの操作ではなく、外から本文が
+  // 差し替わるとき（#31 の転送）に使う——各オーバーレイの「自分で閉じる」経路が走らない
+  // ので、残すと別のファイルの上に前のファイル向けのものが居残る。
+  // close() が投げても列が途中で止まらないよう 1 つずつ包む（openOverlays は絞り込んだ
+  // 新しい配列を返すので、閉じながら回しても元の登録順は壊れない）。
+  // 閉じる順は前面から（openOverlays が priority 降順で返す）。これは好みではなく
+  // 依存で、逆順にするとフォーカスが壊れる——検索バーに入力中にコメントの popover を
+  // 開いていると、`closePopover` は開く前のフォーカス（＝検索入力）へ戻す。前面から
+  // 閉じれば、その後に検索バーが閉じて blur されるので本文へ戻れる。
+  function closeOverlays() {
+    openOverlays().forEach(function(o) {
+      if (o.keepOnOpen) return;
+      try { o.close(); } catch (e) {}
     });
   }
 
@@ -1355,6 +1377,7 @@
     unitAtLine: unitAtLine,
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
+    closeOverlays: closeOverlays,
     registerOverlay: registerOverlay,
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
