@@ -34,6 +34,46 @@ cat note.md | md     # 標準入力から読む`}</pre>
     閉じるのは <kbd>⌘W</kbd>（最後のタブを閉じるとウィンドウも閉じます）。
   </p>
 
+  <h2>2 回目からはタブが増えます</h2>
+
+  <p>
+    ウィンドウが開いている間に <code>md</code> をもう一度叩くと、
+    <strong>新しいウィンドウは増えず、開いているウィンドウにタブとして届きます</strong>。
+    タブは<strong>いま見ているタブの右隣</strong>に挿さり、渡した先頭が表示されます
+    （すでに開いているファイルなら、タブを増やさずそこへ移ります）。
+    そのウィンドウが前面に出るので、別のスペースにいても叩いた結果が見えます。
+    ルートの外のファイルでもタブには乗ります（ツリーには出ません）。
+  </p>
+
+  <div class="codebox">
+    <div class="codebox-head"><span>Terminal</span></div>
+    <pre>{`md intro.md          # ウィンドウが開く
+md guide.md          # 同じウィンドウにタブが増える
+md -n guide.md       # 2 枚目のウィンドウで開く`}</pre>
+  </div>
+
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname"><code>-n</code> / <code>--new-window</code></div>
+      <div class="fdesc">既存のウィンドウへ送らず、新しいウィンドウで開きます。書きながら別の資料を並べて読みたいときに。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">ディレクトリを渡したとき</div>
+      <div class="fdesc">ルートを決める指定なので、いまは新しいウィンドウが開きます。</div>
+    </div>
+  </div>
+
+  <p class="note">
+    届く先は<strong>最初に開いたウィンドウ</strong>です。<code>-n</code> で開いた 2 枚目と、
+    ウィンドウがある状態でディレクトリを渡して開いたウィンドウは受け取り口を持たないので、
+    そのあとの <code>md</code> は目の前のウィンドウではなく最初のウィンドウに届きます。
+  </p>
+
+  <p class="note">
+    タブが溜まったら、タブを右クリックして「すべてのタブを閉じる」でまとめて片付けられます
+    （ウィンドウは残ります）。
+  </p>
+
   <p>
     複数ファイルをまとめて渡すなどの細かい指定は <code>md --help</code> にあります。
     Claude Code から使う場合は、同梱のスキルが状況に応じて使い分けます。
