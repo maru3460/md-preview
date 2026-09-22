@@ -63,14 +63,28 @@ const MAX_MESSAGE: u64 = 1 << 20;
 /// ときに、送り側が端末を握ったままにならない長さ。
 const GREETING_TIMEOUT: Duration = Duration::from_millis(200);
 
+/// 1 接続を捌くのに使ってよい時間の**全体**。
+///
+/// `set_read_timeout` は 1 回の `read` に対する上限なので、それだけでは足りない。
+/// 少しずつ書き続ける相手は読むたびにタイマーを巻き戻せて、accept ループを何時間でも
+/// 握れる（接続ごとにスレッドを立てない判断は「読み書きに時間制限がある」ことに
+/// 乗っている）。ここで全体を締める。
+const REQUEST_DEADLINE: Duration = Duration::from_millis(500);
+
+/// accept が失敗したときに入れる息継ぎ。恒久的な失敗で CPU を焼かないためだけのもの。
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(20);
+
 /// `sun_path` の上限（macOS）。終端の 1 バイトを引いた長さまでしか bind できない。
 const SUN_PATH_MAX: usize = 104;
 
 /// ソケットの名前。debug ビルドで分けるのは `cargo run` が日常の `md` の受け側を
 /// 奪わないようにするため。**これで分かれるのは `cargo run` だけ。**
 /// `cargo install --path . --root …` で入れた検証用のビルドはリリースなので同じ名前に
-/// なり、日常の `md` の窓へ転送してしまう。そちらは [`SOCKET_ENV`] で分ける
-/// （手順は CLAUDE.md にある）。
+/// なり、日常の `md` の窓へ転送してしまう。そちらは [`SOCKET_ENV`] で分ける:
+///
+/// ```sh
+/// MD_SOCKET=$TMPDIR/md-preview-dev.sock ~/.local/md-dev/bin/md file.md
+/// ```
 const SOCKET_NAME: &str = if cfg!(debug_assertions) { "md-preview-dev.sock" } else { "md-preview.sock" };
 
 /// ソケットのパスを外から差し替える。テストが本番のソケットを踏まないため、そして
@@ -327,7 +341,13 @@ impl Listening {
             let _lock = lock;
             for stream in listener.incoming() {
                 // Err でループを抜けない。抜けると窓は生きたまま受信できない幽霊になる。
-                let Ok(stream) = stream else { continue };
+                // ただし素通しで continue すると、恒久的に失敗する状態（fd の枯渇など）
+                // で CPU を 1 コア焼き続ける。`incoming()` は `None` を返さないので、
+                // 抜けない代わりに息継ぎを入れる。
+                let Ok(stream) = stream else {
+                    std::thread::sleep(ACCEPT_ERROR_BACKOFF);
+                    continue;
+                };
                 if let Some(msg) = read_request(stream) {
                     on_message(msg);
                 }
@@ -369,22 +389,49 @@ fn file_identity(path: &Path) -> Option<(u64, u64)> {
 
 /// 受け側が 1 接続を捌く。挨拶を書いてから要求を読む。
 fn read_request(mut stream: UnixStream) -> Option<Message> {
+    let deadline = std::time::Instant::now() + REQUEST_DEADLINE;
     let _ = stream.set_write_timeout(Some(GREETING_TIMEOUT));
-    let _ = stream.set_read_timeout(Some(GREETING_TIMEOUT));
     let mut greeting = Vec::new();
     push_token(&mut greeting, MAGIC);
     push_token(&mut greeting, &VERSION.to_string());
     push_token(&mut greeting, &format!("pid={}", std::process::id()));
-    stream.write_all(&greeting).ok()?;
-    stream.flush().ok()?;
+    // **挨拶が書けなくても読みに行く。** 送り側は挨拶を 200ms 待って諦めたら、要求を
+    // 書いて即座に閉じてよい（それが `Sent::Delivered { receiver_pid: None }`）。
+    // その後にこちらが accept すると相手はもう居ないので write は EPIPE になるが、
+    // 要求は受信バッファに載ったままで読める。ここで諦めると、**届いている転送を
+    // 自分で捨てる**ことになる——送り側は成功扱いで終了しているので、窓も出ず
+    // エラーも出ない。
+    let _ = stream.write_all(&greeting);
+    let _ = stream.flush();
 
-    let mut buf = Vec::new();
     // 送り側は書き終えたら write 側を閉じるので、ここは EOF で戻る。
-    Read::take(&mut stream, MAX_MESSAGE).read_to_end(&mut buf).ok()?;
-    // 上限ちょうどは「切り捨てた」疑いがある。切れた位置がたまたま NUL の直後だと
-    // `split_tokens` が終端済みと読み、**パスの途中までを開く**ことになる。
-    if buf.len() as u64 >= MAX_MESSAGE {
-        return None;
+    //
+    // Why not 残り時間を毎回 `set_read_timeout` で張り直す: **macOS は相手が閉じた後の
+    // `setsockopt(SO_RCVTIMEO)` に EINVAL を返す。** 送り側は書いてすぐ閉じるので、
+    // 1 回読んだ次の張り直しがほぼ必ず失敗し、届いている要求を自分で捨てることになる
+    // （実測: `set_read_timeout(499.74ms)` が InvalidInput）。時間制限は 1 回だけ張って、
+    // 全体の締切は読むたびに時計で見る。最悪でも締切 + 1 回ぶんで抜ける。
+    let _ = stream.set_read_timeout(Some(REQUEST_DEADLINE));
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                // 上限を超えたら捨てる。`take` で切り詰めると、切れた位置がたまたま
+                // NUL の直後だったときに `split_tokens` が終端済みと読み、**パスの
+                // 途中まで**を開くことになる。
+                if buf.len() as u64 > MAX_MESSAGE {
+                    return None;
+                }
+                // 少しずつ書き続ける相手に accept ループを握られないための締切。
+                if std::time::Instant::now() >= deadline {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
     }
     Message::decode(&buf)
 }
@@ -399,6 +446,12 @@ pub enum Sent {
     NoReceiver,
     /// 相手の方が新しい。**何も書かずに**冷スタートへ落ちる。
     Incompatible { version: u32 },
+    /// 1 通に収まらない。受け側が捨てるので、送らずに冷スタートへ落ちる。
+    TooLarge,
+    /// 挨拶が md のものではない。同じパスに別のプログラムが居る。**何も書かない。**
+    /// `NoReceiver` と分けるのは、あちらが「まだ bind していないだけかもしれない」＝
+    /// 待つ価値がある状態なのに対し、こちらは待っても変わらないため。
+    Stranger,
 }
 
 /// 既存の受け側へ 1 通送る。**ack は待たない。**
@@ -417,12 +470,19 @@ pub fn try_send(ep: &Endpoint, msg: &Message) -> Sent {
     let receiver_pid = match read_greeting(&mut stream) {
         Some(Greeting::Ok { pid }) => pid,
         Some(Greeting::Incompatible(version)) => return Sent::Incompatible { version },
-        Some(Greeting::Stranger) => return Sent::NoReceiver,
+        Some(Greeting::Stranger) => return Sent::Stranger,
         // タイムアウト / EOF。送るだけ送って、前面化はしない（生きている確信が無い）。
         None => None,
     };
 
-    if stream.write_all(&msg.encode()).is_err() {
+    let wire = msg.encode();
+    // 受け側は上限を超えた通信を捨てる。送る前に気づかないと、送り側は成功扱いで
+    // 終了して窓が 1 枚も出ない。`md **/*.md` を絶対パスへ直すと膨らむので、
+    // ARG_MAX いっぱいの argv では届きうる。
+    if wire.len() as u64 > MAX_MESSAGE {
+        return Sent::TooLarge;
+    }
+    if stream.write_all(&wire).is_err() {
         return Sent::NoReceiver;
     }
     let _ = stream.flush();

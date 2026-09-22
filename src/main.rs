@@ -93,7 +93,7 @@ fn detach_self(
     // AppKit / 入力メソッドのログ（IMKCFRunLoopWakeUpReliable など）が md の名前で
     // 混ざる。パイプへ繋ぐと、握ったままウィンドウが生き続けて呼び出し元が EOF 待ちで
     // 戻らなくなる。人に見せる価値があるのは「窓が出ない」エラーだけで、それは上の
-    // plan_paths と下の spool_stdin、それに main の引数チェックで親が出し切っている。
+    // plan_paths と、main の頭の引数チェック・stdin の実体化で親が出し切っている。
     //
     // 子へ渡すのは env::args() の取り直しではなく、親が受け取った argv そのもの。
     // 取り直すと「検証したもの」と「渡すもの」が別々に育って食い違える。
@@ -239,11 +239,18 @@ fn deliver(ep: &md_preview::instance::Endpoint, msg: &md_preview::instance::Mess
         }
         Sent::Incompatible { version } => {
             // 古い窓が生きたまま `cargo install` で入れ替えるのは日常なので、
-            // 黙って諦めずに理由を出す（ここはまだ stderr を持っている）。
-            // 待っても新しくならないので、リトライには回さない。
+            // 黙って諦めずに理由を出す。待っても新しくならないのでリトライには回さない。
+            //
+            // 端末に出るのは層1（親）から呼ばれたときだけ。層2 はデタッチ済みの子なので
+            // /dev/null へ行くが、同じ状況なら層1 で既に出ているので取りこぼさない。
             eprintln!("md: 動いている md（プロトコル {}）の方が新しいので、別の窓で開きます", version);
             Delivery::GiveUp
         }
+        // 同じパスに別のプログラムが居る。待っても md にはならない。
+        Sent::Stranger => Delivery::GiveUp,
+        // 1 通に収まらない。受け側は捨てるので、自分で開く。
+        Sent::TooLarge => Delivery::GiveUp,
+        // まだ bind していないだけかもしれない。層2 はここを待つ。
         Sent::NoReceiver => Delivery::Retry,
     }
 }

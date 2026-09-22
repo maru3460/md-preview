@@ -259,7 +259,9 @@ fn a_stranger_on_the_socket_gets_nothing_written_to_it() {
         let _ = tx.send(buf);
     });
 
-    assert_eq!(try_send(&ep, &Message::new(vec!["/a.md".into()])), Sent::NoReceiver);
+    // `NoReceiver`（＝まだ bind していないだけかもしれない）と分ける。層2 はあちらを
+    // 待つが、こちらは待っても md にはならないので冷スタートへ落ちる。
+    assert_eq!(try_send(&ep, &Message::new(vec!["/a.md".into()])), Sent::Stranger);
     assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap().is_empty(), "書いてしまった");
     let _ = std::fs::remove_file(ep.socket_path());
 }
@@ -279,6 +281,65 @@ fn the_cleanup_does_not_delete_someone_elses_socket() {
 
     assert!(ep.socket_path().exists(), "他人のソケットを消してしまった");
     let _ = std::fs::remove_file(ep.socket_path());
+}
+
+#[test]
+fn a_request_written_before_accept_is_not_thrown_away() {
+    // 送り側は挨拶を 200ms 待って諦めたら、要求を書いて即座に閉じてよい
+    // （`Sent::Delivered { receiver_pid: None }`）。その後に受け側が accept すると
+    // 相手はもう居ないので挨拶の write は EPIPE になる。そこで諦めると、**受信バッファに
+    // 載っている転送を自分で捨てる**ことになり、送り側は成功扱いで終了しているので
+    // 窓も出ずエラーも出ない。
+    let ep = endpoint("write-then-close");
+    let listening = owner(claim(&ep)).listen().unwrap();
+
+    // 受け側がまだ accept していないうちに、書いて閉じる。
+    {
+        use std::io::Write;
+        let mut c = std::os::unix::net::UnixStream::connect(ep.socket_path()).unwrap();
+        c.write_all(&Message::new(vec!["/a.md".into()]).encode()).unwrap();
+        c.shutdown(std::net::Shutdown::Write).unwrap();
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let _handle = listening.serve(move |msg| { let _ = tx.send(msg); });
+    let got = rx.recv_timeout(Duration::from_secs(2)).expect("届いている要求を捨てた");
+    assert_eq!(got.files, vec!["/a.md".to_string()]);
+    let _ = std::fs::remove_file(ep.socket_path());
+}
+
+#[test]
+fn a_message_over_the_cap_is_refused_before_it_is_sent() {
+    // 受け側は上限を超えた通信を捨てる。送る前に気づかないと、送り側は成功扱いで
+    // 終了して窓が 1 枚も出ない。`md **/*.md` を絶対パスへ直すと膨らむので、
+    // ARG_MAX いっぱいの argv では届きうる。
+    let ep = endpoint("too-large");
+    let (tx, rx) = mpsc::channel();
+    let _handle = owner(claim(&ep)).listen().unwrap().serve(move |msg| { let _ = tx.send(msg); });
+
+    let huge: Vec<String> = (0..300).map(|i| format!("/{}{}.md", "x".repeat(4000), i)).collect();
+    assert_eq!(try_send(&ep, &Message::new(huge)), Sent::TooLarge);
+    assert!(rx.recv_timeout(Duration::from_millis(400)).is_err(), "捨てられるものを送った");
+
+    // 上限内なら普通に通る（門が常に閉じているのではない）。
+    assert!(matches!(
+        try_send(&ep, &Message::new(vec!["/a.md".into()])),
+        Sent::Delivered { .. }
+    ));
+    let _ = std::fs::remove_file(ep.socket_path());
+}
+
+#[test]
+fn the_cleanup_removes_our_own_socket() {
+    // 身元の照合が厳しすぎて自分のソケットまで残す、の逆側。片方しか測らないと、
+    // 条件を裏返しても誰も気づかない。
+    let ep = endpoint("unlink-self");
+    let handle = owner(claim(&ep)).listen().unwrap().serve(|_| {});
+    assert!(ep.socket_path().exists());
+
+    handle.unlink();
+
+    assert!(!ep.socket_path().exists(), "自分のソケットを消していない");
 }
 
 #[test]
