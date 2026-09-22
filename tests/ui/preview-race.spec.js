@@ -114,3 +114,30 @@ test('本文がまだ届いていない間のホットリロードは、取り�
   await expect(bodyText(page)).toContainText('長い見出し');
   expect(seen.filter((f) => f === id)).toHaveLength(1);
 });
+
+test('⌘R を連打しても、OFF のときに飛んだ遅い本文が raw を上書きしない', async ({ page }) => {
+  // 上の raw のテストと守っている行は同じだが、通る道が違う。あちらは「初回の本文が
+  // 飛んでいる最中にモードを ON」で、こちらは「ON → OFF（ここで本文フェッチが飛ぶ）
+  // → ON」。OFF の `reloadNormal` は loadPreview を通るので世代を進めてしまい、
+  // そのあと ON にしても**その本文は自分の世代のまま**着地する。世代だけでは止まらない。
+  await openFolder(page);
+  await treeItem(page, 'a.md').click();
+  await expect(bodyText(page)).toContainText('見出し A');
+
+  // ここから先の `?file=` を遅らせる（初回はもう着地している）。
+  await delayFirstFile(page, 400);
+
+  const raw = page.locator('.md-raw-toggle');
+  await page.keyboard.press('Meta+r');   // ON
+  await expect(page.locator('.source-view')).toBeVisible();
+  await page.keyboard.press('Meta+r');   // OFF → 遅い本文フェッチが飛ぶ
+  await page.keyboard.press('Meta+r');   // ON → 速い raw フェッチが先に着く
+
+  await expect(raw).toHaveClass(/active/);
+  await expect(page.locator('.source-view')).toBeVisible();
+  // 遅い本文が着いたあとも raw が生きていること。
+  await page.waitForTimeout(900);
+  await expect(raw).toHaveClass(/active/);
+  await expect(page.locator('.source-view')).toBeVisible();
+  await expect(page.locator('#preview-pane')).toContainText('# 見出し A');
+});
