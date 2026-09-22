@@ -169,6 +169,28 @@ fn a_message_reaches_the_receiver_and_the_sender_learns_its_pid() {
 }
 
 #[test]
+fn the_seat_stays_taken_while_the_receiver_is_serving() {
+    // 受け側が accept ループを回している間、座は埋まったままでなければならない。
+    //
+    // ここが空くと、冷スタートが 2 本同時のときに後から来た方が座を取り、
+    // `listen()` が**生きている受け側のソケットを unlink して自分のを bind する**。
+    // 先に居た方は名前を失った listener を抱えたまま「自分が受け側だ」と思い続け、
+    // 窓が 2 枚になる——flock をトークンに選んだ理由そのものが消える。
+    //
+    // 実際に一度そうなった。`serve(self, …)` の `move` クロージャが本文で
+    // `self.listener` しか触らないので、Rust 2021 のフィールド単位の捕獲で
+    // ロックが捕まらず、`serve` を抜けた時点で drop されていた。
+    let ep = endpoint("serving");
+    let _handle = owner(claim(&ep)).listen().unwrap().serve(|_| {});
+
+    assert!(matches!(claim(&ep), Claim::Taken), "serve 中に座が空いている");
+
+    // 念のため、転送も通ること（listener が生きている）。
+    assert!(matches!(try_send(&ep, &Message::new(vec!["/a.md".into()])), Sent::Delivered { .. }));
+    let _ = std::fs::remove_file(ep.socket_path());
+}
+
+#[test]
 fn a_newer_receiver_gets_nothing_written_to_it() {
     // 挨拶だけを偽装した最小の受け側。要求を 1 バイトも書かないことを、相手側で確かめる。
     let ep = endpoint("newer");

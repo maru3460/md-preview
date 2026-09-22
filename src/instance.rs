@@ -308,9 +308,19 @@ impl Listening {
     /// 返る [`Handle`] は後始末のためだけのもの。呼び出し側は GUI の終了経路で
     /// [`Handle::unlink`] を呼ぶ（呼ばなくても次の起動が直すので、衛生の話）。
     pub fn serve(self, mut on_message: impl FnMut(Message) + Send + 'static) -> Handle {
-        let handle = Handle { socket: self.ep.socket.clone(), ino: self.ino };
+        // **`self` をそのまま `move` クロージャへ渡してはいけない。** Rust 2021 の
+        // クロージャはフィールド単位で捕まえるので、本文が `self.listener` しか
+        // 触らないと `lock` は捕まらず、`serve` を抜けた時点で drop される
+        // ＝ flock が落ちる。そうなると次に来た `md` が座を取れてしまい、こちらの
+        // ソケットを unlink して自分のを bind する。listener は生きたまま名前を
+        // 失うので、**両方が自分を受け側だと思う**——flock を選んだ理由そのものが
+        // 消える。ここで分解して、ロックを明示的にスレッドへ持ち込む。
+        let Listening { _lock: lock, listener, ep, ino } = self;
+        let handle = Handle { socket: ep.socket.clone(), ino };
         std::thread::spawn(move || {
-            for stream in self.listener.incoming() {
+            // accept ループが終わらないので、ロックはプロセスが死ぬまで残る。
+            let _lock = lock;
+            for stream in listener.incoming() {
                 // Err でループを抜けない。抜けると窓は生きたまま受信できない幽霊になる。
                 let Ok(stream) = stream else { continue };
                 if let Some(msg) = read_request(stream) {
