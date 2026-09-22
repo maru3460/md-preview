@@ -400,6 +400,19 @@ mod tests {
     }
 
     #[test]
+    fn the_gate_takes_the_file_not_the_directory() {
+        // 転送（#31）は送り側と受け側が**同じ値を同じ門に通す**ことで成り立つ。
+        // ワイヤに載せるのはファイルで、消してよい親は門が返す。
+        let doc = spooled("42");
+        let dir = owned_stdin_dir(&doc).expect("ファイルなら通る");
+
+        // その返り値（ディレクトリ）をもう一度門へ入れると必ず弾かれる。門は親を
+        // 見るので $TMPDIR にぶつかるため。ここを取り違えると、受け側が引き取れず
+        // 転送したぶんの一時ファイルが黙って漏れる（実際に一度漏らした）。
+        assert_eq!(owned_stdin_dir(&dir), None, "ディレクトリを載せてはいけない");
+    }
+
+    #[test]
     fn plan_paths_opens_a_dir_without_initial_files() {
         let dir = std::env::temp_dir().join(format!("md-plan-dir-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

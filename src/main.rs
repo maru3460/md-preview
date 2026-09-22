@@ -178,13 +178,17 @@ fn message_to_forward(
     // stdin の一時ディレクトリは受け側が引き取る。**送り側は消さない**——消すと
     // 受け側が死んだパスを開くことになる。門を通らないものは載せない（＝誰も
     // 消さない。消し損ねる方が誤削除より安い）。
+    //
+    // ワイヤに載せるのは**実体化したファイルのパス**で、ディレクトリではない。
+    // 門（`owned_stdin_dir`）は「ファイルを受け取って、消してよい親を返す」形なので、
+    // ディレクトリを載せると受け側が同じ門を通したときに $TMPDIR の親を見ることに
+    // なり、必ず弾かれる。送り側と受け側が**同じ値を同じ門に通す**のが要件。
     if stdin_mode {
         if let Some(doc) = std::env::var_os(app_config::STDIN_FILE_ENV) {
             let doc = PathBuf::from(doc);
-            msg.own = app_config::owned_stdin_dir(&doc)
-                .map(|d| d.to_string_lossy().into_owned())
-                .into_iter()
-                .collect();
+            if app_config::owned_stdin_dir(&doc).is_some() {
+                msg.own = vec![doc.to_string_lossy().into_owned()];
+            }
         }
     }
     Some(msg)
@@ -651,8 +655,9 @@ fn main() {
             Event::UserEvent(AppEvent::Open(msg)) => {
                 // 掃除の約束はワイヤから来た値を信用せず、送り側と同じ門に通してから
                 // 引き取る（信用した時点で `own=/etc` が通る道ができる）。
-                for dir in &msg.own {
-                    if let Some(dir) = app_config::owned_stdin_dir(Path::new(dir)) {
+                // 載っているのは実体化したファイルのパスで、門が消してよい親を返す。
+                for doc in &msg.own {
+                    if let Some(dir) = app_config::owned_stdin_dir(Path::new(doc)) {
                         if !owned_dirs.contains(&dir) {
                             owned_dirs.push(dir);
                         }
