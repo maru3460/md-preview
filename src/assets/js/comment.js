@@ -130,7 +130,7 @@
       file: t.file || currentFile(),
       // どの表示で付けたか。n/p のジャンプで同じ見え方へ戻すのに使う（raw は 1 行
       // 単位、プレビューは段落単位なので、着地先が変わると指しているものも変わる）。
-      raw: isRawView(),
+      raw: t.raw !== undefined ? t.raw : isRawView(),
       startLine: t.startLine,
       endLine: t.endLine,
       quote: t.quote,
@@ -469,7 +469,28 @@
   }
 
   // ホットリロード後などに markers を貼り直す（配列は生きている）。
-  function reanchor() { redraw(); }
+  function reanchor() { redraw(); syncPopoverAway(); }
+
+  // 入力欄の的と、いま見えているファイルがズレている間だけ隅へ寄せる。
+  // 段落に寄り添った吹き出しのまま他人の本文の上に居ると、錨のふりを続けることに
+  // なって「何に書いているのか」が読めない。位置を CSS に返すため、寄るときは
+  // 開いた時に入れたインラインの座標を外す。
+  function syncPopoverAway() {
+    if (!popover) return;
+    var away = !!(popoverTarget && popoverTarget.file && popoverTarget.file !== currentFile());
+    if (away === popover.classList.contains('md-cmt-popover--away')) return;
+    popover.classList.toggle('md-cmt-popover--away', away);
+    if (away) {
+      popover.style.left = '';
+      popover.style.top = '';
+      return;
+    }
+    // 帰ってきた。本文は作り直されているので、同じ行のユニットへ錨を張り直す。
+    var u = popoverTarget && popoverTarget.startLine
+      ? unitAtLine(hostEl(), popoverTarget.startLine) : null;
+    if (u) popoverAnchor = u;
+    positionPopover(popover, popoverAnchor);
+  }
 
   // ── インライン埋め込み（モード中、アンカー直下に出す GitHub 風の表示） ──
   // ユニットの「兄弟」として直後に差し込む（子に入れるとユニット自身のレイアウトを
@@ -533,6 +554,7 @@
   var popoverPrevFocus = null;  // 開く前のフォーカス（閉じたら戻す）
 
   function closePopover() {
+    popoverTarget = null;
     if (!popover) return;
     popover.remove();
     popover = null;
@@ -545,12 +567,17 @@
     }
   }
 
+  // いま開いている入力欄が何に書いているか。裏のファイルが変わったことを見分けるのに
+  // 使う（`popoverAnchor` は DOM の錨で、こちらは file:line の的）。
+  var popoverTarget = null;
+
   function buildPopover(anchorEl, initialBody, onSave, target) {
     // closePopover が prevFocus を消すので、開く前のフォーカスを先に退避する。
     var prevFocus = document.activeElement;
     closePopover();
     popoverPrevFocus = prevFocus;
     popoverAnchor = anchorEl;
+    popoverTarget = target || null;
     var pop = document.createElement('div');
     pop.className = 'md-cmt-popover';
     pop.id = 'md-cmt-popover';   // MdCommon.isOverlayOpen が O(1) で存在を見るため
@@ -568,7 +595,18 @@
         ? MdCommon.idToDisplay(target.file) : target.file;
       var lines = target.endLine && target.endLine !== target.startLine
         ? target.startLine + '-' + target.endLine : target.startLine;
-      head.textContent = label + ':' + lines;
+      var where = document.createElement('span');
+      where.className = 'md-cmt-popover-where';
+      where.textContent = label + ':' + lines;
+      head.appendChild(where);
+      // 裏が別のファイルになっている間だけ出る帰り道。塞いで行かせないのではなく、
+      // 行ったうえで戻れる形にする（確認しに行くのはコメントを書く作業の一部）。
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'md-cmt-popover-back';
+      back.textContent = '↩ 戻る';
+      back.addEventListener('click', function() { if (popoverTarget) gotoComment(popoverTarget); });
+      head.appendChild(back);
       pop.appendChild(head);
     }
 
@@ -641,7 +679,7 @@
 
   function openNewPopover(target) {
     // 開いた時点のファイルを的に焼き付ける（上の addComment の Why not を参照）。
-    var t = Object.assign({}, target, { file: currentFile() });
+    var t = Object.assign({}, target, { file: currentFile(), raw: isRawView() });
     buildPopover(t.anchorEl, '', function(body) { addComment(t, body); }, t);
   }
   function openEditPopover(anchorEl, c) {

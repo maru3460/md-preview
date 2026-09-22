@@ -213,7 +213,7 @@ test('コメント入力欄は、何に書いているかを自分で出す', as
   await page.keyboard.press('c');
   await page.locator('#preview-pane [data-src-line]').first().click();
 
-  await expect(page.locator('.md-cmt-popover-target')).toHaveText(/^a\.md:\d/);
+  await expect(page.locator('.md-cmt-popover-where')).toHaveText(/^a\.md:\d/);
 
   // 保存先は出ている値そのもの。
   await page.locator('.md-cmt-textarea').fill('質問');
@@ -235,4 +235,39 @@ test('入力欄を閉じたあとの転送は、これまでどおり表示を�
   await expect(body(page)).toContainText('見出し B');
   // モードは残る（画面を覆わないので）。
   await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+});
+
+test('入力中に別のファイルへ移ると、入力欄は隅へ退いて帰り道を出す', async ({ page }) => {
+  // 移動は禁止しない。確認しに行くのはコメントを書く作業の一部なので、
+  // 段落に寄り添う吹き出しをやめて「別の場所に書きかけている紙」に見せ、
+  // そこから帰れるようにする。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+  await page.locator('.md-cmt-textarea').fill('ここ、b.md と食い違ってない？');
+  await expect(page.locator('.md-cmt-popover-back')).toBeHidden();
+
+  // 転送でも ⌘P でもツリーでも同じこと。ここはツリーで動く。
+  await treeItem(page, 'b.md').click();
+  await expect(body(page)).toContainText('見出し B');
+
+  // 隅へ退き、帰り道が出る。書きかけは残る。
+  await expect(page.locator('#md-cmt-popover')).toHaveClass(/md-cmt-popover--away/);
+  await expect(page.locator('.md-cmt-popover-back')).toBeVisible();
+  await expect(page.locator('.md-cmt-textarea')).toHaveValue('ここ、b.md と食い違ってない？');
+  await expect(page.locator('.md-cmt-popover-where')).toHaveText(/^a\.md:\d/);
+
+  // 帰り道を押すと対象のファイルへ戻り、吹き出しに戻る。
+  await page.locator('.md-cmt-popover-back').click();
+  await expect(body(page)).toContainText('見出し A');
+  await expect(page.locator('#md-cmt-popover')).not.toHaveClass(/md-cmt-popover--away/);
+  await expect(page.locator('.md-cmt-popover-back')).toBeHidden();
+  await expect(page.locator('.md-cmt-textarea')).toHaveValue('ここ、b.md と食い違ってない？');
+
+  // 保存先は最初から変わっていない。
+  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
+  await expect(page.locator('.md-cmt-side')).toContainText('a.md:');
+  await expect(page.locator('.md-cmt-side')).not.toContainText('b.md:');
 });
