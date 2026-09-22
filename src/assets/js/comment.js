@@ -120,10 +120,14 @@
   }
 
   // ── コメント CRUD ─────────────────────────────────────────────
+  // `t.file` は**入力欄を開いた時点**のファイル。保存した瞬間の `currentFile()` を
+  // 使ってはいけない。入力欄は本文の差し替えを生き延びるので（転送・⌘P）、
+  // 保存時に引くと**前のファイルの行番号で、いま開いているファイルに**コメントが付く。
+  // ⌘P はオーバーレイのゲートを持たないので、転送が無くても踏める道だった。
   function addComment(t, body) {
     comments.push({
       id: nextId++,
-      file: currentFile(),
+      file: t.file || currentFile(),
       // どの表示で付けたか。n/p のジャンプで同じ見え方へ戻すのに使う（raw は 1 行
       // 単位、プレビューは段落単位なので、着地先が変わると指しているものも変わる）。
       raw: isRawView(),
@@ -608,6 +612,9 @@
 
   // アンカー要素の近く（右上寄り）に置き、画面端ではフリップして収める。
   function positionPopover(pop, anchorEl) {
+    // 本文が差し替わると錨は DOM から外れる（転送・⌘P で入力欄だけが残る）。
+    // 外れた要素の矩形は全部 0 なので、測り直すと入力欄が左上へ飛ぶ。置いたままにする。
+    if (anchorEl && !anchorEl.isConnected && pop.style.left) return;
     var rect = anchorEl ? anchorEl.getBoundingClientRect() : { left: 40, top: 40, right: 40, bottom: 60 };
     var pw = pop.offsetWidth, ph = pop.offsetHeight;
     var x = rect.left;
@@ -619,7 +626,9 @@
   }
 
   function openNewPopover(target) {
-    buildPopover(target.anchorEl, '', function(body) { addComment(target, body); });
+    // 開いた時点のファイルを的に焼き付ける（上の addComment の Why not を参照）。
+    var t = Object.assign({}, target, { file: currentFile() });
+    buildPopover(t.anchorEl, '', function(body) { addComment(t, body); });
   }
   function openEditPopover(anchorEl, c) {
     buildPopover(anchorEl, c.body, function(body) { updateComment(c.id, body); });
@@ -1269,7 +1278,10 @@
         id: 'md-cmt-popover',
         isOpen: function() { return !!popover; },
         close: closePopover,
-        priority: 50
+        priority: 50,
+        // 書きかけを転送で捨てない。付ける先は開いた時点で焼き付けてあるので、
+        // 裏でファイルが変わっても保存先はずれない（addComment の Why not）。
+        keepOnOpen: true
       });
       MdCommon.registerOverlay({
         id: 'md-cmt-mode',

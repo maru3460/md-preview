@@ -121,33 +121,37 @@ test('root の外のファイルも転送でタブに乗り、監視を頼む', 
   expect(watched).toContain('watch:' + out);
 });
 
-test('⌘P を開いたまま転送されると、パレットは畳まれて本文だけが変わる', async ({ page }) => {
+test('⌘P の検索は転送で畳まれず、入力も残る', async ({ page }) => {
+  // 転送はこちらから叩いた結果なのに、検索の途中を巻き添えにする理由が無い。
+  // 一覧は root のファイル一覧なので、裏のファイルが変わっても中身は有効なまま。
   await openFolder(page);
   await openFile(page, 'a.md');
   await page.keyboard.press('Meta+p');
   await expect(page.locator('#md-pal-backdrop')).toBeVisible();
+  await page.locator('#md-pal-backdrop input').fill('long');
 
   await forward(page, [page.mdRoot + '/long.md']);
 
-  await expect(page.locator('#md-pal-backdrop')).toHaveCount(0);
+  await expect(page.locator('#md-pal-backdrop')).toBeVisible();
+  await expect(page.locator('#md-pal-backdrop input')).toHaveValue('long');
   await expect(body(page)).toContainText('長い見出し');
-  // 掃いてから開く順序の固定。逆にすると focusPreview が入力欄に譲って、
-  // 本文は変わったのに j/k が効かない窓になる。
-  await expect
-    .poll(() => page.evaluate(() => document.activeElement && document.activeElement.id))
-    .toBe('preview-pane');
 });
 
-test('ヘルプを開いたまま転送されると畳まれる', async ({ page }) => {
+test('ヘルプを開いたまま転送されると畳まれ、フォーカスが本文へ戻る', async ({ page }) => {
+  // 畳むものがあるときの順序の固定。掃きが後だと focusPreview が入力欄に譲って、
+  // 本文は変わったのに j/k が効かない窓になる。
   await openFolder(page);
   await openFile(page, 'a.md');
   await page.keyboard.press('?');
   await expect(page.locator('#md-help-backdrop')).toBeVisible();
 
-  await forward(page, [page.mdRoot + '/b.md']);
+  await forward(page, [page.mdRoot + '/long.md']);
 
   await expect(page.locator('#md-help-backdrop')).toHaveCount(0);
-  await expect(body(page)).toContainText('見出し B');
+  await expect(body(page)).toContainText('長い見出し');
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement && document.activeElement.id))
+    .toBe('preview-pane');
 });
 
 test('右クリックメニューを開いたまま転送されると畳まれる', async ({ page }) => {
@@ -177,7 +181,7 @@ test('検索バーは転送で畳まれる（掃きと loadPreview の二重で�
   await expect(page.locator('#md-search-bar')).toHaveClass(/hidden/);
 });
 
-test('コメントモードは転送で解除されず、入力中のポップオーバーだけが閉じる', async ({ page }) => {
+test('コメントの書きかけは転送で消えず、保存先も開いた時点のファイルのまま', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');
   await page.keyboard.press('c');
@@ -188,9 +192,16 @@ test('コメントモードは転送で解除されず、入力中のポップ�
 
   await forward(page, [page.mdRoot + '/b.md']);
 
-  await expect(page.locator('#md-cmt-popover')).toHaveCount(0);
-  // 画面を覆わない「モード」は残す。ツリークリックでも ⌘P でも解除されないのに
-  // 転送だけ解除すると、入口ごとに挙動が割れる。
+  // 書きかけも、画面を覆わない「モード」も残る。
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+  await expect(page.locator('.md-cmt-textarea')).toHaveValue('書きかけ');
   await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
   await expect(body(page)).toContainText('見出し B');
+
+  // 付ける先は**開いた時点**の a.md。保存した瞬間の currentFile() を引くと、
+  // a.md の行番号で b.md にコメントが付く（⌘P にはオーバーレイのゲートが無いので、
+  // 転送が無くても踏める道だった）。
+  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
+  await expect(page.locator('.md-cmt-side')).toContainText('a.md:');
+  await expect(page.locator('.md-cmt-side')).not.toContainText('b.md:');
 });

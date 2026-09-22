@@ -502,7 +502,10 @@
           id: 'md-pal-backdrop',
           isOpen: function() { return !!overlay; },
           close: close,
-          priority: 30
+          priority: 30,
+          // 検索の途中を転送で捨てない。一覧は root のファイル一覧で、
+          // 裏のファイルが変わっても中身は有効なまま。
+          keepOnOpen: true
         });
       }
       // パレット内の ⌃p（Emacs 流の上移動）は input 側で処理済み。keymap の
