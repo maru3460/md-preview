@@ -1,6 +1,18 @@
 (function() {
   // 現在プレビュー中のファイルの識別子（絶対パス）。何も開いていなければ null。
   var currentFilePath = null;
+  // 本文フェッチの世代。loadPreview と clearPreview が進め、応答が届いた側は
+  // 自分の番号と突き合わせてから本文を差し替える（viewmode.js の reqSeq と同じ形）。
+  //
+  // Why not `id !== currentFilePath` で判定する: 同じファイルを素早く 2 回開くと
+  // どちらの応答も一致してしまい、古い方が新しい読み位置の復元を上書きする。
+  // Why not MdCommon.bodyGen() を流用する: あれは hydrate の中で増える事後の
+  // カウンタなので、先に着地した古い応答が世代を進めて新しい応答の方が捨てられる。
+  var reqSeq = 0;
+  // いまペインに入っている本文のファイル。`currentFilePath` は**フェッチを投げた時点**で
+  // 切り替わるので、応答が着地するまでの間は 2 つがずれる。読み位置の錨はペインの中身を
+  // 測るものなので、このずれている間に錨を読むと「前のファイルの位置」を掴む。
+  var bodyPath = null;
   // ポンプを回してよいかのゲート。初期描画中は ?dir= / ?file= に帯域を譲る。
   var initialRenderDone = false;
   // 未送信の {path, row}。サーバに走査を止める手段が無いので、こちら側にできるのは
@@ -269,6 +281,10 @@
   function clearPreview() {
     var pane = document.getElementById('preview-pane');
     currentFilePath = null;
+    bodyPath = null;
+    // 進行中の本文フェッチを無効にする。これが無いと「すべてのタブを閉じる」の
+    // 直後に届いた応答が、空にしたはずのペインへ前のファイルを戻す。
+    reqSeq++;
     if (pane) {
       var article = document.createElement('div');
       article.className = 'markdown-body';
@@ -337,14 +353,20 @@
     // ここで読むと全ユニットの実測が丸ごと無駄になる（ホットリロードの度に走る）。
     var anchor = preserveScroll ? MdCommon.readAnchor() : null;
 
+    var myReq = ++reqSeq;
     fetch('/?file=' + encodeURIComponent(id), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
+        // 応答が届くまでに別のファイルへ移っていた／本文を空にしていたら捨てる。
+        // モードの ON は loadPreview を通らず reqSeq を進めないので、別に見る。
+        if (myReq !== reqSeq) return;
+        if (window.MdViewModes && MdViewModes.active()) return;
         // 非200(html==null)は握りつぶさず理由を表示する。サーバは id_to_path が
         // 解決できない時（消えたファイル・権限）に not_found を返すので、
         // 黙って無反応にならないようメッセージを出す。
         if (html == null) { showLoadError(pane, id); return; }
         pane.innerHTML = html;
+        bodyPath = id;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
         // （実際に戻すのは中身の load 後、common.js の bindFrame）。錨が効く md では
         // この代入は下の restoreAnchor が上書きする（錨れなかった時の受け皿）。
@@ -358,7 +380,14 @@
         // （タブへ戻る経路。同じ表示なので丸めずに exact へ戻せる）。
         if (!MdCommon.restoreAnchor(anchor)) MdCommon.holdScroll(savedScroll);
       })
-      .catch(function() { showLoadError(pane, id); });
+      // then と同じ 2 つを見る。モードの ON は reqSeq を進めないので、世代だけ見ると
+      // 「raw は出ているのに本文だけエラー表示」という食い違った画面になる。
+      // （`viewmode.js` の catch は世代しか見ていない。倣った先の方がずれている）
+      .catch(function() {
+        if (myReq !== reqSeq) return;
+        if (window.MdViewModes && MdViewModes.active()) return;
+        showLoadError(pane, id);
+      });
   }
 
   // ファイル監視（main.rs）から呼ばれる唯一の入口。引数は変更されたファイルの識別子。
@@ -368,6 +397,11 @@
     // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
     var mode = window.MdViewModes && window.MdViewModes.active();
     if (mode) { mode.refresh(); return; }
+    // ペインの中身がまだ前のファイルなら、ここで再読込してはいけない。
+    // preserveScroll の経路は「いま見えている位置」を錨として持ち回るので、中身が
+    // 追いついていないと**前のファイルの読み位置に新しいファイルを着地させる**。
+    // 飛ばしたぶんは、進行中のフェッチが持ってくるか、次の保存で拾う。
+    if (bodyPath !== currentFilePath) return;
     loadPreview(currentFilePath, true);
   };
 
