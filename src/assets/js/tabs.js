@@ -98,15 +98,36 @@
     render();
   }
 
-  // 起動時（`md a.md b.md`）に複数のタブを並べる。フェッチするのは最初の 1 枚だけで、
-  // 残りはタブに載せるだけ（開いた時に取りに行く）。起動を N ファイルぶん遅らせない。
-  function openInitial(paths) {
+  // 複数のファイルをまとめてタブに並べる。起動時（`md a.md b.md`）と、既存の窓への
+  // 転送（#31）の共通の入口。フェッチするのは先頭の 1 枚だけで、残りはタブに載せる
+  // だけ（開いた時に取りに行く）。N ファイルぶん待たせない。
+  //
+  // 挿入位置は onOpen と同じ「現在タブの右隣」。起動時は tabs が空なので末尾追加と
+  // 同じ結果になり、2 つの規則を持つ理由が無い。
+  function openMany(paths) {
     if (!paths || !paths.length) return;
-    paths.forEach(function(p) {
-      if (p && indexOf(p) === -1) tabs.push({ path: p, scroll: 0, mode: null });
-    });
-    if (!tabs.length) return;
-    activeIdx = 0;
+    var inherited = currentMode();
+    saveActiveState();
+    var first = null;
+    var at = activeIdx + 1;
+    for (var i = 0; i < paths.length; i++) {
+      var p = paths[i];
+      if (!p) continue;
+      if (!first) first = p;
+      var found = indexOf(p);
+      if (found !== -1) {
+        // 既に開いているタブは動かさない（並べ替えると読んでいたタブが勝手に動く）。
+        // ただし挿し先はそこまで進める。進めないと、渡した並びの後ろが既存タブより
+        // 左に取り残されて「[a, c, b] を渡したのに b を表示」のような形になる。
+        at = found + 1;
+        continue;
+      }
+      tabs.splice(at, 0, { path: p, scroll: 0, mode: inherited });
+      at++;
+    }
+    if (!first) return;
+    // 添え字は全部挿し終わってから引き直す。先に控えると、後ろの splice でずれる。
+    activeIdx = indexOf(first);
     show();
   }
 
@@ -277,7 +298,7 @@
       }
     },
     onOpen: onOpen,
-    openInitial: openInitial,
+    openMany: openMany,
     scrollFor: scrollFor,
     closeByPath: function(path) { closeAt(indexOf(path)); },
     closeOthers: closeOthers,

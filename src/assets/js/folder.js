@@ -739,7 +739,7 @@
         // 起動時に開くファイル（`md a.md b.md` なら 2 枚のタブ。先頭が最初に見える）。
         var initial = (typeof INITIAL_FILES !== 'undefined' && INITIAL_FILES) || [];
         if (initial.length && window.MdTabs) {
-          window.MdTabs.openInitial(initial); // 内部で loadPreview → focusPreview 済み
+          window.MdTabs.openMany(initial); // 内部で loadPreview → focusPreview 済み
         } else if (initial.length) {
           loadPreview(initial[0]); // 内部で focusPreview 済み
         } else {
