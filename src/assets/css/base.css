@@ -1769,7 +1769,7 @@ body.md-cmt-mode .source-main .copy-btn {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 11px;
     line-height: 1.4;
     color: color-mix(in srgb, CanvasText 55%, Canvas);
@@ -1788,7 +1788,7 @@ body.md-cmt-mode .source-main .copy-btn {
     padding: 0;
     border: 0;
     background: none;
-    color: var(--accent, #0969da);
+    color: var(--md-accent);
     text-decoration: underline;
     cursor: pointer;
 }

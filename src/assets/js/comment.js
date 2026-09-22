@@ -471,25 +471,31 @@
   // ホットリロード後などに markers を貼り直す（配列は生きている）。
   function reanchor() { redraw(); syncPopoverAway(); }
 
-  // 入力欄の的と、いま見えているファイルがズレている間だけ隅へ寄せる。
-  // 段落に寄り添った吹き出しのまま他人の本文の上に居ると、錨のふりを続けることに
-  // なって「何に書いているのか」が読めない。位置を CSS に返すため、寄るときは
-  // 開いた時に入れたインラインの座標を外す。
+  // 入力欄の的と、いま見えているファイルがズレている間だけ隅へ寄せる。段落に寄り添った
+  // 吹き出しのまま他人の本文の上に居ると、錨のふりを続けることになって「何に書いて
+  // いるのか」が読めない。
+  //
+  // **状態が変わったときだけ、にしない。** 同じファイルのまま本文が作り直される経路
+  // （ホットリロード・⌘R の往復）でも錨は外れるので、毎回引き直さないと入力欄が
+  // 画面に貼り付いたまま段落に付いてこなくなる。すぐ隣の `redraw` が同じ状況で
+  // `kbCursor` を引き直しているのと揃える。
+  //
+  // 寄るときにインラインの座標は消さない。away の CSS は `!important` で勝つので
+  // 消す必要が無いし、消すと「帰ってきたが錨が見つからない」ときに置き場所を失って
+  // 左上へ飛ぶ。
   function syncPopoverAway() {
     if (!popover) return;
     var away = !!(popoverTarget && popoverTarget.file && popoverTarget.file !== currentFile());
-    if (away === popover.classList.contains('md-cmt-popover--away')) return;
     popover.classList.toggle('md-cmt-popover--away', away);
-    if (away) {
-      popover.style.left = '';
-      popover.style.top = '';
-      return;
-    }
-    // 帰ってきた。本文は作り直されているので、同じ行のユニットへ錨を張り直す。
+    if (away) return;
+    // 同じファイルに居る。本文は作り直されているので、同じ行のユニットへ錨を張り直す。
     var u = popoverTarget && popoverTarget.startLine
       ? unitAtLine(hostEl(), popoverTarget.startLine) : null;
-    if (u) popoverAnchor = u;
-    positionPopover(popover, popoverAnchor);
+    // 見つからないなら位置を触らない。外れた要素の矩形は全部 0 なので、測り直すと
+    // 入力欄が左上へ飛ぶ（退避中に対象の行が消えた・巨大ソースで行ユニットが無い）。
+    if (!u) return;
+    popoverAnchor = u;
+    positionPopover(popover, u);
   }
 
   // ── インライン埋め込み（モード中、アンカー直下に出す GitHub 風の表示） ──
@@ -1400,10 +1406,14 @@
 
   window.MdComment = {
     init: init,
-    reanchor: reanchor,   // ホットリロード後に呼ぶ
+    // 本文が差し替わるたびに `MdCommon.hydrate` から呼ばれる（ホットリロードだけでは
+    // ない）。マーカーの貼り直しに加えて、入力欄が的のファイルから離れたかどうかも
+    // ここで見るので、**ファイル切替で呼ばれることが機能の前提**になっている。
+    reanchor: reanchor,
     toggle: toggleMode,   // 右クリックメニュー等から
     open: function() { setMode(true); },
-    // MdCommon.isOverlayOpen が参照する（ポップオーバー表示中かどうか）。
+    // 転送（`folder.js` の `MdOpenFiles`）が「書いている最中か」を見るのに使う。
+    // 書いている間は表示を奪わず、タブに載せるだけにする。
     isPopoverOpen: function() { return !!popover; },
     // keymap.js の when が参照する。isMode は一覧の巡回キー（n / p / e / x / y）用で、
     // 錨れない表示でも効かせたいのでモードの有無だけを見る。canAnchor は

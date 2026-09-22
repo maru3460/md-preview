@@ -290,3 +290,143 @@ test('パイプで受けた同名タブに、一時ディレクトリの名前�
   await expect(tabNames(page)).toHaveText(['stdin.md', 'stdin.md']);
   await expect(page.locator('.md-tab-dir')).toHaveCount(0);
 });
+
+test('退避したまま保存しても、付く先は入力欄を開いたファイル', async ({ page }) => {
+  // 保存先は開いた時点で焼き付けてある。`↩ 戻る` で帰ってから保存すると
+  // `currentFile()` と一致してしまい、焼き付けを外しても通ってしまうので、
+  // **退避したまま**保存して測る。⌘P にはオーバーレイのゲートが無いので、
+  // 転送が無くてもこの道は踏める。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await page.locator('.md-cmt-textarea').fill('別ファイルから保存');
+
+  await treeItem(page, 'b.md').click();
+  await expect(body(page)).toContainText('見出し B');
+  await expect(page.locator('#md-cmt-popover')).toHaveClass(/md-cmt-popover--away/);
+
+  await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
+
+  await expect(page.locator('.md-cmt-side')).toContainText('a.md:');
+  await expect(page.locator('.md-cmt-side')).not.toContainText('b.md:');
+});
+
+test('既存タブが現在タブより左にあっても、表示中のタブを見失わない', async ({ page }) => {
+  // keepView は「いま見ているものを動かさない」。挿し先は既存タブに当たるとそこまで
+  // 進むので、**現在タブより左で splice が起きうる**。添え字のままだと別のタブを
+  // active だと思い込み、本文は前のファイルという分裂状態になる。そのあとタブを
+  // 操作すると、見ていないタブへ読み位置が書き込まれる。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+  await openFile(page, 'long.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+
+  // a.md は既存（いちばん左）。notes.txt はその右隣へ挿さる。
+  await forward(page, [page.mdRoot + '/a.md', page.mdRoot + '/notes.txt']);
+
+  await expect(tabNames(page)).toHaveText(['a.md', 'notes.txt', 'b.md', 'long.md']);
+  expect(await activePath(page)).toBe('long.md');
+  await expect(body(page)).toContainText('長い見出し');
+});
+
+test('帰った先で錨が見つからなくても、入力欄が左上へ飛ばない', async ({ page }) => {
+  // 退避している間に対象のファイルが読めなくなることがある（消された・権限）。
+  // 帰ると本文はエラー表示になり、行のユニットが 1 つも無い。外れた錨のまま位置を
+  // 測り直すと矩形が全部 0 になって、入力欄が左上へ行く。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await page.locator('.md-cmt-textarea').fill('書きかけ');
+
+  await treeItem(page, 'b.md').click();
+  await expect(page.locator('#md-cmt-popover')).toHaveClass(/md-cmt-popover--away/);
+
+  // 帰る先の本文から行のユニットを消す。200 で返すのは、**差し替え自体は起こさせて
+  // 「帰ってきた」判定を走らせる**ため（エラー表示は hydrate を通らないので判定ごと
+  // 飛んでしまい、測りたいものが測れない）。
+  await page.route(
+    (url) => url.searchParams.get('file') && /a\.md$/.test(url.searchParams.get('file')),
+    (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: '<div class="markdown-body"><p>行のユニットが無い本文</p></div>',
+    })
+  );
+  await page.locator('.md-cmt-popover-back').click();
+  await expect(body(page)).toContainText('行のユニットが無い本文');
+
+  // 退避は解ける。錨が見つからないので位置は据え置き——左端へは行かない。
+  await expect(page.locator('#md-cmt-popover')).not.toHaveClass(/md-cmt-popover--away/);
+  const box = await page.locator('#md-cmt-popover').boundingBox();
+  expect(box.x).toBeGreaterThan(100);
+  await expect(page.locator('.md-cmt-textarea')).toHaveValue('書きかけ');
+});
+
+test('タブが 1 枚も無いときの転送は、入力中でも表示する', async ({ page }) => {
+  // keepView は「いま見ているものを動かさない」。0 枚のときは守るものが無いので、
+  // タブ帯にだけ並んで本文が空、という見えない状態を作らない。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+
+  // 「すべてのタブを閉じる」は入力欄を閉じない。
+  await tab(page, 'a.md').click({ button: 'right' });
+  await page.locator('.md-context-menu-item', { hasText: 'すべてのタブを閉じる' }).click();
+  await expect(page.locator('.md-tab')).toHaveCount(0);
+
+  await forward(page, [page.mdRoot + '/b.md']);
+
+  await expect(page.locator('.md-tab')).toHaveCount(1);
+  await expect(page.locator('.md-tab.active')).toHaveCount(1);
+  await expect(body(page)).toContainText('見出し B');
+});
+
+test('退避中に入力しても、入力欄が隅から動かない', async ({ page }) => {
+  // 入力のたびに自動で背を伸ばして位置を測り直す。錨は前の本文の要素なので DOM から
+  // 外れていて、測り直すと矩形が全部 0 になり左上へ飛ぶ。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await treeItem(page, 'b.md').click();
+  await expect(page.locator('#md-cmt-popover')).toHaveClass(/md-cmt-popover--away/);
+
+  const before = await page.locator('#md-cmt-popover').boundingBox();
+  await page.locator('.md-cmt-textarea').fill('一行目\n二行目\n三行目\n四行目');
+  const after = await page.locator('#md-cmt-popover').boundingBox();
+
+  // 背は伸びるが、右下に居続ける（左端へは行かない）。
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.x).toBeGreaterThan(200);
+});
+
+test('開けなかったファイルも、ホットリロードで取り直せる', async ({ page }) => {
+  // 本文が届いた記録（bodyPath）を失敗経路で更新しないと、そのファイルの再読込が
+  // 永久にガードで弾かれる。エディタの atomic save の直後に開くと 404 を踏むので、
+  // 一度でも失敗したら二度と直らない、になっていた。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+
+  let fail = true;
+  await page.route(
+    (url) => url.searchParams.get('file') && /b\.md$/.test(url.searchParams.get('file')),
+    async (route) => {
+      if (fail) { fail = false; await route.fulfill({ status: 500, body: '' }); return; }
+      await route.continue();
+    }
+  );
+
+  await treeItem(page, 'b.md').click();
+  await expect(body(page)).toContainText('開けませんでした');
+
+  const id = page.mdRoot + '/b.md';
+  await page.evaluate((v) => window.MdReload(v), id);
+  await expect(body(page)).toContainText('見出し B');
+});

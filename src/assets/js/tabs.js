@@ -5,9 +5,14 @@
 // 既存の構造をそのまま活かせるのが理由で、hljs / mermaid / drawio の再実行が
 // 体感で重くなるようなら「タブごとに DOM を保持して display 切替」へ寄せる。
 //
-// 入口は folder.js の loadPreview() 1 本。ツリークリック / [ ] 巡回 / ⌘P /
+// 画面からの入口は folder.js の loadPreview() 1 本。ツリークリック / [ ] 巡回 / ⌘P /
 // 本文リンク / iframe 内リンク / コメントのジャンプ は全部そこを通るので、
 // onOpen() のフックだけで「開いたものは必ずタブに乗る」が成り立つ。
+//
+// もう 1 本、openMany() が外からの入口としてある（起動時の INITIAL_FILES と、#31 の
+// 転送）。こちらは先頭しかフェッチしないので、2 枚目以降は onOpen を通らず直接
+// tabs へ挿す。「開いたものは必ずタブに乗る」は成り立つが、逆（タブに乗ったものは
+// 必ず loadPreview を通った）は成り立たない。
 //
 // タブの識別子は loadPreview に渡るパスそのもの（常に絶対パス）。stdin をパイプで
 // 渡したときの一時ファイルも、root の外にあるだけで同じ形でここに乗る。
@@ -116,13 +121,19 @@
   // 挿入位置は onOpen と同じ「現在タブの右隣」。起動時は tabs が空なので末尾追加と
   // 同じ結果になり、2 つの規則を持つ理由が無い。
   //
-  // `opts.keepView` は「タブには載せるが、いま見ているものは動かさない」。コメントの
+  // `how.keepView` は「タブには載せるが、いま見ているものは動かさない」。コメントの
   // 入力中に転送が来たときに使う——書いている対象が目の前から消えると、何に書いて
   // いるのか分からなくなる。届いたファイルは失われず、タブバーに出るので着いたことも
   // 見える。
-  function openMany(paths, opts2) {
+  //
+  // 引数名を `opts` にしないのは、このモジュールが `{ openFile, clearFile }` を
+  // 同じ名前でモジュールスコープに持っているため。
+  function openMany(paths, how) {
     if (!paths || !paths.length) return;
-    var keepView = !!(opts2 && opts2.keepView);
+    var keepView = !!(how && how.keepView);
+    // 見ているタブはパスで覚える。添え字は下の splice でずれる——既存タブに当たると
+    // 挿し先が現在タブより左へ戻りうるので、「挿し先は現在タブより右」は成り立たない。
+    var stay = tabs[activeIdx] ? tabs[activeIdx].path : null;
     var inherited = currentMode();
     saveActiveState();
     var first = null;
@@ -143,8 +154,13 @@
       at++;
     }
     if (!first) return;
-    if (keepView) {
-      // タブが増えただけ。activeIdx は挿し先より手前なのでずれない。
+    // タブが 1 枚も無いところで keepView を守るものは無い（守る「いま見ているもの」が
+    // 存在しない）。タブ帯にだけ並んで本文が空のまま、という見えない状態を作らない。
+    if (keepView && stay !== null) {
+      // 添え字はパスから引き直す。splice が現在タブより左で起きていると、そのままでは
+      // 別のタブを指したまま「本文は前のファイル」という分裂状態になり、次のタブ操作が
+      // 見ていないタブへ読み位置を書き込む。
+      activeIdx = indexOf(stay);
       render();
       return;
     }

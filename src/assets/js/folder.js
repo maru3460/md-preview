@@ -364,7 +364,10 @@
         // 非200(html==null)は握りつぶさず理由を表示する。サーバは id_to_path が
         // 解決できない時（消えたファイル・権限）に not_found を返すので、
         // 黙って無反応にならないようメッセージを出す。
-        if (html == null) { showLoadError(pane, id); return; }
+        // 失敗の表示もそのファイルのもの。`bodyPath` を前のファイルのまま残すと、
+        // 下の `MdReload` のガードがこのファイルの再読込を**永久に**弾く（エディタの
+        // atomic save の直後に開くと 404 を踏むので、その後 1 度も直らなくなる）。
+        if (html == null) { bodyPath = id; showLoadError(pane, id); return; }
         pane.innerHTML = html;
         bodyPath = id;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
@@ -386,6 +389,7 @@
       .catch(function() {
         if (myReq !== reqSeq) return;
         if (window.MdViewModes && MdViewModes.active()) return;
+        bodyPath = id;
         showLoadError(pane, id);
       });
   }
@@ -426,12 +430,16 @@
     // 対象が目の前から消えると何に書いているのか分からなくなるし、転送は止められない
     // （外から来る）ので、受ける側で譲るしかない。届いたことはタブとトーストで見える。
     if (window.MdComment && MdComment.isPopoverOpen && MdComment.isPopoverOpen()) {
+      var before = MdTabs.count();
       MdTabs.openMany(ids, { keepView: true });
-      if (window.MdCommon && MdCommon.toast) {
-        var n = ids.length;
+      var added = MdTabs.count() - before;
+      // 増えていないのに「追加しました」とは言わない（同じファイルを 2 回転送すると
+      // 起きる）。表示を奪っていないぶん、トーストだけが届いた証拠になるので、
+      // そこで嘘をつくと何が起きたか分からなくなる。
+      if (added > 0 && window.MdCommon && MdCommon.toast) {
         var name = MdCommon.idToDisplay ? MdCommon.idToDisplay(ids[0]) : ids[0];
-        MdCommon.toast(n > 1 ? name + ' ほか ' + (n - 1) + ' 件をタブに追加しました'
-                             : name + ' をタブに追加しました');
+        MdCommon.toast(added > 1 ? name + ' ほか ' + (added - 1) + ' 件をタブに追加しました'
+                                 : name + ' をタブに追加しました');
       }
       return;
     }
