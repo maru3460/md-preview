@@ -3,6 +3,11 @@ name = "md-preview"
 version = "0.1.20"
 edition = "2021"
 license = "MIT"
+# 単一インスタンス化（#31）が std の File::try_lock（= flock）を使う。安定したのが
+# 1.89 なので、古い toolchain では「そんなメソッドは無い」ではなくここで止める。
+# これを足したのは依存を 1 つも増やさないため（flock のためだけに libc を直接
+# 依存へ入れるのは割に合わない）。
+rust-version = "1.89"
 
 [[bin]]
 name = "md"

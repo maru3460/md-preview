@@ -10,6 +10,7 @@ pub mod cli;
 pub mod diff;
 pub mod embed;
 pub mod html;
+pub mod instance;
 pub mod request;
 pub mod theme;
 pub mod uninstall;

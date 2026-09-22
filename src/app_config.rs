@@ -29,8 +29,12 @@ pub struct AppConfig {
     pub title: String,
     pub html_bytes: Vec<u8>,
     pub root_dir: PathBuf,
-    /// stdin を実体化した一時ディレクトリ。ウィンドウを閉じるときに消す。
+    /// stdin を実体化した一時ディレクトリ。**プロセスが終わるときに消す**
+    /// （表示中はドキュメントそのものなので、読んだ直後には消せない）。
     /// stdin 以外では None。
+    ///
+    /// これは「自分が掘ったぶん」だけ。転送（#31）で他のプロセスから所有権を
+    /// 引き取ったぶんと合流して、`main.rs` の `owned_dirs` がまとめて面倒を見る。
     pub stdin_dir: Option<PathBuf>,
 }
 
@@ -90,7 +94,7 @@ impl AppConfig {
         let root = stdin_root(&doc, current_dir);
         let id = file_id(&doc);
         let mut config = Self::folder(root, theme_css, custom_css, &[id]);
-        config.stdin_dir = stdin_dir_to_clean(&doc);
+        config.stdin_dir = owned_stdin_dir(&doc);
         config
     }
 
@@ -220,12 +224,16 @@ fn stdin_root(doc: &Path, current_dir: &Option<PathBuf>) -> PathBuf {
     cwd
 }
 
-/// ウィンドウを閉じるときに消してよい一時ディレクトリ。
+/// プロセスが終わるときに消してよい一時ディレクトリ。
 ///
 /// `STDIN_FILE_ENV` は環境変数なので、外から任意の場所を指せる。`doc` の親を
 /// 無条件に消すと `MD_STDIN_FILE=/etc/hosts` で `/etc` が飛ぶので、
 /// 自分が掘る形（`$TMPDIR/md-stdin-<pid>/`）に一致するものだけを対象にする。
-fn stdin_dir_to_clean(doc: &Path) -> Option<PathBuf> {
+///
+/// 転送（#31）で受け側が所有権を引き取るときも**この同じ門を通す**。ワイヤから来た
+/// 値を信用して消すと、同じ穴が env から socket へ移るだけになる。
+/// 送り側も、門を通らないものは `own=` に載せない（消し損ねる方が誤削除より安い）。
+pub fn owned_stdin_dir(doc: &Path) -> Option<PathBuf> {
     let dir = doc.parent()?;
     if !dir.file_name()?.to_str()?.starts_with(STDIN_DIR_PREFIX) {
         return None;
@@ -364,7 +372,7 @@ mod tests {
         // 往復で確かめる。
         let doc = write_spool("# x\n");
         assert!(doc.is_file(), "書き出せていない: {}", doc.display());
-        let dir = stdin_dir_to_clean(&doc);
+        let dir = owned_stdin_dir(&doc);
         assert_eq!(dir.as_deref(), doc.parent(), "自分が掘った場所を片付け対象にできていない");
         let _ = std::fs::remove_dir_all(dir.unwrap());
     }
@@ -383,12 +391,12 @@ mod tests {
     fn only_our_own_spool_dir_is_ever_deleted() {
         // MD_STDIN_FILE は環境変数なので外から任意の場所を指せる。自分が掘る形
         // （$TMPDIR/md-stdin-*/）以外を片付け対象にすると、その親ごと消してしまう。
-        assert!(stdin_dir_to_clean(&spooled("42")).is_some());
+        assert!(owned_stdin_dir(&spooled("42")).is_some());
         // $TMPDIR 直下のファイル → $TMPDIR そのものを消してはいけない。
-        assert_eq!(stdin_dir_to_clean(&canonical(std::env::temp_dir()).join("stdin.md")), None);
+        assert_eq!(owned_stdin_dir(&canonical(std::env::temp_dir()).join("stdin.md")), None);
         // 名前が違う / 場所が $TMPDIR の下でない。
-        assert_eq!(stdin_dir_to_clean(&canonical(std::env::temp_dir()).join("other/stdin.md")), None);
-        assert_eq!(stdin_dir_to_clean(Path::new("/etc/hosts")), None);
+        assert_eq!(owned_stdin_dir(&canonical(std::env::temp_dir()).join("other/stdin.md")), None);
+        assert_eq!(owned_stdin_dir(Path::new("/etc/hosts")), None);
     }
 
     #[test]

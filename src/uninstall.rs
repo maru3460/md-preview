@@ -86,7 +86,13 @@ pub fn plan(home: &Path, exe_name: &str) -> Vec<Target> {
         }
     };
 
-    push(config, "テーマ設定・ユーザー CSS・IME 用のバンドル");
+    // `$TMPDIR` に置く転送用のソケット（`instance.rs`）はここに入れない。あれは
+    // 「残骸は異常ではなく通常状態。次の起動の listen() が無条件に貼り直す」という
+    // 設計で、置き場所も OS が掃除する `$TMPDIR` だから、掃除対象に足すとその設計と
+    // 食い違う。**足りていないのではなく、足さないと決めてある。**
+    // （`$TMPDIR` が無い環境のフォールバックだけは `config` の下に落ちるので、
+    //   下のラベルに含めてある）
+    push(config, "テーマ設定・ユーザー CSS・IME 用のバンドル・転送用ソケット");
     if ours {
         push(webkit, "UI の状態（オンボーディング済みフラグなど）");
         push(caches, "WebKit のキャッシュ");

@@ -1,5 +1,6 @@
-//! ウィンドウを開く経路だけを持つ。引数の振り分け・自己デタッチ・WebView の配線・
-//! イベントループ・ファイル監視・右クリックメニューの IPC。
+//! ウィンドウを開く経路だけを持つ。引数の振り分け・既存インスタンスへの転送と
+//! 受け側の座取り（#31）・自己デタッチ・WebView の配線・イベントループ・
+//! ファイル監視・右クリックメニューの IPC。
 //!
 //! ウィンドウを開かない処理（`--help` / `md theme` / `--html` ダンプ）は
 //! [`md_preview::cli`]、起動設定の組み立ては [`md_preview::app_config`] にある。
@@ -30,6 +31,11 @@ enum AppEvent {
     /// 変更されたファイルの識別子（絶対パス）。
     /// ページ側は「いま開いているファイルか」を照合して再読込するかを決める。
     Reload(String),
+    /// 別プロセスの md から転送されてきた「これをタブで開け」（#31）。
+    Open(md_preview::instance::Message),
+    /// ページが `MdOpenFiles` を受けられる状態になった合図。
+    /// 窓は中身を待たずに出るので、これより前の `Open` は溜めておく。
+    Ready,
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -42,12 +48,32 @@ const DETACHED_ENV: &str = "MD_DETACHED";
 /// と同じ扱い）。
 const NO_DETACH_ENV: &str = "MD_NO_DETACH";
 
+/// 単一インスタンス化そのものを切る逃げ道。
+///
+/// Why not `MD_NO_DETACH` に含める: 目的が違う。`MD_NO_DETACH` は「窓を持つプロセスの
+/// 出力を読みたい」で、こちらは「既存の窓へ送らず自分で開きたい」。兼務させると、
+/// 転送を切らずにログだけ読みたいときに逃げ場が無くなる。
+const NO_IPC_ENV: &str = "MD_NO_IPC";
+
+/// 層2 で受け側の座を取れなかったとき、勝った方が bind するのを待つ上限。
+/// 所有者が居ることは flock で分かっているので、まだ bind していないだけなら待つ
+/// 価値がある（層1 と違って「誰も居ない」可能性は無い）。
+const SEAT_WAIT: Duration = Duration::from_secs(2);
+const SEAT_POLL: Duration = Duration::from_millis(20);
+
 /// 自分自身を別のプロセスグループで起動し直す。子の起動に成功したら true を返し、
 /// 親はそのまま終了する。自分の実行ファイルが辿れないなど切り離せない事情がある
 /// ときは false を返し、前景での表示に落とす（何も出ないより開いた方がよい）。
 ///
-/// `targets` は親が検証し、そのまま子へ渡す引数（実行ファイル名を除いた argv）。
-fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBuf>) -> bool {
+/// `argv` は実行ファイル名を除いた引数で、フラグを含んだまま子へ渡す（子も
+/// `split_open_flags` を通るので、`-n` は子まで届く必要がある）。`targets` はそこから
+/// フラグを剥がしたパスで、検証に使う。
+fn detach_self(
+    stdin_mode: bool,
+    argv: &[String],
+    current_dir: &Option<PathBuf>,
+    targets: &[String],
+) -> bool {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
@@ -69,19 +95,24 @@ fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBu
     // 戻らなくなる。人に見せる価値があるのは「窓が出ない」エラーだけで、それは上の
     // plan_paths と下の spool_stdin、それに main の引数チェックで親が出し切っている。
     //
-    // 子へ渡すのは env::args() の取り直しではなく、上で検証した targets そのもの。
+    // 子へ渡すのは env::args() の取り直しではなく、親が受け取った argv そのもの。
     // 取り直すと「検証したもの」と「渡すもの」が別々に育って食い違える。
+    // フラグを剥がさないのは、子も `split_open_flags` を通るから（`-n` が子まで
+    // 届かないと、座を取り損ねた 2 枚目が転送に回ってしまう）。
     let mut cmd = Command::new(exe);
-    cmd.args(targets)
+    cmd.args(argv)
         .env(DETACHED_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // パイプで渡された markdown は子の標準入力には届かないので、親が読んで
-    // 一時ファイルへ置き、その場所を渡す。後片付けは子（＝本体）が行う。
+    // パイプで渡された markdown は子の標準入力には届かない。実体化は main の頭で
+    // 済ませて環境変数に置いてあるので、ここは（継承で足りるが）明示的に渡すだけ。
+    // 後片付けは子（＝本体）が行う。
     if stdin_mode {
-        cmd.env(app_config::STDIN_FILE_ENV, app_config::spool_stdin());
+        if let Some(spooled) = std::env::var_os(app_config::STDIN_FILE_ENV) {
+            cmd.env(app_config::STDIN_FILE_ENV, spooled);
+        }
     }
 
     // 端末のプロセスグループから外す。呼び出し元がグループごと畳んでも巻き込まれない。
@@ -97,6 +128,174 @@ fn detach_self(stdin_mode: bool, targets: &[String], current_dir: &Option<PathBu
             eprintln!("md: バックグラウンドで起動できませんでした: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+/// 既存の窓へ送ってよい場面か。`--new-window` と `MD_NO_IPC` で切れる。
+///
+/// 「送るか」と「受けるか」は別の判断で、`-n` が切るのは送る側だけである
+/// （[`take_the_seat`] を参照）。
+fn may_forward(flags: &cli::OpenFlags) -> bool {
+    !flags.new_window && std::env::var_os(NO_IPC_ENV).is_none()
+}
+
+/// 転送する内容を組み立てる。転送に向かない引数なら `None`（従来どおり窓を開く）。
+///
+/// パスの検証（開けないパス・フォルダ混在・root の広がり）は `plan_paths` に任せる。
+/// ここは stderr を持っている経路なので、落ちるなら人に見える形で落ちてよい。
+fn message_to_forward(
+    stdin_mode: bool,
+    targets: &[String],
+    current_dir: &Option<PathBuf>,
+) -> Option<md_preview::instance::Message> {
+    use md_preview::instance::Message;
+
+    let ids = if stdin_mode {
+        // パイプ入力も `md file.md` と同じ経路に乗せる。実体化は main の頭で済んで
+        // いるので、ここはそのパスを識別子にするだけ。
+        let doc = PathBuf::from(std::env::var_os(app_config::STDIN_FILE_ENV)?)
+            .canonicalize()
+            .ok()?;
+        vec![request::file_id(&doc)]
+    } else {
+        // ディレクトリ引数は転送しない。タブに乗らないし、既存の窓の root を
+        // 差し替える仕組みもまだ無い（#34）。ここを転送に回すと、#34 が入るまで
+        // 「別のフォルダを開く」手段が完全に消える。**#34 が入ったら外す暫定。**
+        if let [only] = targets {
+            if Path::new(only).is_dir() {
+                return None;
+            }
+        }
+        app_config::plan_paths(targets, current_dir).1
+    };
+    if ids.is_empty() {
+        return None;
+    }
+
+    let mut msg = Message::new(ids);
+    msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
+    msg.sender_pid = Some(std::process::id() as i32);
+    // stdin の一時ディレクトリは受け側が引き取る。**送り側は消さない**——消すと
+    // 受け側が死んだパスを開くことになる。門を通らないものは載せない（＝誰も
+    // 消さない。消し損ねる方が誤削除より安い）。
+    if stdin_mode {
+        if let Some(doc) = std::env::var_os(app_config::STDIN_FILE_ENV) {
+            let doc = PathBuf::from(doc);
+            msg.own = app_config::owned_stdin_dir(&doc)
+                .map(|d| d.to_string_lossy().into_owned())
+                .into_iter()
+                .collect();
+        }
+    }
+    Some(msg)
+}
+
+/// 既に動いている md へ渡せたら true（呼び出し側はそのまま終了する）。
+fn forward_to_running_instance(
+    flags: &cli::OpenFlags,
+    stdin_mode: bool,
+    targets: &[String],
+    current_dir: &Option<PathBuf>,
+) -> bool {
+    use md_preview::instance::Endpoint;
+
+    if !may_forward(flags) {
+        return false;
+    }
+    let Some(ep) = Endpoint::user_default() else { return false };
+    let Some(msg) = message_to_forward(stdin_mode, targets, current_dir) else { return false };
+    matches!(deliver(&ep, &msg), Delivery::Done)
+}
+
+/// [`deliver`] の結果。**`Retry` と `GiveUp` を潰してはいけない。** 潰すと層2 の
+/// リトライが「話が通じないと分かっている相手」を 2 秒ぶん叩き続ける。
+enum Delivery {
+    /// 渡せた。呼び出し側はそのまま終了してよい。
+    Done,
+    /// まだ届かない。層2 なら待つ価値がある（所有者は居ると分かっているので）。
+    Retry,
+    /// 待っても無駄。自分で窓を開く。
+    GiveUp,
+}
+
+/// 1 通送って、通ったら受け側を前面化する。
+fn deliver(ep: &md_preview::instance::Endpoint, msg: &md_preview::instance::Message) -> Delivery {
+    use md_preview::instance::{try_send, Sent};
+
+    match try_send(ep, msg) {
+        Sent::Delivered { receiver_pid } => {
+            // ack は待たない。`spike/activation` の実測では、送り側が activate を
+            // 撃ってから即死しても 41ms 後に着弾した。
+            if msg.activate {
+                if let Some(pid) = receiver_pid {
+                    platform::activate_other(pid);
+                }
+            }
+            Delivery::Done
+        }
+        Sent::Incompatible { version } => {
+            // 古い窓が生きたまま `cargo install` で入れ替えるのは日常なので、
+            // 黙って諦めずに理由を出す（ここはまだ stderr を持っている）。
+            // 待っても新しくならないので、リトライには回さない。
+            eprintln!("md: 動いている md（プロトコル {}）の方が新しいので、別の窓で開きます", version);
+            Delivery::GiveUp
+        }
+        Sent::NoReceiver => Delivery::Retry,
+    }
+}
+
+/// 受け側の座を取る。取れたらロックを握った [`Owner`] を返す（**bind はまだ**。
+/// accept の直前まで遅らせる理由は呼び出し側にある）。負けたら**窓を作らずに**
+/// 勝った方へ渡して終了する（層2）。座を取れない・取らない場合は `None` で、
+/// そのまま従来どおり窓を開く。
+///
+/// [`Owner`]: md_preview::instance::Owner
+///
+/// **`-n` でも座は取りに行く。** `-n` が言っているのは「既存の窓へ送るな」であって
+/// 「受けるな」ではない。ここで降りると、その日の 1 枚目が `md -n` だったときに座が
+/// 空のまま残り、以降の `md` が全部新しい窓になる。
+fn take_the_seat(
+    flags: &cli::OpenFlags,
+    stdin_mode: bool,
+    targets: &[String],
+    current_dir: &Option<PathBuf>,
+) -> Option<md_preview::instance::Owner> {
+    use md_preview::instance::{claim, Claim, Endpoint};
+
+    if std::env::var_os(NO_IPC_ENV).is_some() {
+        return None;
+    }
+    let ep = Endpoint::user_default()?;
+    // `-n` は 2 枚目として開くのが目的なので、埋まっていたら黙って窓を作る。
+    let forwarding = may_forward(flags);
+    let deadline = std::time::Instant::now() + SEAT_WAIT;
+    let mut msg = None;
+    loop {
+        match claim(&ep) {
+            Claim::Owner(owner) => return Some(owner),
+            Claim::Taken if !forwarding => return None,
+            Claim::Taken => {}
+            Claim::Failed(_) => return None,
+        }
+        // 所有者は確実に居る（flock を握っている）。まだ bind していないだけ
+        // かもしれないので、層1 と違ってここは待つ。
+        let msg = match &msg {
+            Some(m) => m,
+            None => msg.insert(message_to_forward(stdin_mode, targets, current_dir)?),
+        };
+        match deliver(&ep, msg) {
+            Delivery::Done => std::process::exit(0),
+            Delivery::GiveUp => return None,
+            Delivery::Retry => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            // 所有者が起動に失敗したらしい。2 枚目として開く（何も出ないよりまし）。
+            return None;
+        }
+        std::thread::sleep(SEAT_POLL);
+        // ループの頭で claim をやり直す。所有者が bind の前に落ちると flock は
+        // 空くので、ここで取り直さないと「座は空いているのに誰も座らない」まま
+        // 全員が 2 枚目を開く状態が、窓を全部閉じるまで続く。
     }
 }
 
@@ -155,15 +354,47 @@ fn main() {
         return;
     }
 
-    let stdin_mode = args.len() == 1 && !std::io::stdin().is_terminal();
+    // 窓を開く経路だけフラグを剥がす。`theme` / `uninstall` / `--html` は上で処理
+    // 済みなので、ここに現れるのはフラグとパスだけ。
+    let (open_flags, targets) = match cli::split_open_flags(&args[1..]) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{}", msg);
+            eprintln!("{}", cli::USAGE);
+            std::process::exit(2);
+        }
+    };
+
+    let stdin_mode = targets.is_empty() && !std::io::stdin().is_terminal();
 
     // ファイルは何個でも受ける（2 つ以上ならタブとして並べて開く）。
-    if !stdin_mode && args.len() < 2 {
+    if !stdin_mode && targets.is_empty() {
         eprintln!("{}", cli::USAGE);
         std::process::exit(1);
     }
 
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
+
+    // 標準入力は一度しか読めない。転送に回すのか、子へ渡すのか、前景で開くのかを
+    // 決める前に実体化して、環境変数で全経路に持ち回る（env なら exec も spawn も
+    // そのまま越える）。ここで読まずに各経路が読むと、転送が空振りしたときの
+    // 2 回目が空のファイルになる。
+    //
+    // まだスレッドを 1 つも立てていないので set_var は安全。
+    if stdin_mode && std::env::var_os(app_config::STDIN_FILE_ENV).is_none() {
+        std::env::set_var(app_config::STDIN_FILE_ENV, app_config::spool_stdin());
+    }
+
+    // ── 転送（#31 の層1）───────────────────────────────────────
+    // バンドルへの乗り換え（exec）と自己デタッチ（spawn）より前に置く。転送で済む
+    // ときはプロセスを増やさずに数ミリ秒で返せるし、まだ stderr を持っているので
+    // エラーが人に見える。
+    //
+    // **ここは最適化で、正しさを担うのは下の claim の方。** 冷スタートが 2 本同時だと
+    // ここは両方とも「誰も居ない」と読む。
+    if forward_to_running_instance(&open_flags, stdin_mode, &targets, &current_dir) {
+        return;
+    }
 
     // macOS で日本語入力の変換候補パネルを出すため、最小のバンドルへ乗り換える
     // （成功するとここから戻らない）。ウィンドウを開かない経路を通したくないので
@@ -177,10 +408,15 @@ fn main() {
     // 終わり」でプロンプトが返る方が自然なので、stdout が端末かどうかで挙動を分けない。
     if std::env::var_os(DETACHED_ENV).is_none()
         && std::env::var_os(NO_DETACH_ENV).is_none()
-        && detach_self(stdin_mode, &args[1..], &current_dir)
+        && detach_self(stdin_mode, &args[1..], &current_dir, &targets)
     {
         return;
     }
+
+    // ── 受け側の座を取る（#31 の層2）────────────────────────────
+    // ここで負けたら、窓を作らずに勝った方へ渡して終わる。層1 と違ってこちらは
+    // 「所有者が確実に居る」状態なので、まだ bind していないだけなら待つ。
+    let seat = take_the_seat(&open_flags, stdin_mode, &targets, &current_dir);
 
     let custom_css = md_preview::user_style_css();
     let (theme_paint, appearance, active_theme) = theme::resolve(&theme::read_active_name());
@@ -189,7 +425,7 @@ fn main() {
     let config = if stdin_mode {
         AppConfig::from_stdin(&theme_css, &custom_css, &current_dir)
     } else {
-        AppConfig::from_paths(&args[1..], &theme_css, &custom_css, &current_dir)
+        AppConfig::from_paths(&targets, &theme_css, &custom_css, &current_dir)
     };
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
@@ -206,6 +442,28 @@ fn main() {
 
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+
+    // 転送の受け口を開ける。accept ループは別スレッドで、届いたものは
+    // EventLoopProxy 経由でメインスレッドへ渡す（ファイル監視と同じ形）。
+    //
+    // bind は accept の直前でやる。座取り（flock）と同時に bind してしまうと、
+    // そこからここまでの間（テーマ解決・ツリー走査・窓と webview の作成）に来た
+    // 接続がバックログに溜まったまま挨拶を返せない。送り側はそれを「生きているが
+    // 詰まっている」と読んで前面化を諦めるし、その間に所有者が落ちると
+    // （`plan_paths` の exit(1) や窓作成の失敗）**転送が黙って消える**。
+    let seat = seat.and_then(|owner| match owner.listen() {
+        Ok(listening) => {
+            let proxy = proxy.clone();
+            Some(listening.serve(move |msg| {
+                let _ = proxy.send_event(AppEvent::Open(msg));
+            }))
+        }
+        // bind できないなら単一インスタンス化を諦めるだけ。窓は普通に開く。
+        Err(e) => {
+            eprintln!("md: 受け口を開けませんでした（単一インスタンス化なしで続けます）: {}", e);
+            None
+        }
+    });
 
     let watcher = spawn_watcher(root_dir.clone(), proxy.clone());
     // root の外のファイルを開いたときに、そのファイルを監視へ足すため IPC から触る。
@@ -295,6 +553,7 @@ fn main() {
             let body = msg.body().as_str();
             match body {
                 "close" => { let _ = proxy.send_event(AppEvent::Close); }
+                "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
                 _ => {
                     if let Some(rest) = body.strip_prefix("menu:") {
                         let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
@@ -322,6 +581,17 @@ fn main() {
         platform::set_dock_icon();
     }
 
+    // 転送（#31）はページの準備を待たない。ソケットは窓より先に受けられるし、窓が
+    // 出てからページが MdOpenFiles を定義するまでにも間がある。その間の
+    // evaluate_script は黙って落ちるので、`Ready` が来るまで溜めておく。
+    let mut page_ready = false;
+    let mut pending_opens: Vec<String> = Vec::new();
+
+    // 掃除を約束した一時ディレクトリ。自分の stdin と、転送で所有権を引き取った
+    // ぶんが混ざって溜まる。**プロセスが終わるときに消すもの**で、タブを閉じても
+    // 消さない（1 回あたり数 KB で、置き場所は $TMPDIR）。
+    let mut owned_dirs: Vec<PathBuf> = stdin_dir.into_iter().collect();
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -331,12 +601,20 @@ fn main() {
                 ..
             }
             | Event::UserEvent(AppEvent::Close) => {
-                // stdin を実体化した一時ファイルはウィンドウと寿命を揃える
+                // stdin を実体化した一時ファイルはプロセスと寿命を揃える
                 // （表示中はドキュメントそのものなので、読んだ直後には消せない）。
-                // ⌘Q（AppKit の terminate）はここを通らないので取り残しうるが、
-                // 置き場所が $TMPDIR なので OS の掃除に任せる。
-                if let Some(dir) = &stdin_dir {
-                    let _ = std::fs::remove_dir_all(dir);
+                // メニューの ⌘Q は `performClose:` なのでここを通るが、Dock からの
+                // Quit（terminate）とクラッシュは通らない。置き場所が $TMPDIR なので
+                // 取り残しは OS の掃除に任せる。
+                //
+                // #49（窓を閉じてもプロセスを生かす）が入ったら、呼ぶ場所がここから
+                // 本当の終了経路へ移る。だから腕に直書きせず関数に切ってある。
+                drop_owned(&mut owned_dirs);
+                // ソケットファイルの後始末は衛生であって、正しさの要件ではない。
+                // 次の起動が listen() で無条件に unlink → bind し直すので、
+                // terminate やクラッシュで取り残しても壊れない。
+                if let Some(handle) = &seat {
+                    handle.unlink();
                 }
                 #[cfg(target_os = "macos")]
                 if let Some(pid) = launcher_pid {
@@ -362,9 +640,60 @@ fn main() {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
                 let _ = webview.evaluate_script(&script);
             }
+            Event::UserEvent(AppEvent::Ready) => {
+                page_ready = true;
+                let script = md_preview::html::open_files_script(&pending_opens);
+                pending_opens.clear();
+                if !script.is_empty() {
+                    let _ = webview.evaluate_script(&script);
+                }
+            }
+            Event::UserEvent(AppEvent::Open(msg)) => {
+                // 掃除の約束はワイヤから来た値を信用せず、送り側と同じ門に通してから
+                // 引き取る（信用した時点で `own=/etc` が通る道ができる）。
+                for dir in &msg.own {
+                    if let Some(dir) = app_config::owned_stdin_dir(Path::new(dir)) {
+                        if !owned_dirs.contains(&dir) {
+                            owned_dirs.push(dir);
+                        }
+                    }
+                }
+                // アプリを前面に出すのは送り側の仕事（`platform::activate_other`）だが、
+                // 最小化された窓・隠れた窓を持ち上げられるのは自分だけ。両方要る。
+                window.set_minimized(false);
+                window.set_visible(true);
+                window.set_focus();
+                // ここでは形（先頭が `/`）しか見ない。実体への解決は下流の `?file=`
+                // （`request::id_to_path`）が唯一の関門で、解決できなければ 404 →
+                // showLoadError が画面に理由を出す。
+                //
+                // Why not ここで id_to_path を通す: 落とすと「窓は前に出たのに何も
+                // 起きない」になる。`watch:` が通すのは監視という副作用を伴うからで、
+                // 「ページへ文字列を渡すだけ」のここに同じ門は要らない。
+                let ids: Vec<String> =
+                    msg.files.into_iter().filter(|id| id.starts_with('/')).collect();
+                if ids.is_empty() {
+                    return;
+                }
+                if !page_ready {
+                    pending_opens.extend(ids);
+                    return;
+                }
+                let _ = webview.evaluate_script(&md_preview::html::open_files_script(&ids));
+            }
             _ => {}
         }
     });
+}
+
+/// 掃除を約束した一時ディレクトリを消す。**プロセスが終わるときに呼ぶもの。**
+///
+/// #49（窓を閉じてもプロセスを生かす）が入ると、`CloseRequested` は「隠す」に変わって
+/// ここを通らなくなる。そのとき呼ぶ場所を移すだけで済むよう、腕に直書きせず切ってある。
+fn drop_owned(dirs: &mut Vec<PathBuf>) {
+    for dir in dirs.drain(..) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 /// 窓の外観（タイトルバーと信号ボタン）をテーマに合わせる。
