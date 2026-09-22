@@ -9,8 +9,9 @@
 // 本文リンク / iframe 内リンク / コメントのジャンプ は全部そこを通るので、
 // onOpen() のフックだけで「開いたものは必ずタブに乗る」が成り立つ。
 //
-// タブの識別子は loadPreview に渡るパスそのもの（root 相対、または root の外なら
-// 絶対パス）。stdin をパイプで渡したときの一時ファイルも、後者としてここに乗る。
+// タブの識別子は loadPreview に渡るパスそのもの（常に絶対パス）。stdin をパイプで
+// 渡したときの一時ファイルも、root の外にあるだけで同じ形でここに乗る。
+// 同一判定は文字列一致なので、識別子の形を混ぜると同じファイルがタブ 2 枚になる。
 (function() {
   // { path, scroll, mode } の配列。並び順がそのままタブバーの並び。
   var tabs = [];
@@ -27,12 +28,18 @@
     return -1;
   }
 
+  // タブに出す名前は識別子ではなく表示名（root を剥いだ形）から作る。root 直下の
+  // ファイルに親ディレクトリ名（＝ root のフォルダ名）が付かないのは、それが
+  // どのタブにも同じように付いて区別の役に立たないため。
+  function displayOf(p) {
+    return (window.MdCommon && MdCommon.idToDisplay) ? MdCommon.idToDisplay(p) : String(p);
+  }
   function baseName(p) {
-    var segs = String(p).split('/');
+    var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
   function parentName(p) {
-    var segs = String(p).split('/');
+    var segs = displayOf(p).split('/');
     return segs.length >= 2 ? segs[segs.length - 2] : '';
   }
 
@@ -189,7 +196,9 @@
       tab.className = 'md-tab' + (i === activeIdx ? ' active' : '');
       // 右クリックメニュー（contextmenu.js）が対象を引くために持たせる。
       tab.dataset.path = t.path;
-      tab.title = t.path;
+      // ツールチップも表示名。ここだけ識別子（絶対パス）にすると、同じタブの
+      // 名前・添え字・ツールチップで基準が違うことになる。
+      tab.title = displayOf(t.path);
 
       var name = document.createElement('span');
       name.className = 'md-tab-name';

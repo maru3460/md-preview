@@ -25,7 +25,7 @@
   // ── 環境ヘルパ ────────────────────────────────────────────────
   // 本文を含むホスト要素。単一=.markdown-body / フォルダ=#preview-pane。
   function hostEl() { return opts && opts.getContainer ? opts.getContainer() : null; }
-  // 現在ファイルの相対パス（file:line の file 部）。
+  // 現在ファイルの識別子（絶対パス）。file:line の file 部の元になる。
   function currentFile() {
     var f = opts && opts.getFile ? opts.getFile() : null;
     return f || '';
@@ -873,8 +873,12 @@
   }
 
   // file:line ラベル。行が取れなければ file のみ、レンジなら :start-end。
-  function locLabel(c) {
-    var f = c.file || '(no file)';
+  // `abs` はクリップボードへ畳むとき。貼り先（人 / エージェント）は md を開いている
+  // フォルダを知らないので、そこだけは識別子（絶対パス）のまま出す。
+  // 画面のパネルは幅が狭く、隣のツリーが root 相対で並んでいるので表示名で出す。
+  function locLabel(c, abs) {
+    var id = c.file || '';
+    var f = id ? (abs ? id : MdCommon.idToDisplay(id)) : '(no file)';
     if (!c.startLine) return f;
     if (c.endLine && c.endLine !== c.startLine) return f + ':' + c.startLine + '-' + c.endLine;
     return f + ':' + c.startLine;
@@ -893,7 +897,7 @@
     // 跨いでも、貼り先（人 / Claude Code）で順序が予測可能になる。
     var sorted = sortedComments();
     return sorted.map(function(c) {
-      var head = '- ' + locLabel(c);
+      var head = '- ' + locLabel(c, true);
       // 空行は '>' だけにする（'> ' の行末空白を貼り先に持ち込まない）。
       var quoteLines = (c.quote || '').split('\n').map(function(l) { return l ? '> ' + l : '>'; }).join('\n');
       // 引用の直後に空行を 1 行。これが無いと続くコメントが blockquote に飲まれる。
@@ -1320,7 +1324,7 @@
   }
 
   // ── 公開 API ──────────────────────────────────────────────────
-  // opts: { getContainer:()=>el, getFile:()=>relPath }
+  // opts: { getContainer:()=>el, getFile:()=>id }
   function init(o) {
     opts = o;
     wireOnce();

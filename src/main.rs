@@ -27,7 +27,7 @@ use md_preview::theme;
 
 enum AppEvent {
     Close,
-    /// 変更されたファイルの識別子（root 相対パス、または root の外なら絶対パス）。
+    /// 変更されたファイルの識別子（絶対パス）。
     /// ページ側は「いま開いているファイルか」を照合して再読込するかを決める。
     Reload(String),
 }
@@ -235,10 +235,6 @@ fn main() {
     let window = window_builder.build(&event_loop).expect("Failed to create window");
     apply_window_appearance(&window, appearance);
 
-    // 下のカスタムプロトコルのクロージャが `root_dir` をムーブするので、IPC
-    // ハンドラが必要とするもの（copy-abs/reveal/open のパス解決用）を先に clone する。
-    let ipc_root = root_dir.clone();
-
     // 窓と同じ色の二重指定に見えるが、引き金になっているのは色の中身ではなく
     // 「色を渡したこと」の方である。wry の transparent feature は is_some() だけを
     // 見て drawsBackground=false を立てる。これを消すと WKWebView が既定どおり
@@ -302,9 +298,14 @@ fn main() {
                 _ => {
                     if let Some(rest) = body.strip_prefix("menu:") {
                         let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
-                        handle_menu(verb, payload, &ipc_root);
-                    } else if let Some(abs) = body.strip_prefix("watch:") {
-                        watch_extra(&ipc_watcher, Path::new(abs));
+                        handle_menu(verb, payload);
+                    } else if let Some(id) = body.strip_prefix("watch:") {
+                        // 識別子は `id_to_path` を通す。ここだけ素通しにすると
+                        // 「識別子とファイルの唯一の関門」が嘘になり、次に触る者が
+                        // その嘘を根拠に検証を省く。
+                        if let Some(path) = request::id_to_path(id) {
+                            watch_extra(&ipc_watcher, &path);
+                        }
                     } else if let Some(text) = body.strip_prefix("copy:") {
                         platform::copy_to_clipboard(text);
                     }
@@ -392,8 +393,8 @@ fn window_bg_rgba(
 /// ここに来るのは絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つ——
 /// いずれも payload が「パス」なので、`resolve_target` で解決してから触る。
 /// 任意テキストのクリップボード書き込みはパス解決を通さない別の口（`copy:`）。
-fn handle_menu(verb: &str, payload: &str, root: &Path) {
-    let Some(path) = resolve_target(payload, root) else { return };
+fn handle_menu(verb: &str, payload: &str) {
+    let Some(path) = resolve_target(payload) else { return };
     match verb {
         "abs" => platform::copy_to_clipboard(&path.to_string_lossy()),
         "reveal" => platform::reveal_in_finder(&path),
@@ -430,15 +431,14 @@ fn is_top_frame(uri: &wry::http::Uri) -> bool {
         && uri.path() == "/"
 }
 
-/// メニュー操作対象の絶対パスを解決する。`id` は `?file=` と同じ識別子
-/// （root 相対なら root 内に限定、絶対パスなら root の外でも可）。
+/// メニュー操作対象の絶対パスを解決する。`id` は `?file=` と同じ識別子（絶対パス）。
 /// プレビューに何も開いていないときは空で来るので、その場合は何もしない。
-fn resolve_target(id: &str, root: &Path) -> Option<PathBuf> {
+fn resolve_target(id: &str) -> Option<PathBuf> {
     let id = id.trim();
     if id.is_empty() {
         return None;
     }
-    request::id_to_path(root, id)
+    request::id_to_path(id)
 }
 
 /// root の外のファイルを監視対象に足す。エディタの「別ファイルを書いて rename」に
@@ -481,7 +481,6 @@ fn spawn_watcher(
     root: PathBuf,
     proxy: tao::event_loop::EventLoopProxy<AppEvent>,
 ) -> Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>> {
-    let root_for_cb = root.clone();
     let mut debouncer = new_debouncer(Duration::from_millis(80), move |res: notify_debouncer_mini::DebounceEventResult| {
         let Ok(events) = res else { return };
         for ev in events {
@@ -496,9 +495,9 @@ fn spawn_watcher(
             if !request::is_renderable(&path) {
                 continue;
             }
-            // JS 側が持っている識別子（root 相対 or 絶対パス）と同じ形で通知する。
-            // 形がズレると「開いているファイルが変わったか」の照合が外れて再読込しない。
-            let id = request::file_id(&root_for_cb, &path);
+            // JS 側が持っている識別子（絶対パス）と同じ形で通知する。形がズレると
+            // 「開いているファイルが変わったか」の照合が外れて再読込しない。
+            let id = request::file_id(&path);
             let _ = proxy.send_event(AppEvent::Reload(id));
         }
     }).ok()?;

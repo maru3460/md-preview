@@ -23,11 +23,15 @@
   var opts = null;
   var initialized = false;
 
-  var serverFiles = [];  // /?files=1 の生の一覧（サーバの走査順＝浅い階層が先）
-  var files = [];        // 検索対象。serverFiles ＋ 一覧に無い変更ファイル（rebuild で作る）
-  var lowerFiles = [];   // files と同じ添字の小文字版（毎キー入力での再生成を避ける）
-  var stats = null;      // 変更のあるファイル: path -> { add, del }。無変更・未取得なら null
-  var changedPaths = []; // 変更のあるファイル（git の出力順）。未入力時はこの順で先頭に出す
+  // サーバから来るパスは全部「識別子」＝絶対パス。開くときはこれをそのまま渡す。
+  // 検索も表示も identifier ではなく display（root を剥いだ形）でやる——識別子を
+  // そのまま並べると全行に自分のホームパスが出て、あいまい検索がそこにヒットする。
+  var serverFiles = [];   // /?files=1 の生の一覧（サーバの走査順＝浅い階層が先）
+  var files = [];         // 検索対象の識別子。serverFiles ＋ 一覧に無い変更ファイル
+  var displays = [];      // files と同じ添字の表示名（root 相対）
+  var lowerDisplays = []; // displays の小文字版（毎キー入力での再生成を避ける）
+  var stats = null;       // 変更のあるファイル: 識別子 -> { add, del }。無変更・未取得なら null
+  var changedPaths = [];  // 変更のあるファイル（git の出力順）。未入力時はこの順で先頭に出す
   // サーバ側で探索を打ち切ったか。{ reason: 'files'|'dirs'|'depth', limit: n } または null。
   // 上限の数値はサーバから貰う（ここに書くと片方だけ直した時に文面が嘘になる）。
   var truncation = null;
@@ -186,12 +190,13 @@
     if (cursorPos < text.length) el.appendChild(document.createTextNode(text.slice(cursorPos)));
   }
 
-  function buildRow(path, pos) {
-    var slash = path.lastIndexOf('/');
-    // 区切りの `/` は表示しない（"base.css  src" と出す）。ヒット位置はパス全体基準の
-    // ままなので、ファイル名側は区切りぶんずらし、ディレクトリ側はそのまま使える。
-    var dir = slash >= 0 ? path.slice(0, slash) : '';
-    var name = slash >= 0 ? path.slice(slash + 1) : path;
+  // `display` はヒット位置（pos）と同じ文字列。バッジは識別子（`id`）で引く。
+  function buildRow(display, pos, id) {
+    var slash = display.lastIndexOf('/');
+    // 区切りの `/` は表示しない（"base.css  src" と出す）。ヒット位置は表示名全体
+    // 基準のままなので、ファイル名側は区切りぶんずらし、ディレクトリ側はそのまま使える。
+    var dir = slash >= 0 ? display.slice(0, slash) : '';
+    var name = slash >= 0 ? display.slice(slash + 1) : display;
     var nameOffset = slash + 1;
 
     var row = document.createElement('div');
@@ -213,7 +218,7 @@
 
     row.appendChild(nameEl);
     if (dir) row.appendChild(dirEl);
-    var stat = statOf(path);
+    var stat = statOf(id);
     if (stat) row.appendChild(buildStat(stat));
     return row;
   }
@@ -267,19 +272,19 @@
       // 「⌘P → Enter で、いま触っているファイルへ飛ぶ」を成立させるための並びなのだ。
       hits = [];
       for (var c = 0; c < changedPaths.length && hits.length < MAX_ROWS; c++) {
-        hits.push({ path: changedPaths[c], pos: null });
+        hits.push({ path: changedPaths[c], display: MdCommon.idToDisplay(changedPaths[c]), pos: null });
       }
       for (var f = 0; f < files.length && hits.length < MAX_ROWS; f++) {
         if (statOf(files[f])) continue; // 変更ありは上で出したので飛ばす
-        hits.push({ path: files[f], pos: null });
+        hits.push({ path: files[f], display: displays[f], pos: null });
       }
     } else {
       var scored = [];
       for (var i = 0; i < files.length; i++) {
-        var m = matchPath(files[i], lowerFiles[i], q);
+        var m = matchPath(displays[i], lowerDisplays[i], q);
         if (!m) continue;
         if (statOf(files[i])) m.score += CHANGED_BONUS;
-        scored.push({ path: files[i], pos: m.pos, score: m.score });
+        scored.push({ path: files[i], display: displays[i], pos: m.pos, score: m.score });
       }
       scored.sort(function(a, b) { return b.score - a.score; });
       hits = scored.slice(0, MAX_ROWS);
@@ -287,7 +292,7 @@
 
     var frag = document.createDocumentFragment();
     hits.forEach(function(h) {
-      var el = buildRow(h.path, h.pos);
+      var el = buildRow(h.display, h.pos, h.path);
       frag.appendChild(el);
       rows.push({ path: h.path, el: el });
     });
@@ -480,11 +485,12 @@
     for (var c = 0; c < changedPaths.length; c++) {
       if (!known[changedPaths[c]]) files.push(changedPaths[c]);
     }
-    lowerFiles = files.map(function(p) { return p.toLowerCase(); });
+    displays = files.map(function(id) { return MdCommon.idToDisplay(id); });
+    lowerDisplays = displays.map(function(p) { return p.toLowerCase(); });
   }
 
   window.MdPalette = {
-    // opts.openFile(relPath): 選んだファイルを開く（folder.js の loadPreview）
+    // opts.openFile(id): 選んだファイルを開く（folder.js の loadPreview）
     init: function(o) {
       opts = o || {};
       if (initialized) return;

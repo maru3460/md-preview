@@ -5,6 +5,9 @@
 //!     （ページの URL は常に root なので、ブラウザが root 基準で解決する）
 //!   - root の外を指すリンクが開けない（`safe_join` が `..` と root 外を二重で弾く）
 //!
+//! 識別子（`?file=` に載る文字列）は絶対パス。root の中も外も同じ形で、
+//! `id()` がそれを組む。
+//!
 //! ここでは実際に一時ディレクトリを掘り、`handle_request` を叩いて確かめる。
 
 use std::path::{Path, PathBuf};
@@ -71,14 +74,24 @@ fn get(root: &Path, url_path: &str, query: &str) -> Resp {
     }
 }
 
+/// root 配下のファイルの識別子。
+fn id(root: &Path, rel: &str) -> String {
+    root.join(rel).to_string_lossy().into_owned()
+}
+
 fn view(root: &Path, id: &str) -> Resp {
     get(root, "/", &format!("file={}", id))
+}
+
+/// root 配下を rel で開く。
+fn view_rel(root: &Path, rel: &str) -> Resp {
+    view(root, &id(root, rel))
 }
 
 #[test]
 fn relative_image_resolves_against_the_document_dir() {
     let (root, _) = fixture("image");
-    let body = view(&root, "docs/a.md").body;
+    let body = view_rel(&root, "docs/a.md").body;
     // 素の相対 src がドキュメント基準の URL に畳まれていること。
     assert!(body.contains(r#"src="/docs/fig.png""#), "{body}");
     // root 直下を引きに行っていないこと（これが元の壊れ方）。
@@ -90,14 +103,14 @@ fn relative_image_resolves_against_the_document_dir() {
 #[test]
 fn relative_link_resolves_against_the_document_dir() {
     let (root, _) = fixture("link");
-    let body = view(&root, "docs/a.md").body;
+    let body = view_rel(&root, "docs/a.md").body;
     assert!(body.contains(r#"href="/docs/b.md""#), "{body}");
 }
 
 #[test]
 fn raw_html_img_is_rewritten_too() {
     let (root, _) = fixture("rawhtml");
-    let body = view(&root, "docs/a.md").body;
+    let body = view_rel(&root, "docs/a.md").body;
     // md 中に直書きした <img> も同じ基準で畳む（幅指定などでよく使われる）。
     assert!(body.contains(r#"<img src="/docs/fig.png" width="300">"#), "{body}");
 }
@@ -105,7 +118,7 @@ fn raw_html_img_is_rewritten_too() {
 #[test]
 fn out_of_root_image_goes_through_the_abs_route() {
     let (root, outside) = fixture("absimage");
-    let body = view(&root, "docs/a.md").body;
+    let body = view_rel(&root, "docs/a.md").body;
     let url = format!("/__abs{}/out.png", outside.to_string_lossy());
     assert!(body.contains(&format!(r#"src="{}""#, url)), "{body}\nexpected {url}");
     // その URL で実際に画像が返ること。
@@ -118,7 +131,7 @@ fn out_of_root_file_opens_by_absolute_id() {
     let (root, outside) = fixture("absfile");
     let x = outside.join("x.md");
     // 本文のリンクは /__abs/ 付きの URL に畳まれている。
-    let body = view(&root, "docs/a.md").body;
+    let body = view_rel(&root, "docs/a.md").body;
     assert!(body.contains(&format!(r#"href="/__abs{}""#, x.to_string_lossy())), "{body}");
 
     // JS はそれを絶対パスの識別子に戻して ?file= に載せる。
@@ -143,7 +156,7 @@ fn out_of_root_document_resolves_its_own_relative_images() {
 #[test]
 fn html_iframe_src_points_at_the_document_dir() {
     let (root, _) = fixture("iframe");
-    let body = view(&root, "docs/page.html").body;
+    let body = view_rel(&root, "docs/page.html").body;
     assert!(body.contains(r#"src="/docs/page.html""#), "{body}");
 }
 
@@ -151,13 +164,21 @@ fn html_iframe_src_points_at_the_document_dir() {
 fn the_sidebar_tree_still_stops_at_the_root() {
     let (root, outside) = fixture("tree");
     // ツリー（?dir= / ?has_md=）は root の中だけ。root の外は開く経路を持たせない。
+    // 識別子でないもの（root 相対）も関門で落ちる。
     assert_eq!(get(&root, "/", "dir=../outside").status, 404);
+    assert_eq!(get(&root, "/", "dir=docs").status, 404);
     assert_eq!(
         get(&root, "/", &format!("dir={}", outside.to_string_lossy())).status,
         404
     );
+    // root 配下のディレクトリは識別子で引ける。
+    assert_eq!(get(&root, "/", &format!("dir={}", id(&root, "docs"))).status, 200);
     // ドットの判定も同じゲート。`?dir=` だけ守って `?has_md=` が素通り、を防ぐ。
     assert_eq!(get(&root, "/", "has_md=../outside").status, 404);
-    // アセットの素の traversal も従来どおり弾く。
+    assert_eq!(
+        get(&root, "/", &format!("has_md={}", outside.to_string_lossy())).status,
+        404
+    );
+    // アセットの素の traversal も従来どおり弾く（URL は識別子と別の名前空間）。
     assert_eq!(get(&root, "/../outside/out.png", "").status, 404);
 }

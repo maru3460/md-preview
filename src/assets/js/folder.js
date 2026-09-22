@@ -1,4 +1,5 @@
 (function() {
+  // 現在プレビュー中のファイルの識別子（絶対パス）。何も開いていなければ null。
   var currentFilePath = null;
   // ポンプを回してよいかのゲート。初期描画中は ?dir= / ?file= に帯域を譲る。
   var initialRenderDone = false;
@@ -173,40 +174,43 @@
   }
 
   // 開いているファイルに対応するツリー項目をハイライトし、見える位置へスクロールする。
-  function updateActiveItem(relPath) {
+  function updateActiveItem(id) {
     // 非同期な reveal の完走中に別ファイルへ切り替わっていたら、現在の
     // ハイライトを壊さないよう何もしない。
-    if (relPath !== currentFilePath) return;
+    if (id !== currentFilePath) return;
     document.querySelectorAll('.tree-item.active').forEach(function(el) {
       el.classList.remove('active');
     });
-    var row = findRow(relPath, 'file');
+    var row = findRow(id, 'file');
     if (row) {
       row.classList.add('active');
       row.scrollIntoView({ block: 'nearest' });
     }
   }
 
-  // root 相対パスのファイルまで祖先フォルダを順に展開し、最後にハイライトする。
-  // root の外のファイル（識別子が絶対パス）はツリーに行が無いので、
-  // 選択を外すだけにする（居場所はタブが示す）。
-  function revealFile(relPath) {
-    if (relPath.charAt(0) === '/') { updateActiveItem(relPath); return; }
-    var segs = relPath.split('/');
+  // ファイルまで祖先フォルダを順に展開し、最後にハイライトする。
+  // root の外のファイルはツリーに行が無いので、選択を外すだけにする
+  // （居場所はタブが示す）。
+  function revealFile(id) {
+    if (MdCommon.isOutsideRoot(id)) { updateActiveItem(id); return; }
+    // 祖先はツリー行と同じ識別子（絶対パス）で組む。root 自身はツリーに行が無い
+    // （サイドバーそのもの）ので含めない。
+    var base = MdCommon.rootPrefix();
+    var segs = MdCommon.idToDisplay(id).split('/');
     var ancestors = [];
     for (var i = 0; i < segs.length - 1; i++) {
-      ancestors.push(segs.slice(0, i + 1).join('/'));
+      ancestors.push(base + segs.slice(0, i + 1).join('/'));
     }
 
     function step(idx) {
       if (idx >= ancestors.length) {
-        updateActiveItem(relPath);
+        updateActiveItem(id);
         return;
       }
       var dirRow = findRow(ancestors[idx], 'dir');
       if (!dirRow || !dirRow._expand) {
         // 祖先が見つからなければ諦めて、今ある範囲でハイライトを試みる。
-        updateActiveItem(relPath);
+        updateActiveItem(id);
         return;
       }
       Promise.resolve(dirRow._expand()).then(function() { step(idx + 1); });
@@ -240,47 +244,52 @@
     return true;
   }
 
-  // ファイル取得が非200だった時に、無反応にせず理由をペインへ出す。
+  // 取得が非200だった時に、無反応にせず理由をペインへ出す。
   // textContent で組むのでファイル名に < 等が入っても安全。
-  function showLoadError(pane, relPath) {
-    var name = (relPath || '').split('/').pop() || relPath || '';
+  function showNotice(pane, text) {
     var article = document.createElement('div');
     article.className = 'markdown-body';
     var p = document.createElement('p');
     p.className = 'md-notice';
-    p.textContent = 'このファイルは開けませんでした: ' + name
-      + '（存在しないパス・権限・壊れたファイルなどの可能性）';
+    p.textContent = text;
     article.appendChild(p);
     pane.innerHTML = '';
     pane.appendChild(article);
     if (window.MdToc) window.MdToc.refresh();
   }
 
-  function loadPreview(relPath, preserveScroll) {
+  function showLoadError(pane, id) {
+    var name = (id || '').split('/').pop() || id || '';
+    showNotice(pane, 'このファイルは開けませんでした: ' + name
+      + '（存在しないパス・権限・壊れたファイルなどの可能性）');
+  }
+
+  function loadPreview(id, preserveScroll) {
     var pane = document.getElementById('preview-pane');
     // タブ（tabs.js）はこの関数を唯一の入口として状態を持つ。ホットリロードは
     // ファイル切替ではないので通さない（タブが増えたり読み位置が動いたりしない）。
-    if (!preserveScroll && window.MdTabs) MdTabs.onOpen(relPath);
+    if (!preserveScroll && window.MdTabs) MdTabs.onOpen(id);
     // 一度開いたタブへ戻る時は、そのタブに残した読み位置から再開する。
     var savedScroll = preserveScroll ? MdCommon.readScroll()
-      : (window.MdTabs ? MdTabs.scrollFor(relPath) : 0);
-    currentFilePath = relPath;
+      : (window.MdTabs ? MdTabs.scrollFor(id) : 0);
+    currentFilePath = id;
     // root の外のファイルは root の再帰監視に載らないので、個別に監視を頼む。
     // 頼まないとホットリロードだけが効かない（開けるのに更新されない）状態になる。
-    if (relPath.charAt(0) === '/' && window.ipc) window.ipc.postMessage('watch:' + relPath);
+    // 識別子は全部先頭が `/` なので、形ではなく root の内外で判定する。
+    if (MdCommon.isOutsideRoot(id) && window.ipc) window.ipc.postMessage('watch:' + id);
     // ファイル切替（ホットリロード以外）では本文ペインへフォーカスを戻し、直後から
     // スクロール素キー(j/k 等)が効くようにする。ホットリロードは現在のフォーカスを保つ。
     if (!preserveScroll) focusPreview();
     // ホットリロード(同一ファイルの再描画)ではツリーを動かさない。
-    if (!preserveScroll) revealFile(relPath);
-    if (window.MdMenu) window.MdMenu.setCurrentFile(relPath);
+    if (!preserveScroll) revealFile(id);
+    if (window.MdMenu) window.MdMenu.setCurrentFile(id);
     if (window.MdSearch) window.MdSearch.reset();
     // バッジ（変更行数）は表示状態に関わらず、開いているファイルに追従させる。
     if (window.MdDiff) window.MdDiff.refreshStat();
     // md / html は通常表示がレンダリング結果なので Raw（ソース）トグルを有効化する。
     // それ以外は通常表示が既にソースなので raw は無効化（トグルを隠す）。raw 表示中に
     // 無効ファイルへ切り替えたら setAvailable(false) が状態を畳むので通常フェッチに落ちる。
-    if (window.MdRaw) window.MdRaw.setAvailable(isRenderablePath(relPath));
+    if (window.MdRaw) window.MdRaw.setAvailable(isRenderablePath(id));
 
     // raw / diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
     // ソース / 差分を表示する（本文レンダリングには戻さない）。
@@ -303,13 +312,13 @@
     // ここで読むと全ユニットの実測が丸ごと無駄になる（ホットリロードの度に走る）。
     var anchor = preserveScroll ? MdCommon.readAnchor() : null;
 
-    fetch('/?file=' + encodeURIComponent(relPath), preserveScroll ? { cache: 'no-store' } : undefined)
+    fetch('/?file=' + encodeURIComponent(id), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
-        // 非200(html==null)は握りつぶさず理由を表示する。サーバは safe_join が弾いた時
-        // （フォルダ外を指すシンボリックリンク等）や読めない時に not_found を返すので、
+        // 非200(html==null)は握りつぶさず理由を表示する。サーバは id_to_path が
+        // 解決できない時（消えたファイル・権限）に not_found を返すので、
         // 黙って無反応にならないようメッセージを出す。
-        if (html == null) { showLoadError(pane, relPath); return; }
+        if (html == null) { showLoadError(pane, id); return; }
         pane.innerHTML = html;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
         // （実際に戻すのは中身の load 後、common.js の bindFrame）。錨が効く md では
@@ -324,13 +333,13 @@
         // （タブへ戻る経路。同じ表示なので丸めずに exact へ戻せる）。
         if (!MdCommon.restoreAnchor(anchor)) MdCommon.holdScroll(savedScroll);
       })
-      .catch(function() { showLoadError(pane, relPath); });
+      .catch(function() { showLoadError(pane, id); });
   }
 
   // ファイル監視（main.rs）から呼ばれる唯一の入口。引数は変更されたファイルの識別子。
-  window.MdReload = function(relPath) {
+  window.MdReload = function(id) {
     if (!currentFilePath) return;
-    if (relPath !== currentFilePath) return;
+    if (id !== currentFilePath) return;
     // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
     var mode = window.MdViewModes && window.MdViewModes.active();
     if (mode) { mode.refresh(); return; }
@@ -597,20 +606,21 @@
     }
     if (window.MdTabs) {
       // タブ切替の実体は通常のファイル切替と同じ経路（loadPreview）。
-      window.MdTabs.init({ openFile: function(rel) { loadPreview(rel); } });
+      window.MdTabs.init({ openFile: function(id) { loadPreview(id); } });
     }
     if (window.MdPalette) {
       // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。
-      window.MdPalette.init({ openFile: function(rel) { loadPreview(rel); } });
+      window.MdPalette.init({ openFile: function(id) { loadPreview(id); } });
     }
     if (window.MdViewModes) {
       var previewPane = function() { return document.getElementById('preview-pane'); };
       window.MdViewModes.initAll({
         getContainer: previewPane,
         getScroller: previewPane,
-        // 対象ファイルは識別子で渡す（サーバは「開いているファイル」を持たない）。
-        url: function(id) {
-          return currentFilePath ? '/?' + id + '=' + encodeURIComponent(currentFilePath) : null;
+        // 対象ファイルはクエリに載せて渡す（サーバは「開いているファイル」を持たない）。
+        // `mode` は raw / diff のどちらか＝クエリのキー。値が識別子。
+        url: function(mode) {
+          return currentFilePath ? '/?' + mode + '=' + encodeURIComponent(currentFilePath) : null;
         },
         getStatUrl: function() {
           return currentFilePath ? '/?diffstat=' + encodeURIComponent(currentFilePath) : null;
@@ -619,12 +629,12 @@
       });
     }
     if (window.MdComment) {
-      // 対象は #preview-pane。file 部は現在プレビュー中ファイルの root 相対パス。
+      // 対象は #preview-pane。file 部は現在プレビュー中ファイルの識別子（絶対パス）。
       // openFile はパネル項目クリックで別ファイルのコメント先へ飛ぶために使う。
       window.MdComment.init({
         getContainer: function() { return document.getElementById('preview-pane'); },
         getFile: function() { return currentFilePath || ''; },
-        openFile: function(rel) { loadPreview(rel); }
+        openFile: function(id) { loadPreview(id); }
       });
     }
 
@@ -637,9 +647,32 @@
       pumpMdChecks();
     }
 
-    fetch('/?dir=')
-      .then(function(r) { return r.json(); })
+    // 最初のツリーも root の識別子で聞く。`?dir=` に載るのは常に識別子、という
+    // 契約を 1 本にするため（空文字を「root の意味」にすると経路が 2 つになる）。
+    //
+    // 取得の失敗だけをここで畳んで null にする。catch を後ろに置くと、木が取れた
+    // 後に初期タブの描画で throw したときまで拾ってしまい、「読めているのに
+    // 読めなかった」と言いながら描いた本文を消すことになる。
+    fetch('/?dir=' + encodeURIComponent(MdCommon.rootDir()))
+      .then(function(r) {
+        // 空文字が「root の意味」だった頃と違い、このリクエストは 404 しうる
+        // （`resolve_tree_dir` が識別子として解決できなければ落とす）。
+        if (!r.ok) throw new Error('tree ' + r.status);
+        return r.json();
+      })
+      .catch(function(e) {
+        // 無音で終わらせない。窓はデタッチすると stderr が /dev/null へ行くので、
+        // 画面に出しておかないと「なぜか真っ白」しか手掛かりが残らない。
+        showNotice(document.getElementById('preview-pane'),
+          'フォルダを読み込めませんでした: ' + (MdCommon.rootDir() || '(未設定)'));
+        if (window.console) console.error('ツリーを取得できませんでした', e);
+        return null;
+      })
       .then(function(items) {
+        if (items === null) {
+          setTimeout(function() { markInitialRenderDone(); }, 0);
+          return;
+        }
         renderItems(items, sidebar, 0);
         // 起動時に開くファイル（`md a.md b.md` なら 2 枚のタブ。先頭が最初に見える）。
         var initial = (typeof INITIAL_FILES !== 'undefined' && INITIAL_FILES) || [];
@@ -657,9 +690,6 @@
           // 初期表示より後に投げるので、起動の体感速度は落とさない。
           if (window.MdPalette) window.MdPalette.prefetch();
         }, 0);
-      })
-      .catch(function() {
-        setTimeout(function() { markInitialRenderDone(); }, 0);
       });
   });
 

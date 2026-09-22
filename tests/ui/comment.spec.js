@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { openFolder, nextFrames } = require('./helpers');
+const { id, openFolder, nextFrames } = require('./helpers');
 
 /// 追跡済みのフィクスチャは常にクリーンで差分が空になり、行数も閾値に遠い。
 /// 錨れない表示（git 差分 / 巨大ソース）を作るには、その場でファイルを置くしかない。
@@ -152,11 +152,13 @@ test('raw / ソース表示でも行にコメントできる', async ({ page }) 
   // 引用は行レイヤ（空要素）ではなくソースの行そのものが入る。
   await page.locator('.md-cmt-side .md-cmt-btn-primary').click();
   const copied = await page.evaluate(() => window.__copied);
-  expect(copied).toContain('- notes.txt:3');
+  // パネルは root 相対で出すが、クリップボードは絶対パス（貼り先は root を知らない）。
+  const notes = id(page, 'notes.txt');
+  expect(copied).toContain(`- ${notes}:3`);
   expect(copied).toContain('> 行コメント（.md-src-rows）の位置合わせを測るための行。');
   expect(copied).toContain('ここに質問');
   // レンジは空行も 1 行として引用に並ぶ（5 行目は空行）。
-  expect(copied).toContain('- notes.txt:5-6\n>\n> 空行のあとの行。');
+  expect(copied).toContain(`- ${notes}:5-6\n>\n> 空行のあとの行。`);
 
   // モードを抜けても 💬 バッジは押せる／ホバーで内容が出る（行レイヤ自体は通り抜ける）。
   // バッジが載るのは行ではなく行番号のセル（横スクローラの外のガター）。

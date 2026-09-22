@@ -42,9 +42,9 @@ impl AppConfig {
     /// - `MD_APPEARANCE`     解決済みテーマの外観。JS で描く図（mermaid）を OS 設定では
     ///                       なくテーマに追従させる。
     /// - `MD_RENDERABLE_EXT` レンダリング対象の拡張子。定義元は `request::RENDERABLE_EXT`。
-    /// - `MD_ROOT_DIR`       配信ルートの絶対パス。JS が root 相対の識別子と絶対パスを
-    ///                       行き来するために要る（root の外を指すリンクを、黙って root で
-    ///                       止めずに絶対パスとして開くため）。
+    /// - `MD_ROOT_DIR`       配信ルートの絶対パス。識別子（絶対パス）から画面に出す
+    ///                       名前を作るのと、本文の URL（root 相対）を識別子へ戻すのに
+    ///                       要る。`MdCommon.idToDisplay` / `urlToId` の基準。
     pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
         let renderable = request::RENDERABLE_EXT
             .iter()
@@ -60,7 +60,7 @@ impl AppConfig {
     }
 
     /// ツリー付きのページ。`initial_files` は起動時にタブとして開く識別子
-    /// （root 相対パス、または root の外なら絶対パス。先頭が最初に表示される）。
+    /// （絶対パス。先頭が最初に表示される）。
     fn folder(root: PathBuf, theme_css: &str, custom_css: &str, initial_files: &[String]) -> Self {
         let title = dir_name(&root);
         let html = build_folder_html(&title, theme_css, custom_css, initial_files);
@@ -88,7 +88,7 @@ impl AppConfig {
         current_dir: &Option<PathBuf>,
     ) -> Self {
         let root = stdin_root(&doc, current_dir);
-        let id = file_id(&root, &doc);
+        let id = file_id(&doc);
         let mut config = Self::folder(root, theme_css, custom_css, &[id]);
         config.stdin_dir = stdin_dir_to_clean(&doc);
         config
@@ -127,7 +127,7 @@ pub fn plan_paths(args: &[String], current_dir: &Option<PathBuf>) -> (PathBuf, V
 
     let paths = resolve_file_args(args);
     let root = files_root(&paths, current_dir);
-    let ids = paths.iter().map(|p| file_id(&root, p)).collect();
+    let ids = paths.iter().map(|p| file_id(p)).collect();
     (root, ids)
 }
 
@@ -203,8 +203,17 @@ fn resolve_arg_path(arg: &str) -> PathBuf {
 /// 一時ファイルの置き場所へ逃がす。`/` を root にするとボリューム全体が再帰監視の
 /// 対象になり、ファイル一覧も予算を使い切る（`files_root` の門と同じ理由）。
 /// ファイル指定と違ってユーザーは root を指定していないので、ここは終了させずに畳む。
+///
+/// 作業ディレクトリが取れないとき（cwd が消えている等）に `.` へ落とさないのは、
+/// root がそのまま `?dir=` の識別子になるため。識別子は絶対パスでなければ
+/// `request::id_to_path` が弾き、ツリーも初期タブも出ない真っ白になる。
 fn stdin_root(doc: &Path, current_dir: &Option<PathBuf>) -> PathBuf {
-    let cwd = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let Some(cwd) = current_dir.clone() else {
+        // `/` へは落とさない。この関数が存在する理由そのもの（`/` を root にすると
+        // ボリューム全体が再帰監視され、⌘P の予算も使い切る）を裏切る値なので、
+        // 一時ファイルの置き場所へ逃がす。
+        return doc.parent().map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
+    };
     if cwd.parent().is_none() {
         return doc.parent().unwrap_or(&cwd).to_path_buf();
     }
@@ -400,7 +409,7 @@ mod tests {
     #[test]
     fn plan_paths_makes_an_out_of_cwd_file_a_folder_rooted_at_its_parent() {
         // 単一ファイルモードを畳んだ結果、cwd の外のファイルも「親フォルダを root に
-        // したツリー付きの表示」で開く（識別子はその root 相対＝ファイル名）。
+        // したツリー付きの表示」で開く（識別子は canonicalize 済みの絶対パス）。
         let dir = std::env::temp_dir().join(format!("md-plan-file-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -410,7 +419,7 @@ mod tests {
         let cwd = Some(PathBuf::from("/definitely/not/here"));
         let (root, ids) = plan_paths(&[file.to_string_lossy().into_owned()], &cwd);
         assert_eq!(root, dir.canonicalize().unwrap());
-        assert_eq!(ids, vec!["note.md".to_string()]);
+        assert_eq!(ids, vec![file.canonicalize().unwrap().to_string_lossy().into_owned()]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

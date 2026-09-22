@@ -822,7 +822,7 @@ pub fn render_frontmatter_html(pairs: &[(String, String)], lines: usize) -> Stri
     format!(r#"<div class="frontmatter"{}>{}</div>"#, attrs, rows)
 }
 
-/// `initial_files` は起動時にタブとして開く root 相対パス（先頭が最初に表示される）。
+/// `initial_files` は起動時にタブとして開く識別子（絶対パス。先頭が最初に表示される）。
 /// 空なら何も開かずツリーだけを出す。
 pub fn build_folder_html(
     title: &str,
