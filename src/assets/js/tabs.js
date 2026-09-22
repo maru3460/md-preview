@@ -158,6 +158,18 @@
     else show();
   }
 
+  // 溜まったタブをまとめて捨てて、何も開いていない状態（`md .` で起動した直後と
+  // 同じ）へ戻す。⌘W の「最後の 1 枚はウィンドウを閉じる」には倣わない。ここは
+  // 瓦礫になったタブ帯を片付ける操作なので、ツリーを残したまま空にならないと
+  // 「片付けたら道具ごと消えた」になる。
+  function closeAll() {
+    if (!tabs.length) return;
+    tabs = [];
+    activeIdx = -1;
+    render();
+    if (opts && opts.clearFile) opts.clearFile();
+  }
+
   // ⇧Tab : 次のタブへ。端まで行ったら先頭へ折り返す（1 方向だけなのは、逆回りを
   // 足すより ⌘1..⌘9 で直に飛ぶ方が速いため）。
   function cycle(delta) {
@@ -250,7 +262,7 @@
   }
 
   window.MdTabs = {
-    // o: { openFile(path) } … タブ切替で本文を出し直すための入口（loadPreview）。
+    // o: { openFile(path), clearFile() } … 本文を出し直す / 本文を空にする入口。
     init: function(o) {
       opts = o;
       registerKeys();
@@ -269,6 +281,7 @@
     scrollFor: scrollFor,
     closeByPath: function(path) { closeAt(indexOf(path)); },
     closeOthers: closeOthers,
+    closeAll: closeAll,
     count: function() { return tabs.length; }
   };
 })();

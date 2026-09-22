@@ -264,6 +264,31 @@
       + '（存在しないパス・権限・壊れたファイルなどの可能性）');
   }
 
+  // 開いているファイルが 1 つも無い状態（ツリーだけがある `md .` の起動直後と同じ）
+  // へ戻す。loadPreview が「現在のファイル」に紐付けたものを、同じ並びで解く。
+  function clearPreview() {
+    var pane = document.getElementById('preview-pane');
+    currentFilePath = null;
+    if (pane) {
+      var article = document.createElement('div');
+      article.className = 'markdown-body';
+      pane.innerHTML = '';
+      pane.appendChild(article);
+    }
+    document.querySelectorAll('.tree-item.active').forEach(function(el) {
+      el.classList.remove('active');
+    });
+    if (window.MdMenu) window.MdMenu.setCurrentFile(null);
+    if (window.MdSearch) window.MdSearch.reset();
+    // raw / diff は現在のファイルに対する表示なので、対象が無くなったら畳む。
+    // restore(null) は状態だけを OFF にする（本文は上で空にした）。
+    if (window.MdViewModes) window.MdViewModes.restore(null);
+    if (window.MdRaw) window.MdRaw.setAvailable(false);
+    if (window.MdDiff) window.MdDiff.refreshStat();
+    if (window.MdToc) window.MdToc.refresh();
+    focusPreview();
+  }
+
   function loadPreview(id, preserveScroll) {
     var pane = document.getElementById('preview-pane');
     // タブ（tabs.js）はこの関数を唯一の入口として状態を持つ。ホットリロードは
@@ -606,7 +631,10 @@
     }
     if (window.MdTabs) {
       // タブ切替の実体は通常のファイル切替と同じ経路（loadPreview）。
-      window.MdTabs.init({ openFile: function(id) { loadPreview(id); } });
+      window.MdTabs.init({
+        openFile: function(id) { loadPreview(id); },
+        clearFile: clearPreview
+      });
     }
     if (window.MdPalette) {
       // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。

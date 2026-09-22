@@ -89,6 +89,9 @@
       case 'tab-close-others':
         if (window.MdTabs) MdTabs.closeOthers(ctx.tab);
         break;
+      case 'tab-close-all':
+        if (window.MdTabs) MdTabs.closeAll();
+        break;
       case 'reload':
         if (window.MdReload) window.MdReload();
         break;
@@ -128,6 +131,10 @@
       items.push({
         label: '他のタブを閉じる', action: 'tab-close-others',
         enabled: !!(window.MdTabs && MdTabs.count() > 1)
+      });
+      items.push({
+        label: 'すべてのタブを閉じる', action: 'tab-close-all',
+        enabled: !!(window.MdTabs && MdTabs.count() > 0)
       });
       items.push({ sep: true });
     }

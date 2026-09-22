@@ -271,6 +271,24 @@ test('最後の 1 枚とタブ 0 枚の ⌘W はウィンドウを閉じる', as
   await expect(page.locator('.md-tab')).toHaveCount(1);
 });
 
+test('「すべてのタブを閉じる」は窓を残してタブ帯だけを空にする', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+
+  await tab(page, 'b.md').click({ button: 'right' });
+  await page.locator('.md-context-menu-item', { hasText: 'すべてのタブを閉じる' }).click();
+
+  await expect(page.locator('.md-tab')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/has-tabs/);
+  // 本文とツリーの選択も外れて、`md .` で起動した直後と同じ状態へ戻る。
+  await expect(page.locator('#preview-pane .markdown-body')).toBeEmpty();
+  await expect(page.locator('.tree-item.active')).toHaveCount(0);
+  // ⌘W（最後の 1 枚）と違って窓は閉じない。片付けたら道具ごと消える、にしない。
+  const closes = await page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length);
+  expect(closes).toBe(0);
+});
+
 test('同じファイルは、どの入口から開いてもタブ 1 枚', async ({ page }) => {
   // #33 の核心。タブの同一判定は識別子の文字列一致なので、入口ごとに識別子の形が
   // 違うと同じファイルがタブ 2 枚になり、コメントも 2 つの識別子に分裂する。
