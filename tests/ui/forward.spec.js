@@ -271,3 +271,22 @@ test('入力中に別のファイルへ移ると、入力欄は隅へ退いて�
   await expect(page.locator('.md-cmt-side')).toContainText('a.md:');
   await expect(page.locator('.md-cmt-side')).not.toContainText('b.md:');
 });
+
+test('パイプで受けた同名タブに、一時ディレクトリの名前を添えない', async ({ page }) => {
+  // `cat a.md | md` を 2 回叩くと `stdin.md` が 2 枚並ぶ。同名タブは親の名前を
+  // 添える規則があるが、パイプの置き場所（`$TMPDIR/md-stdin-<pid>/`）は名前ではない。
+  // 数字の羅列は見分けの役に立たないし、読む人には置き場所の都合でしかない。
+  // 転送が入るまで 1 窓 1 枚だったので、この規則がここに当たることが無かった。
+  await openFolder(page);
+  const spool = await page.evaluate(() => window.MD_STDIN_PREFIX);
+  expect(spool).toBe('md-stdin-');
+
+  await page.evaluate((pre) => {
+    // 実体化先と同じ形の識別子を 2 本。中身は取りに行けないが、タブの名前は
+    // 識別子だけで決まるのでここで測れる。
+    window.MdOpenFiles(['/tmp/' + pre + '111/stdin.md', '/tmp/' + pre + '222/stdin.md']);
+  }, spool);
+
+  await expect(tabNames(page)).toHaveText(['stdin.md', 'stdin.md']);
+  await expect(page.locator('.md-tab-dir')).toHaveCount(0);
+});

@@ -49,6 +49,9 @@ impl AppConfig {
     /// - `MD_ROOT_DIR`       配信ルートの絶対パス。識別子（絶対パス）から画面に出す
     ///                       名前を作るのと、本文の URL（root 相対）を識別子へ戻すのに
     ///                       要る。`MdCommon.idToDisplay` / `urlToId` の基準。
+    /// - `MD_STDIN_PREFIX`   パイプ入力を実体化する一時ディレクトリの名前の頭。
+    ///                       定義元は [`STDIN_DIR_PREFIX`]。タブが「同名なら親の名前を
+    ///                       添える」規則を、パイプの置き場所には当てないために要る。
     pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
         let renderable = request::RENDERABLE_EXT
             .iter()
@@ -56,10 +59,11 @@ impl AppConfig {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {};",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {};",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
+            json_string(STDIN_DIR_PREFIX),
         )
     }
 

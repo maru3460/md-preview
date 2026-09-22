@@ -38,9 +38,20 @@
     var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
+  // 同名タブが並んだときに添える親ディレクトリ名。
+  //
+  // パイプ入力（`cat x.md | md`）の置き場所はここでは名前として使わない。実体化先は
+  // `$TMPDIR/md-stdin-<pid>/stdin.md` で、転送で 2 本受けると `stdin.md` が 2 枚に
+  // なり、この規則がそのまま `md-stdin-41234` を並べてしまう。数字の羅列は見分けの
+  // 役に立たないうえ、読んでいる人にとっては置き場所の都合でしかない。
+  // **見分けが付かないままにする**——パイプで渡したものは元の名前を持っていない。
   function parentName(p) {
     var segs = displayOf(p).split('/');
-    return segs.length >= 2 ? segs[segs.length - 2] : '';
+    if (segs.length < 2) return '';
+    var dir = segs[segs.length - 2];
+    var spool = window.MD_STDIN_PREFIX;
+    if (spool && dir.indexOf(spool) === 0) return '';
+    return dir;
   }
 
   // 現在出ているビューモード（raw / diff、無ければ null）。
