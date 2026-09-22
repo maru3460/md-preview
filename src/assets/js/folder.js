@@ -422,6 +422,19 @@
   // 呼び出し側の方針である。入れると 6 経路の挙動が同時に変わる。
   window.MdOpenFiles = function(ids) {
     if (!ids || !ids.length || !window.MdTabs) return;
+    // コメントを書いている最中は、表示を奪わずタブに載せるだけにする。書いている
+    // 対象が目の前から消えると何に書いているのか分からなくなるし、転送は止められない
+    // （外から来る）ので、受ける側で譲るしかない。届いたことはタブとトーストで見える。
+    if (window.MdComment && MdComment.isPopoverOpen && MdComment.isPopoverOpen()) {
+      MdTabs.openMany(ids, { keepView: true });
+      if (window.MdCommon && MdCommon.toast) {
+        var n = ids.length;
+        var name = MdCommon.idToDisplay ? MdCommon.idToDisplay(ids[0]) : ids[0];
+        MdCommon.toast(n > 1 ? name + ' ほか ' + (n - 1) + ' 件をタブに追加しました'
+                             : name + ' をタブに追加しました');
+      }
+      return;
+    }
     if (window.MdCommon && MdCommon.closeOverlays) MdCommon.closeOverlays();
     MdTabs.openMany(ids);
   };

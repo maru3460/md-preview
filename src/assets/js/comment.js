@@ -545,7 +545,7 @@
     }
   }
 
-  function buildPopover(anchorEl, initialBody, onSave) {
+  function buildPopover(anchorEl, initialBody, onSave, target) {
     // closePopover が prevFocus を消すので、開く前のフォーカスを先に退避する。
     var prevFocus = document.activeElement;
     closePopover();
@@ -557,6 +557,20 @@
     pop.setAttribute('role', 'dialog');
     pop.setAttribute('aria-label', 'コメントを入力');
     pop.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+
+    // 何に書いているかを入力欄自身に出す。入力欄は本文の差し替えを生き延びるので
+    // （転送・⌘P・ツリー）、裏が別ファイルになっても対象は読み取れる必要がある。
+    // 保存先はここに出ている値そのもの（開いた時点で焼き付けてある）。
+    if (target) {
+      var head = document.createElement('div');
+      head.className = 'md-cmt-popover-target';
+      var label = (window.MdCommon && MdCommon.idToDisplay)
+        ? MdCommon.idToDisplay(target.file) : target.file;
+      var lines = target.endLine && target.endLine !== target.startLine
+        ? target.startLine + '-' + target.endLine : target.startLine;
+      head.textContent = label + ':' + lines;
+      pop.appendChild(head);
+    }
 
     var ta = document.createElement('textarea');
     ta.className = 'md-cmt-textarea';
@@ -628,10 +642,10 @@
   function openNewPopover(target) {
     // 開いた時点のファイルを的に焼き付ける（上の addComment の Why not を参照）。
     var t = Object.assign({}, target, { file: currentFile() });
-    buildPopover(t.anchorEl, '', function(body) { addComment(t, body); });
+    buildPopover(t.anchorEl, '', function(body) { addComment(t, body); }, t);
   }
   function openEditPopover(anchorEl, c) {
-    buildPopover(anchorEl, c.body, function(body) { updateComment(c.id, body); });
+    buildPopover(anchorEl, c.body, function(body) { updateComment(c.id, body); }, c);
   }
 
   // ── ホバープレビュー（モード外でも確認できる浮遊パネル） ──────

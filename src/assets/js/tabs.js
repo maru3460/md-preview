@@ -104,8 +104,14 @@
   //
   // 挿入位置は onOpen と同じ「現在タブの右隣」。起動時は tabs が空なので末尾追加と
   // 同じ結果になり、2 つの規則を持つ理由が無い。
-  function openMany(paths) {
+  //
+  // `opts.keepView` は「タブには載せるが、いま見ているものは動かさない」。コメントの
+  // 入力中に転送が来たときに使う——書いている対象が目の前から消えると、何に書いて
+  // いるのか分からなくなる。届いたファイルは失われず、タブバーに出るので着いたことも
+  // 見える。
+  function openMany(paths, opts2) {
     if (!paths || !paths.length) return;
+    var keepView = !!(opts2 && opts2.keepView);
     var inherited = currentMode();
     saveActiveState();
     var first = null;
@@ -126,6 +132,11 @@
       at++;
     }
     if (!first) return;
+    if (keepView) {
+      // タブが増えただけ。activeIdx は挿し先より手前なのでずれない。
+      render();
+      return;
+    }
     // 添え字は全部挿し終わってから引き直す。先に控えると、後ろの splice でずれる。
     activeIdx = indexOf(first);
     show();

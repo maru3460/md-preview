@@ -181,7 +181,10 @@ test('検索バーは転送で畳まれる（掃きと loadPreview の二重で�
   await expect(page.locator('#md-search-bar')).toHaveClass(/hidden/);
 });
 
-test('コメントの書きかけは転送で消えず、保存先も開いた時点のファイルのまま', async ({ page }) => {
+test('コメント入力中の転送は、タブに載るだけで表示を奪わない', async ({ page }) => {
+  // 転送は外から来るので止められない。書いている対象が目の前から消えると何に
+  // 書いているのか分からなくなるので、受ける側が譲る。届いたファイルは失われず、
+  // タブに載る。
   await openFolder(page);
   await openFile(page, 'a.md');
   await page.keyboard.press('c');
@@ -192,16 +195,44 @@ test('コメントの書きかけは転送で消えず、保存先も開いた�
 
   await forward(page, [page.mdRoot + '/b.md']);
 
-  // 書きかけも、画面を覆わない「モード」も残る。
+  // 書きかけも、モードも、**見ているファイルも**そのまま。
   await expect(page.locator('#md-cmt-popover')).toBeVisible();
   await expect(page.locator('.md-cmt-textarea')).toHaveValue('書きかけ');
   await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
-  await expect(body(page)).toContainText('見出し B');
+  await expect(body(page)).toContainText('見出し A');
+  await expect(body(page)).not.toContainText('見出し B');
+  // 届いたことはタブで見える（a.md の右隣。表示は a.md のまま）。
+  await expect(tabNames(page)).toHaveText(['a.md', 'b.md']);
+  expect(await activePath(page)).toBe('a.md');
+});
 
-  // 付ける先は**開いた時点**の a.md。保存した瞬間の currentFile() を引くと、
-  // a.md の行番号で b.md にコメントが付く（⌘P にはオーバーレイのゲートが無いので、
-  // 転送が無くても踏める道だった）。
+test('コメント入力欄は、何に書いているかを自分で出す', async ({ page }) => {
+  // 入力欄は本文の差し替えを生き延びるので、裏が変わっても対象が読み取れる必要がある。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+
+  await expect(page.locator('.md-cmt-popover-target')).toHaveText(/^a\.md:\d/);
+
+  // 保存先は出ている値そのもの。
+  await page.locator('.md-cmt-textarea').fill('質問');
   await page.locator('#md-cmt-popover .md-cmt-btn-primary').click();
   await expect(page.locator('.md-cmt-side')).toContainText('a.md:');
-  await expect(page.locator('.md-cmt-side')).not.toContainText('b.md:');
+});
+
+test('入力欄を閉じたあとの転送は、これまでどおり表示を切り替える', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('c');
+  await page.locator('#preview-pane [data-src-line]').first().click();
+  await expect(page.locator('#md-cmt-popover')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#md-cmt-popover')).toHaveCount(0);
+
+  await forward(page, [page.mdRoot + '/b.md']);
+
+  await expect(body(page)).toContainText('見出し B');
+  // モードは残る（画面を覆わないので）。
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
 });
