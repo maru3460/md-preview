@@ -36,8 +36,11 @@ enum AppEvent {
     /// ページが `MdOpenFiles` を受けられる状態になった合図。
     /// 窓は中身を待たずに出るので、これより前の `Open` は溜めておく。
     Ready,
-    /// 窓が全画面から抜け終わった（#59）。AppKit の通知を
+    /// 窓が全画面から抜け終わった。AppKit の通知を
     /// `platform::watch_exit_fullscreen` で受けて、ここへ流し直している。
+    ///
+    /// 用途は 2 つ。閉じる前に全画面から抜けるのを待つ（#59）のと、抜けた拍子に
+    /// 落ちたキー入力の宛先を webview へ返すこと。後者は閉じるかどうかと無関係に要る。
     ExitedFullscreen,
     /// 全画面から抜けるのを待つ期限が来た（#59）。
     CloseDeadline,
@@ -619,7 +622,8 @@ fn main() {
     let mut closing = Closing::No;
 
     // 全画面から抜け終わった合図の購読。**プロセスと寿命を揃える**（`EventLoop::run` は
-    // 戻らないので、ここに置いたまま最後まで生きる）。
+    // 戻らないので、ここに置いたまま最後まで生きる）。用途は 2 つあって、どちらも
+    // この 1 本に乗る——閉じる待ちの終了と、`ExitedFullscreen` でやるフォーカス復帰。
     let _fullscreen_watch = platform::watch_exit_fullscreen(&window, {
         let proxy = fullscreen_proxy.clone();
         move || {
@@ -682,6 +686,12 @@ fn main() {
             }
             // 全画面から抜け終わった。
             Event::UserEvent(AppEvent::ExitedFullscreen) => {
+                // キー入力の宛先を webview へ返す。全画面を抜けると tao が styleMask を
+                // 戻し、AppKit はその変更でトップレベルの view を作り直す。そのとき
+                // first responder が webview から窓へ落ちて、**ページが拾うキーが全部
+                // 死ぬ**（⌘W・⌘P・⌘F …。実測では窓をクリックするまで戻らない）。
+                // 全画面に入るときは styleMask を戻さないので、こちらだけで起きる。
+                let _ = webview.focus();
                 if closing == Closing::ExitingFullscreen {
                     finish_and_exit(&mut closing, &mut owned_dirs, &seat, launcher_pid, control_flow);
                 }
