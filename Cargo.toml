@@ -40,4 +40,10 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSArray", "NSData", "NSString",
+    # 全画面から抜け終わった合図（NSWindowDidExitFullScreenNotification）を受けるため。
+    # addObserverForName:object:queue:usingBlock: は NSOperation と block2 も要求する。
+    "NSNotification", "NSOperation", "block2",
 ] }
+# 上の通知をブロックで受けるためだけに要る。wry と objc2-foundation が既に引いて
+# いるので依存ツリーは増えない（Cargo.lock の block2 0.6.2 と同じもの）。
+block2 = "0.6"
