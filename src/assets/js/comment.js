@@ -120,13 +120,17 @@
   }
 
   // ── コメント CRUD ─────────────────────────────────────────────
+  // `t.file` は**入力欄を開いた時点**のファイル。保存した瞬間の `currentFile()` を
+  // 使ってはいけない。入力欄は本文の差し替えを生き延びるので（転送・⌘P）、
+  // 保存時に引くと**前のファイルの行番号で、いま開いているファイルに**コメントが付く。
+  // ⌘P はオーバーレイのゲートを持たないので、転送が無くても踏める道だった。
   function addComment(t, body) {
     comments.push({
       id: nextId++,
-      file: currentFile(),
+      file: t.file || currentFile(),
       // どの表示で付けたか。n/p のジャンプで同じ見え方へ戻すのに使う（raw は 1 行
       // 単位、プレビューは段落単位なので、着地先が変わると指しているものも変わる）。
-      raw: isRawView(),
+      raw: t.raw !== undefined ? t.raw : isRawView(),
       startLine: t.startLine,
       endLine: t.endLine,
       quote: t.quote,
@@ -465,7 +469,34 @@
   }
 
   // ホットリロード後などに markers を貼り直す（配列は生きている）。
-  function reanchor() { redraw(); }
+  function reanchor() { redraw(); syncPopoverAway(); }
+
+  // 入力欄の的と、いま見えているファイルがズレている間だけ隅へ寄せる。段落に寄り添った
+  // 吹き出しのまま他人の本文の上に居ると、錨のふりを続けることになって「何に書いて
+  // いるのか」が読めない。
+  //
+  // **状態が変わったときだけ、にしない。** 同じファイルのまま本文が作り直される経路
+  // （ホットリロード・⌘R の往復）でも錨は外れるので、毎回引き直さないと入力欄が
+  // 画面に貼り付いたまま段落に付いてこなくなる。すぐ隣の `redraw` が同じ状況で
+  // `kbCursor` を引き直しているのと揃える。
+  //
+  // 寄るときにインラインの座標は消さない。away の CSS は `!important` で勝つので
+  // 消す必要が無いし、消すと「帰ってきたが錨が見つからない」ときに置き場所を失って
+  // 左上へ飛ぶ。
+  function syncPopoverAway() {
+    if (!popover) return;
+    var away = !!(popoverTarget && popoverTarget.file && popoverTarget.file !== currentFile());
+    popover.classList.toggle('md-cmt-popover--away', away);
+    if (away) return;
+    // 同じファイルに居る。本文は作り直されているので、同じ行のユニットへ錨を張り直す。
+    var u = popoverTarget && popoverTarget.startLine
+      ? unitAtLine(hostEl(), popoverTarget.startLine) : null;
+    // 見つからないなら位置を触らない。外れた要素の矩形は全部 0 なので、測り直すと
+    // 入力欄が左上へ飛ぶ（退避中に対象の行が消えた・巨大ソースで行ユニットが無い）。
+    if (!u) return;
+    popoverAnchor = u;
+    positionPopover(popover, u);
+  }
 
   // ── インライン埋め込み（モード中、アンカー直下に出す GitHub 風の表示） ──
   // ユニットの「兄弟」として直後に差し込む（子に入れるとユニット自身のレイアウトを
@@ -529,6 +560,7 @@
   var popoverPrevFocus = null;  // 開く前のフォーカス（閉じたら戻す）
 
   function closePopover() {
+    popoverTarget = null;
     if (!popover) return;
     popover.remove();
     popover = null;
@@ -541,18 +573,48 @@
     }
   }
 
-  function buildPopover(anchorEl, initialBody, onSave) {
+  // いま開いている入力欄が何に書いているか。裏のファイルが変わったことを見分けるのに
+  // 使う（`popoverAnchor` は DOM の錨で、こちらは file:line の的）。
+  var popoverTarget = null;
+
+  function buildPopover(anchorEl, initialBody, onSave, target) {
     // closePopover が prevFocus を消すので、開く前のフォーカスを先に退避する。
     var prevFocus = document.activeElement;
     closePopover();
     popoverPrevFocus = prevFocus;
     popoverAnchor = anchorEl;
+    popoverTarget = target || null;
     var pop = document.createElement('div');
     pop.className = 'md-cmt-popover';
     pop.id = 'md-cmt-popover';   // MdCommon.isOverlayOpen が O(1) で存在を見るため
     pop.setAttribute('role', 'dialog');
     pop.setAttribute('aria-label', 'コメントを入力');
     pop.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+
+    // 何に書いているかを入力欄自身に出す。入力欄は本文の差し替えを生き延びるので
+    // （転送・⌘P・ツリー）、裏が別ファイルになっても対象は読み取れる必要がある。
+    // 保存先はここに出ている値そのもの（開いた時点で焼き付けてある）。
+    if (target) {
+      var head = document.createElement('div');
+      head.className = 'md-cmt-popover-target';
+      var label = (window.MdCommon && MdCommon.idToDisplay)
+        ? MdCommon.idToDisplay(target.file) : target.file;
+      var lines = target.endLine && target.endLine !== target.startLine
+        ? target.startLine + '-' + target.endLine : target.startLine;
+      var where = document.createElement('span');
+      where.className = 'md-cmt-popover-where';
+      where.textContent = label + ':' + lines;
+      head.appendChild(where);
+      // 裏が別のファイルになっている間だけ出る帰り道。塞いで行かせないのではなく、
+      // 行ったうえで戻れる形にする（確認しに行くのはコメントを書く作業の一部）。
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'md-cmt-popover-back';
+      back.textContent = '↩ 戻る';
+      back.addEventListener('click', function() { if (popoverTarget) gotoComment(popoverTarget); });
+      head.appendChild(back);
+      pop.appendChild(head);
+    }
 
     var ta = document.createElement('textarea');
     ta.className = 'md-cmt-textarea';
@@ -608,6 +670,9 @@
 
   // アンカー要素の近く（右上寄り）に置き、画面端ではフリップして収める。
   function positionPopover(pop, anchorEl) {
+    // 本文が差し替わると錨は DOM から外れる（転送・⌘P で入力欄だけが残る）。
+    // 外れた要素の矩形は全部 0 なので、測り直すと入力欄が左上へ飛ぶ。置いたままにする。
+    if (anchorEl && !anchorEl.isConnected && pop.style.left) return;
     var rect = anchorEl ? anchorEl.getBoundingClientRect() : { left: 40, top: 40, right: 40, bottom: 60 };
     var pw = pop.offsetWidth, ph = pop.offsetHeight;
     var x = rect.left;
@@ -619,10 +684,12 @@
   }
 
   function openNewPopover(target) {
-    buildPopover(target.anchorEl, '', function(body) { addComment(target, body); });
+    // 開いた時点のファイルを的に焼き付ける（上の addComment の Why not を参照）。
+    var t = Object.assign({}, target, { file: currentFile(), raw: isRawView() });
+    buildPopover(t.anchorEl, '', function(body) { addComment(t, body); }, t);
   }
   function openEditPopover(anchorEl, c) {
-    buildPopover(anchorEl, c.body, function(body) { updateComment(c.id, body); });
+    buildPopover(anchorEl, c.body, function(body) { updateComment(c.id, body); }, c);
   }
 
   // ── ホバープレビュー（モード外でも確認できる浮遊パネル） ──────
@@ -1269,14 +1336,20 @@
         id: 'md-cmt-popover',
         isOpen: function() { return !!popover; },
         close: closePopover,
-        priority: 50
+        priority: 50,
+        // 書きかけを転送で捨てない。付ける先は開いた時点で焼き付けてあるので、
+        // 裏でファイルが変わっても保存先はずれない（addComment の Why not）。
+        keepOnOpen: true
       });
       MdCommon.registerOverlay({
         id: 'md-cmt-mode',
         isOpen: function() { return mode; },
         close: function() { setMode(false); },
         priority: 10,
-        blocksKeys: false
+        blocksKeys: false,
+        // 転送（#31）でも解除しない。画面を覆わない「モード」で、ツリークリックでも
+        // ⌘P でも解除されないのに転送だけ解除すると、入口ごとに挙動が割れる。
+        keepOnOpen: true
       });
     }
 
@@ -1333,10 +1406,14 @@
 
   window.MdComment = {
     init: init,
-    reanchor: reanchor,   // ホットリロード後に呼ぶ
+    // 本文が差し替わるたびに `MdCommon.hydrate` から呼ばれる（ホットリロードだけでは
+    // ない）。マーカーの貼り直しに加えて、入力欄が的のファイルから離れたかどうかも
+    // ここで見るので、**ファイル切替で呼ばれることが機能の前提**になっている。
+    reanchor: reanchor,
     toggle: toggleMode,   // 右クリックメニュー等から
     open: function() { setMode(true); },
-    // MdCommon.isOverlayOpen が参照する（ポップオーバー表示中かどうか）。
+    // 転送（`folder.js` の `MdOpenFiles`）が「書いている最中か」を見るのに使う。
+    // 書いている間は表示を奪わず、タブに載せるだけにする。
     isPopoverOpen: function() { return !!popover; },
     // keymap.js の when が参照する。isMode は一覧の巡回キー（n / p / e / x / y）用で、
     // 錨れない表示でも効かせたいのでモードの有無だけを見る。canAnchor は

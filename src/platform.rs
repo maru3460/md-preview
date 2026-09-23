@@ -184,6 +184,35 @@ pub fn activate_pid(pid: i32) {
     target.activateFromApplication_options(&current, NSApplicationActivationOptions(0));
 }
 
+/// 転送（#31）の送り側から、既存の窓を持つ受け側を前面化する。
+///
+/// [`activate_pid`] の裏返しだが、2 つ違う。
+///
+/// 1. **自分がアクティブかを見ない。** 送り側は端末から起動された短命のプロセスで、
+///    アクティブになったことが一度も無い。`spike/activation` の実測では、それでも
+///    `activateFromApplication:` は通った（「持っていないものは譲れない」は外れ）。
+/// 2. **`yieldActivationToApplication:` を撃たない。** 有無で結果が変わらなかった。
+///
+/// `NSApplication::sharedApplication` を**呼ばないこと**。送り側は run loop を回さない
+/// ので、ここで AppKit を起こすとその初期化コストを転送のたびに払う。`NSApp` 越しの
+/// `activate()` は実測で 3 回とも不発だったので、呼ぶ利点も無い。
+///
+/// 前面化の責任はここ 1 箇所だけが持つ。受け側（`AppEvent::Open` の腕）は隠れた窓を
+/// 持ち上げるだけで、アプリを前へ出すことはしない。
+#[cfg(target_os = "macos")]
+pub fn activate_other(pid: i32) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+
+    let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
+        return;
+    };
+    let me = NSRunningApplication::currentApplication();
+    target.activateFromApplication_options(&me, NSApplicationActivationOptions(0));
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_other(_pid: i32) {}
+
 /// Dock と ⌘Tab に出るアイコンを差し込む。
 ///
 /// md は `.app` を作らない（bundle.rs 参照）ので `Info.plist` の `CFBundleIconFile`

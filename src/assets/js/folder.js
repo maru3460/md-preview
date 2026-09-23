@@ -1,6 +1,18 @@
 (function() {
   // 現在プレビュー中のファイルの識別子（絶対パス）。何も開いていなければ null。
   var currentFilePath = null;
+  // 本文フェッチの世代。loadPreview と clearPreview が進め、応答が届いた側は
+  // 自分の番号と突き合わせてから本文を差し替える（viewmode.js の reqSeq と同じ形）。
+  //
+  // Why not `id !== currentFilePath` で判定する: 同じファイルを素早く 2 回開くと
+  // どちらの応答も一致してしまい、古い方が新しい読み位置の復元を上書きする。
+  // Why not MdCommon.bodyGen() を流用する: あれは hydrate の中で増える事後の
+  // カウンタなので、先に着地した古い応答が世代を進めて新しい応答の方が捨てられる。
+  var reqSeq = 0;
+  // いまペインに入っている本文のファイル。`currentFilePath` は**フェッチを投げた時点**で
+  // 切り替わるので、応答が着地するまでの間は 2 つがずれる。読み位置の錨はペインの中身を
+  // 測るものなので、このずれている間に錨を読むと「前のファイルの位置」を掴む。
+  var bodyPath = null;
   // ポンプを回してよいかのゲート。初期描画中は ?dir= / ?file= に帯域を譲る。
   var initialRenderDone = false;
   // 未送信の {path, row}。サーバに走査を止める手段が無いので、こちら側にできるのは
@@ -269,6 +281,10 @@
   function clearPreview() {
     var pane = document.getElementById('preview-pane');
     currentFilePath = null;
+    bodyPath = null;
+    // 進行中の本文フェッチを無効にする。これが無いと「すべてのタブを閉じる」の
+    // 直後に届いた応答が、空にしたはずのペインへ前のファイルを戻す。
+    reqSeq++;
     if (pane) {
       var article = document.createElement('div');
       article.className = 'markdown-body';
@@ -337,14 +353,23 @@
     // ここで読むと全ユニットの実測が丸ごと無駄になる（ホットリロードの度に走る）。
     var anchor = preserveScroll ? MdCommon.readAnchor() : null;
 
+    var myReq = ++reqSeq;
     fetch('/?file=' + encodeURIComponent(id), preserveScroll ? { cache: 'no-store' } : undefined)
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
+        // 応答が届くまでに別のファイルへ移っていた／本文を空にしていたら捨てる。
+        // モードの ON は loadPreview を通らず reqSeq を進めないので、別に見る。
+        if (myReq !== reqSeq) return;
+        if (window.MdViewModes && MdViewModes.active()) return;
         // 非200(html==null)は握りつぶさず理由を表示する。サーバは id_to_path が
         // 解決できない時（消えたファイル・権限）に not_found を返すので、
         // 黙って無反応にならないようメッセージを出す。
-        if (html == null) { showLoadError(pane, id); return; }
+        // 失敗の表示もそのファイルのもの。`bodyPath` を前のファイルのまま残すと、
+        // 下の `MdReload` のガードがこのファイルの再読込を**永久に**弾く（エディタの
+        // atomic save の直後に開くと 404 を踏むので、その後 1 度も直らなくなる）。
+        if (html == null) { bodyPath = id; showLoadError(pane, id); return; }
         pane.innerHTML = html;
+        bodyPath = id;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
         // （実際に戻すのは中身の load 後、common.js の bindFrame）。錨が効く md では
         // この代入は下の restoreAnchor が上書きする（錨れなかった時の受け皿）。
@@ -358,7 +383,14 @@
         // （タブへ戻る経路。同じ表示なので丸めずに exact へ戻せる）。
         if (!MdCommon.restoreAnchor(anchor)) MdCommon.holdScroll(savedScroll);
       })
-      .catch(function() { showLoadError(pane, id); });
+      // then と同じ 2 つを見る。モードの ON は reqSeq を進めないので、世代だけ見ると
+      // 「raw は出ているのに本文だけエラー表示」という食い違った画面になる。
+      .catch(function() {
+        if (myReq !== reqSeq) return;
+        if (window.MdViewModes && MdViewModes.active()) return;
+        bodyPath = id;
+        showLoadError(pane, id);
+      });
   }
 
   // ファイル監視（main.rs）から呼ばれる唯一の入口。引数は変更されたファイルの識別子。
@@ -368,7 +400,73 @@
     // raw / diff 表示中はファイル変更をその再取得に回す（本文には戻さない）。
     var mode = window.MdViewModes && window.MdViewModes.active();
     if (mode) { mode.refresh(); return; }
+    // ペインの中身がまだ前のファイルなら、ここで再読込してはいけない。
+    // preserveScroll の経路は「いま見えている位置」を錨として持ち回るので、中身が
+    // 追いついていないと**前のファイルの読み位置に新しいファイルを着地させる**。
+    // 飛ばしたぶんは、進行中のフェッチが持ってくるか、次の保存で拾う。
+    if (bodyPath !== currentFilePath) return;
     loadPreview(currentFilePath, true);
+  };
+
+  // 別プロセスの md から転送されてきたファイル（#31）を開く唯一の入口。
+  // 引数は識別子（絶対パス）の配列で、先頭が表示され残りはタブに載るだけ。
+  // 空配列は「窓を前に出すだけ」で、ここでは何もしない（前面化は Rust の仕事）。
+  // 以下は `keepsView()` が false のときの話で、true なら表示もオーバーレイも動かさない。
+  //
+  // オーバーレイを先に畳む。畳まずに開くと、ヘルプや右クリックメニューが別ファイルの
+  // 上に居残る。順序が先なのは、入力欄にフォーカスが残っている間は focusPreview が
+  // 譲るからで、後にすると本文は変わったのに j/k が効かない窓になる。
+  //
+  // 畳まないもの（`keepOnOpen`）は、ユーザーが作業の途中にあるもの——⌘P の検索と
+  // コメントの入力欄、それにコメントモード。転送はこちらから叩いた結果なのに、
+  // 書きかけを巻き添えにする理由が無い。フォーカスはそのまま作業中のものに残る。
+  //
+  // Why not loadPreview の中で畳む: あそこはツリー・[ ]・⌘P・本文リンク・iframe 内
+  // リンク・コメントのジャンプが通る共有の道で、どのオーバーレイを残すかは本来
+  // 呼び出し側の方針である。入れると 6 経路の挙動が同時に変わる。
+
+  // 表示まで譲る相手。オーバーレイを残す（`keepOnOpen`）だけでは足りないもの——
+  // コメントの入力欄と ⌘P の検索は、どちらも**手を止めて画面の前に居る**状態で、
+  // 転送は止められない（外から来る）ので受ける側で譲るしかない。届いたことは
+  // タブとトーストで見える。
+  //
+  // 入力欄は本文の上に浮いているので差し替えはその場で見えるが、パレットは画面を
+  // 覆っているので見えない。**Esc を押した瞬間に、自分が開いたつもりのないファイルが
+  // 出る**ことになる。見えないぶん、こちらの方が譲る理由は強い。
+  //
+  // Why not コメントモード（`c`）も足す: あれは印を追って読み歩いている状態で、
+  // 手は止まっていない。表示が変わるのはツリーや ⌘P で開いた時と同じことで、
+  // 巻き添えにする「書きかけ」が無い。
+  //
+  // Why not タブ 0 枚のときも守る: 守れない。`tabs.js` の openMany は「守る『いま見て
+  // いるもの』が無い」ときは keepView を落として show() する（`md <dir>` で起動した
+  // 直後と「すべてのタブを閉じる」の後）。結果、⌘P が覆ったまま裏の本文だけ差し替わる。
+  // そのままにしてある——本文は元々空なので奪われるものが無く、出てくるのは叩いた本人が
+  // 指定したファイルである。畳む側に倒すと、守りたかった検索の途中を代わりに失う。
+  function keepsView() {
+    if (window.MdComment && MdComment.isPopoverOpen && MdComment.isPopoverOpen()) return true;
+    if (window.MdPalette && MdPalette.isOpen && MdPalette.isOpen()) return true;
+    return false;
+  }
+
+  window.MdOpenFiles = function(ids) {
+    if (!ids || !ids.length || !window.MdTabs) return;
+    if (keepsView()) {
+      var before = MdTabs.count();
+      MdTabs.openMany(ids, { keepView: true });
+      var added = MdTabs.count() - before;
+      // 増えていないのに「追加しました」とは言わない（同じファイルを 2 回転送すると
+      // 起きる）。表示を奪っていないぶん、トーストだけが届いた証拠になるので、
+      // そこで嘘をつくと何が起きたか分からなくなる。
+      if (added > 0 && window.MdCommon && MdCommon.toast) {
+        var name = MdCommon.idToDisplay ? MdCommon.idToDisplay(ids[0]) : ids[0];
+        MdCommon.toast(added > 1 ? name + ' ほか ' + (added - 1) + ' 件をタブに追加しました'
+                                 : name + ' をタブに追加しました');
+      }
+      return;
+    }
+    if (window.MdCommon && MdCommon.closeOverlays) MdCommon.closeOverlays();
+    MdTabs.openMany(ids);
   };
 
   // ── キーボードナビ ────────────────────────────────────────────
@@ -671,6 +769,11 @@
     function markInitialRenderDone() {
       initialRenderDone = true;
       document.documentElement.dataset.mdReady = '1';
+      // ここまで来て初めて MdOpenFiles が効く（MdTabs.init は DOMContentLoaded）。
+      // main.rs はこの合図まで転送を溜めるので、窓が出た直後に届いた `md b.md` が
+      // 黙って消えない。ツリーの取得に失敗した経路もここを通るので、木が読めなかった
+      // 窓にも転送は届く。
+      if (window.ipc) window.ipc.postMessage('ready');
       // 成功・失敗どちらの経路から来てもここで待ち行列が動き出す。
       pumpMdChecks();
     }
@@ -705,7 +808,7 @@
         // 起動時に開くファイル（`md a.md b.md` なら 2 枚のタブ。先頭が最初に見える）。
         var initial = (typeof INITIAL_FILES !== 'undefined' && INITIAL_FILES) || [];
         if (initial.length && window.MdTabs) {
-          window.MdTabs.openInitial(initial); // 内部で loadPreview → focusPreview 済み
+          window.MdTabs.openMany(initial); // 内部で loadPreview → focusPreview 済み
         } else if (initial.length) {
           loadPreview(initial[0]); // 内部で focusPreview 済み
         } else {

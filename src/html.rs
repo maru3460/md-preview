@@ -860,6 +860,19 @@ pub fn build_folder_html(
     )
 }
 
+/// 転送されてきたファイル（#31）をページへ渡すスクリプト。`ids` は識別子（絶対パス）で、
+/// 先頭が表示される。空なら空文字を返すので、呼び出し側は `evaluate_script` ごと省ける。
+///
+/// `main.rs` ではなくここに置くのは、バイナリ側は `cargo test` から叩けないため。
+/// パスに `"` や `\` が入っていても壊れないことは、ここのユニットテストが守る。
+pub fn open_files_script(ids: &[String]) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let list = ids.iter().map(|s| json_string(s)).collect::<Vec<_>>().join(",");
+    format!("window.MdOpenFiles && window.MdOpenFiles([{}]);", list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,5 +1185,22 @@ mod tests {
         let body = render_in_tempdir("https://example.com/f.txt\n", "bareurl");
         assert!(!body.contains("code-embed"), "{body}");
         assert_eq!(hrefs(&body), vec!["https://example.com/f.txt"], "{body}");
+    }
+
+    #[test]
+    fn open_files_script_escapes_quotes_and_backslashes() {
+        let s = open_files_script(&[r#"/tmp/a"b\c.md"#.to_string()]);
+        assert_eq!(s, r#"window.MdOpenFiles && window.MdOpenFiles(["/tmp/a\"b\\c.md"]);"#);
+    }
+
+    #[test]
+    fn open_files_script_keeps_the_given_order() {
+        let s = open_files_script(&["/a.md".to_string(), "/b.md".to_string()]);
+        assert!(s.contains(r#"["/a.md","/b.md"]"#), "{s}");
+    }
+
+    #[test]
+    fn open_files_script_is_empty_for_no_files() {
+        assert_eq!(open_files_script(&[]), "");
     }
 }

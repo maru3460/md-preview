@@ -1013,7 +1013,13 @@
   //   id, isOpen(), close(),
   //   priority   … 大きいほど前面。Esc はこれが最大の 1 つだけを閉じる
   //   blocksKeys … 開いている間、本文の素キーを止めるか（既定 true）
+  //   keepOnOpen … 外から画面の中身が差し替わるとき（closeOverlays）に残すか（既定 false）
   // }
+  //
+  // Why not keepOnOpen を blocksKeys で兼ねる: 別の命題だから。前者は「素キーを
+  // 止めるか」＝入力の話、後者は「外から本文が差し替わるときに残すか」＝作業の話。
+  // 実際いま母集団が違う（`keepOnOpen` は ⌘P・コメントの入力欄・コメントモードの 3 つ、
+  // `blocksKeys: false` はコメントモードだけ）。
   var overlays = [];
 
   function registerOverlay(spec) {
@@ -1026,6 +1032,23 @@
     return overlays.filter(function(o) {
       if (o.id === exceptId) return false;
       try { return !!o.isOpen(); } catch (e) { return false; }
+    });
+  }
+
+  // 画面を覆っているオーバーレイをまとめて畳む。ユーザーの操作ではなく、外から本文が
+  // 差し替わるとき（#31 の転送）に使う——各オーバーレイの「自分で閉じる」経路が走らない
+  // ので、残すと別のファイルの上に前のファイル向けのものが居残る。
+  // close() が投げても列が途中で止まらないよう 1 つずつ包む（openOverlays は絞り込んだ
+  // 新しい配列を返すので、閉じながら回しても元の登録順は壊れない）。
+  // 閉じる順は前面から（openOverlays が priority 降順で返す）。いま掃く 3 つ
+  // （ヘルプ・右クリックメニュー・検索バー）は互いのフォーカスを触らないので、
+  // 順序に依存は無い。前面からにしてあるのは Esc（最前面の 1 つだけ閉じる）と
+  // 揃えるためで、掃く対象が増えたときに「開く前のフォーカスへ戻す」ものが入ると
+  // 順序が効き出す——そのときここを測るテストを足すこと。
+  function closeOverlays() {
+    openOverlays().forEach(function(o) {
+      if (o.keepOnOpen) return;
+      try { o.close(); } catch (e) {}
     });
   }
 
@@ -1355,6 +1378,7 @@
     unitAtLine: unitAtLine,
     isSidebarFocused: isSidebarFocused,
     isOverlayOpen: isOverlayOpen,
+    closeOverlays: closeOverlays,
     registerOverlay: registerOverlay,
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,

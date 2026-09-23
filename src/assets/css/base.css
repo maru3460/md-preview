@@ -1628,7 +1628,11 @@ body.md-cmt-mode .source-main .copy-btn {
     left: 50%;
     bottom: 24px;
     transform: translateX(-50%) translateY(6px);
-    z-index: 1200;
+    /* ⌘P のバックドロップ(1300)とヘルプ(1200)より上。.md-copy-tick と同じ理由で、
+       合図が隠れると意味が無い。転送(#31)が ⌘P の裏でタブを増やしたときは、これが
+       届いた唯一の証拠になる——1200 のままだと、一覧が伸びたパレットの不透明な
+       パネルとちょうど重なって完全に隠れる（下端が揃う）。 */
+    z-index: 1350;
     max-width: calc(100vw - 32px);
     padding: 7px 14px;
     border-radius: 999px;
@@ -1761,6 +1765,56 @@ body.md-cmt-mode .source-main .copy-btn {
     background: Canvas;
     color: CanvasText;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+/* 何に書いているか。入力欄は本文の差し替えを生き延びるので、裏が別ファイルに
+   なっても対象が読み取れるようにここへ出す。 */
+.md-cmt-popover-target {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    color: color-mix(in srgb, CanvasText 55%, Canvas);
+    margin: 0 2px 6px;
+}
+
+.md-cmt-popover-where {
+    overflow-wrap: anywhere;
+}
+
+/* 帰り道。裏が別のファイルになっている間だけ出る。 */
+.md-cmt-popover-back {
+    display: none;
+    flex: none;
+    font: inherit;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--md-accent);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* 裏が別のファイルになった入力欄。段落に寄り添う吹き出しをやめて隅へ退く。
+   錨のふりを続けると「何に書いているのか」が読めなくなるので、位置で別物だと示す。
+   移動は禁止しない——確認しに行くのはコメントを書く作業の一部なので、帰り道を出す。 */
+.md-cmt-popover--away {
+    left: auto !important;
+    top: auto !important;
+    right: 16px;
+    bottom: 16px;
+    width: 300px;
+}
+
+.md-cmt-popover--away .md-cmt-popover-back {
+    display: inline;
+}
+
+.md-cmt-popover--away .md-cmt-popover-where {
+    font-weight: 700;
+    color: CanvasText;
 }
 
 .md-cmt-textarea {

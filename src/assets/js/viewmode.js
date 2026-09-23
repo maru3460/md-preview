@@ -122,7 +122,12 @@
           // 錨れなかった（差分表示・巨大ソース）ならピクセルで妥協する。
           if (!MdCommon.restoreAnchor(anchor, sc) && sc) sc.scrollTop = savedScroll;
         })
-        .catch(function() { if (myReq === reqSeq) fail(); });
+        // then と同じ 2 つを見る。いまは世代だけでも足りる（モードを外す deactivate が
+        // その場で世代を進めるので、外れていれば世代も必ず違う）が、片方だけを見る形が
+        // 残っていると、次に「モードを付けるが世代は進めない」経路が増えたときに
+        // こちらだけ取り残される。fail() は通常表示へ戻す副作用を持つので、
+        // 取り残された時に出るのは「見ていたモードが黙って畳まれる」形になる。
+        .catch(function() { if (myReq === reqSeq && isActive()) fail(); });
     }
 
     function toggle() {

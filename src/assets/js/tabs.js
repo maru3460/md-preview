@@ -5,9 +5,14 @@
 // 既存の構造をそのまま活かせるのが理由で、hljs / mermaid / drawio の再実行が
 // 体感で重くなるようなら「タブごとに DOM を保持して display 切替」へ寄せる。
 //
-// 入口は folder.js の loadPreview() 1 本。ツリークリック / [ ] 巡回 / ⌘P /
+// 画面からの入口は folder.js の loadPreview() 1 本。ツリークリック / [ ] 巡回 / ⌘P /
 // 本文リンク / iframe 内リンク / コメントのジャンプ は全部そこを通るので、
 // onOpen() のフックだけで「開いたものは必ずタブに乗る」が成り立つ。
+//
+// もう 1 本、openMany() が外からの入口としてある（起動時の INITIAL_FILES と、#31 の
+// 転送）。こちらは先頭しかフェッチしないので、2 枚目以降は onOpen を通らず直接
+// tabs へ挿す。「開いたものは必ずタブに乗る」は成り立つが、逆（タブに乗ったものは
+// 必ず loadPreview を通った）は成り立たない。
 //
 // タブの識別子は loadPreview に渡るパスそのもの（常に絶対パス）。stdin をパイプで
 // 渡したときの一時ファイルも、root の外にあるだけで同じ形でここに乗る。
@@ -38,9 +43,20 @@
     var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
+  // 同名タブが並んだときに添える親ディレクトリ名。
+  //
+  // パイプ入力（`cat x.md | md`）の置き場所はここでは名前として使わない。実体化先は
+  // `$TMPDIR/md-stdin-<pid>/stdin.md` で、転送で 2 本受けると `stdin.md` が 2 枚に
+  // なり、この規則がそのまま `md-stdin-41234` を並べてしまう。数字の羅列は見分けの
+  // 役に立たないうえ、読んでいる人にとっては置き場所の都合でしかない。
+  // **見分けが付かないままにする**——パイプで渡したものは元の名前を持っていない。
   function parentName(p) {
     var segs = displayOf(p).split('/');
-    return segs.length >= 2 ? segs[segs.length - 2] : '';
+    if (segs.length < 2) return '';
+    var dir = segs[segs.length - 2];
+    var spool = window.MD_STDIN_PREFIX;
+    if (spool && dir.indexOf(spool) === 0) return '';
+    return dir;
   }
 
   // 現在出ているビューモード（raw / diff、無ければ null）。
@@ -98,15 +114,59 @@
     render();
   }
 
-  // 起動時（`md a.md b.md`）に複数のタブを並べる。フェッチするのは最初の 1 枚だけで、
-  // 残りはタブに載せるだけ（開いた時に取りに行く）。起動を N ファイルぶん遅らせない。
-  function openInitial(paths) {
+  // 複数のファイルをまとめてタブに並べる。起動時（`md a.md b.md`）と、既存の窓への
+  // 転送（#31）の共通の入口。フェッチするのは先頭の 1 枚だけで、残りはタブに載せる
+  // だけ（開いた時に取りに行く）。N ファイルぶん待たせない。
+  //
+  // 挿入位置は onOpen と同じ「現在タブの右隣」。起動時は tabs が空なので末尾追加と
+  // 同じ結果になり、2 つの規則を持つ理由が無い。
+  //
+  // `how.keepView` は「タブには載せるが、いま見ているものは動かさない」。手を止めて
+  // 画面の前に居る相手——コメントの入力中と ⌘P の検索中——に転送が来たときに使う
+  // （母集団は `folder.js` の `keepsView()` が持つ）。書いている対象や検索していた裏が
+  // 目の前で入れ替わると、何に書いていたのか・何を覆っていたのかが分からなくなる。
+  // 届いたファイルは失われず、タブバーに出るので着いたことも見える。
+  //
+  // 引数名を `opts` にしないのは、このモジュールが `{ openFile, clearFile }` を
+  // 同じ名前でモジュールスコープに持っているため。
+  function openMany(paths, how) {
     if (!paths || !paths.length) return;
-    paths.forEach(function(p) {
-      if (p && indexOf(p) === -1) tabs.push({ path: p, scroll: 0, mode: null });
-    });
-    if (!tabs.length) return;
-    activeIdx = 0;
+    var keepView = !!(how && how.keepView);
+    // 見ているタブはパスで覚える。添え字は下の splice でずれる——既存タブに当たると
+    // 挿し先が現在タブより左へ戻りうるので、「挿し先は現在タブより右」は成り立たない。
+    var stay = tabs[activeIdx] ? tabs[activeIdx].path : null;
+    var inherited = currentMode();
+    saveActiveState();
+    var first = null;
+    var at = activeIdx + 1;
+    for (var i = 0; i < paths.length; i++) {
+      var p = paths[i];
+      if (!p) continue;
+      if (!first) first = p;
+      var found = indexOf(p);
+      if (found !== -1) {
+        // 既に開いているタブは動かさない（並べ替えると読んでいたタブが勝手に動く）。
+        // ただし挿し先はそこまで進める。進めないと、渡した並びの後ろが既存タブより
+        // 左に取り残されて「[a, c, b] を渡したのに b を表示」のような形になる。
+        at = found + 1;
+        continue;
+      }
+      tabs.splice(at, 0, { path: p, scroll: 0, mode: inherited });
+      at++;
+    }
+    if (!first) return;
+    // タブが 1 枚も無いところで keepView を守るものは無い（守る「いま見ているもの」が
+    // 存在しない）。タブ帯にだけ並んで本文が空のまま、という見えない状態を作らない。
+    if (keepView && stay !== null) {
+      // 添え字はパスから引き直す。splice が現在タブより左で起きていると、そのままでは
+      // 別のタブを指したまま「本文は前のファイル」という分裂状態になり、次のタブ操作が
+      // 見ていないタブへ読み位置を書き込む。
+      activeIdx = indexOf(stay);
+      render();
+      return;
+    }
+    // 添え字は全部挿し終わってから引き直す。先に控えると、後ろの splice でずれる。
+    activeIdx = indexOf(first);
     show();
   }
 
@@ -277,7 +337,7 @@
       }
     },
     onOpen: onOpen,
-    openInitial: openInitial,
+    openMany: openMany,
     scrollFor: scrollFor,
     closeByPath: function(path) { closeAt(indexOf(path)); },
     closeOthers: closeOthers,
