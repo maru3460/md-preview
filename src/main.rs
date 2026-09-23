@@ -36,6 +36,11 @@ enum AppEvent {
     /// ページが `MdOpenFiles` を受けられる状態になった合図。
     /// 窓は中身を待たずに出るので、これより前の `Open` は溜めておく。
     Ready,
+    /// 窓が全画面から抜け終わった（#59）。AppKit の通知を
+    /// `platform::watch_exit_fullscreen` で受けて、ここへ流し直している。
+    ExitedFullscreen,
+    /// 全画面から抜けるのを待つ期限が来た（#59）。
+    CloseDeadline,
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -450,9 +455,16 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     let launcher_pid = platform::get_frontmost_pid();
+    // 戻し先を持たない OS でも同じ形で持ち回れるようにする。閉じる処理を
+    // `finish_and_exit` に切ったので、ここが cfg で消えると呼び出し側まで cfg が要る。
+    #[cfg(not(target_os = "macos"))]
+    let launcher_pid: Option<i32> = None;
 
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    // 全画面まわりの通知と、閉じる待ちの期限を自分へ戻すぶん。`proxy` は下で
+    // ipc_handler へムーブされるので、控えをここで取っておく。
+    let fullscreen_proxy = event_loop.create_proxy();
 
     // 転送の受け口を開ける。accept ループは別スレッドで、届いたものは
     // EventLoopProxy 経由でメインスレッドへ渡す（ファイル監視と同じ形）。
@@ -603,6 +615,18 @@ fn main() {
     // 消さない（1 回あたり数 KB で、置き場所は $TMPDIR）。
     let mut owned_dirs: Vec<PathBuf> = stdin_dir.into_iter().collect();
 
+    // 閉じる処理の進み具合（#59）。全画面のときだけ「抜け終わるのを待つ」状態を挟む。
+    let mut closing = Closing::No;
+
+    // 全画面から抜け終わった合図の購読。**プロセスと寿命を揃える**（`EventLoop::run` は
+    // 戻らないので、ここに置いたまま最後まで生きる）。
+    let _fullscreen_watch = platform::watch_exit_fullscreen(&window, {
+        let proxy = fullscreen_proxy.clone();
+        move || {
+            let _ = proxy.send_event(AppEvent::ExitedFullscreen);
+        }
+    });
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -612,26 +636,62 @@ fn main() {
                 ..
             }
             | Event::UserEvent(AppEvent::Close) => {
-                // stdin を実体化した一時ファイルはプロセスと寿命を揃える
-                // （表示中はドキュメントそのものなので、読んだ直後には消せない）。
-                // メニューの ⌘Q は `performClose:` なのでここを通るが、Dock からの
-                // Quit（terminate）とクラッシュは通らない。置き場所が $TMPDIR なので
-                // 取り残しは OS の掃除に任せる。
-                //
-                // #49（窓を閉じてもプロセスを生かす）が入ったら、呼ぶ場所がここから
-                // 本当の終了経路へ移る。だから腕に直書きせず関数に切ってある。
-                drop_owned(&mut owned_dirs);
-                // ソケットファイルの後始末は衛生であって、正しさの要件ではない。
-                // 次の起動が listen() で無条件に unlink → bind し直すので、
-                // terminate やクラッシュで取り残しても壊れない。
-                if let Some(handle) = &seat {
-                    handle.unlink();
+                // Why not 「抜けている最中」も待つ: styleMask は抜け始めで false に
+                // 落ちるので、⌃⌘F で抜けるアニメーション中（約 1 秒）に閉じると、ここは
+                // 「全画面ではない」と読んで即終了する＝ #59 の症状がそのまま出る。
+                // 塞ぐには `NSWindowWillExitFullScreenNotification` をもう 1 本購読して
+                // 「遷移中」を自前で持つことになるが、**わざわざその 1 秒に ⌘W を押した
+                // 場合だけ**で、しかも直す前と同じ着地にしかならない。割に合わないと見た。
+                match close_step(platform::is_window_fullscreen(&window), &closing) {
+                    CloseStep::ExitFullscreen => {
+                        // 座はここで手放す。閉じると決めた窓が受け口を持ったままだと、
+                        // 抜けるのを待っている 1 秒ほどの間に届いた転送が、タブを足した
+                        // 直後にプロセスごと消える（＝叩いたのに何も出ない）。先に
+                        // ソケットを消せば、後から来た md は繋がらず自分で窓を開く。
+                        // unlink は冪等なので、終了時にもう一度撃っても構わない。
+                        if let Some(handle) = &seat {
+                            handle.unlink();
+                        }
+                        // 抜けるのは tao 経由で頼む。`toggleFullScreen:` を直接叩くより
+                        // 安全で、遷移の最中に呼ばれたぶんは tao が積み直してくれる。
+                        window.set_fullscreen(None);
+                        closing = Closing::ExitingFullscreen;
+                        // 期限は別スレッドから送る。`ControlFlow::WaitUntil` は使えない
+                        // ——このクロージャは 1 周回に何度も呼ばれ、頭の `Wait` が
+                        // 周回の最後に必ず上書きするので、タイマーが張られない（実測）。
+                        // 監視と IPC が使っている「スレッド → proxy」に揃える。
+                        let proxy = fullscreen_proxy.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(FULLSCREEN_EXIT_WAIT);
+                            let _ = proxy.send_event(AppEvent::CloseDeadline);
+                        });
+                    }
+                    CloseStep::Finish => {
+                        finish_and_exit(
+                            &mut closing,
+                            &mut owned_dirs,
+                            &seat,
+                            launcher_pid,
+                            control_flow,
+                        );
+                    }
+                    // 待っている最中に来た要求（⌘W 連打、待ち中の赤ボタンや ⌘Q）と、
+                    // 終了処理の後に届いたぶんは捨てる。
+                    CloseStep::KeepWaiting | CloseStep::Ignore => {}
                 }
-                #[cfg(target_os = "macos")]
-                if let Some(pid) = launcher_pid {
-                    platform::activate_pid(pid);
+            }
+            // 全画面から抜け終わった。
+            Event::UserEvent(AppEvent::ExitedFullscreen) => {
+                if closing == Closing::ExitingFullscreen {
+                    finish_and_exit(&mut closing, &mut owned_dirs, &seat, launcher_pid, control_flow);
                 }
-                *control_flow = ControlFlow::Exit;
+            }
+            // 抜け終わりの通知が来ないまま期限が過ぎた（#59）。閉じられない窓を残すより
+            // 諦めて閉じる。着地は #59 を直す前と同じ（デスクトップ Space）で、悪化はしない。
+            Event::UserEvent(AppEvent::CloseDeadline) => {
+                if closing == Closing::ExitingFullscreen {
+                    finish_and_exit(&mut closing, &mut owned_dirs, &seat, launcher_pid, control_flow);
+                }
             }
             Event::WindowEvent {
                 event: WindowEvent::ThemeChanged(os_theme),
@@ -698,13 +758,136 @@ fn main() {
     });
 }
 
-/// 掃除を約束した一時ディレクトリを消す。**プロセスが終わるときに呼ぶもの。**
-///
-/// #49（窓を閉じてもプロセスを生かす）が入ると、`CloseRequested` は「隠す」に変わって
-/// ここを通らなくなる。そのとき呼ぶ場所を移すだけで済むよう、腕に直書きせず切ってある。
+/// 掃除を約束した一時ディレクトリを消す。**プロセスが終わるときに呼ぶもの**で、
+/// 呼ぶのは [`finish_and_exit`] だけ。
 fn drop_owned(dirs: &mut Vec<PathBuf>) {
     for dir in dirs.drain(..) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// 後始末をして終了する。**プロセスが終わる唯一の経路。**
+///
+/// 4 つの手順をここ 1 箇所に集める。閉じる要求は #59 で「全画面なら先に抜ける」という
+/// 待ちを挟むようになり、終了に至る入口が 2 つ（要求を受けた所と、抜け終わった所）に
+/// 増えたため。#49（窓を閉じてもプロセスを生かす）が入ったら、隠す経路はこれを呼ばず、
+/// 本当の終了だけがここへ来る。
+fn finish_and_exit(
+    closing: &mut Closing,
+    owned_dirs: &mut Vec<PathBuf>,
+    seat: &Option<md_preview::instance::Handle>,
+    launcher_pid: Option<i32>,
+    control_flow: &mut ControlFlow,
+) {
+    // 「終わった」を立てるのはここ 1 箇所。入口が 3 つ（要求・通知・期限）あるので、
+    // 呼び出し側の約束にすると 1 つ忘れただけで後始末が二度走る。
+    *closing = Closing::Done;
+    // stdin を実体化した一時ファイルはプロセスと寿命を揃える（表示中はドキュメント
+    // そのものなので、読んだ直後には消せない）。メニューの ⌘Q は `performClose:` なので
+    // ここを通るが、Dock からの Quit（terminate）とクラッシュは通らない。置き場所が
+    // $TMPDIR なので取り残しは OS の掃除に任せる。
+    drop_owned(owned_dirs);
+    // ソケットファイルの後始末は衛生であって、正しさの要件ではない。次の起動が
+    // listen() で無条件に unlink → bind し直すので、terminate やクラッシュで
+    // 取り残しても壊れない。
+    if let Some(handle) = seat {
+        handle.unlink();
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(pid) = launcher_pid {
+        platform::activate_pid(pid);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = launcher_pid;
+    *control_flow = ControlFlow::Exit;
+}
+
+/// 全画面から抜け終わるのを待つ上限。超えたら諦めて閉じる。
+///
+/// 諦めた先は #59 を直す前と同じ着地（デスクトップ Space へ落ちる）で、悪化はしない。
+/// 上限を置くのは、抜けられない状況——AppKit が `windowDidFailToEnterFullScreen:` の
+/// 側へ倒れた、遷移が終わらない——で閉じられない窓を作らないため。
+///
+/// 片道のアニメーションは実測 0.6〜1 秒だが、**入っている途中に閉じると往復ぶん要る**。
+/// tao は遷移中の `set_fullscreen` を積んでおいて入り終わってから流すので
+/// （0.35 `macos/window.rs` の `target_fullscreen`）、「入る → 抜ける」の 2 回が直列になる。
+/// そこで閉じられないと #59 が直っていないのと同じなので、往復に足りる幅を取る。
+const FULLSCREEN_EXIT_WAIT: Duration = Duration::from_millis(2500);
+
+
+/// 閉じる処理がどこまで進んでいるか。
+///
+/// 全画面の窓をそのまま終了させると、macOS からは強制終了と同じ形に見えて、閉じた後に
+/// 隣のデスクトップ Space が出てくる（#59）。先に全画面から抜けて元の Space へ戻してから
+/// 閉じると、出てくるのは起動元の端末が居る Space になる。
+/// 閉じる処理がどこまで進んでいるか。
+///
+/// 全画面の窓をそのまま終了させると、macOS からは強制終了と同じ形に見えて、閉じた後に
+/// 隣のデスクトップ Space が出てくる（#59）。先に全画面から抜けて元の Space へ戻してから
+/// 閉じると、出てくるのは起動元の端末が居る Space になる。
+#[derive(Debug, PartialEq, Eq)]
+enum Closing {
+    No,
+    /// 全画面から抜けるよう頼んで、抜け終わるのを待っている。
+    ExitingFullscreen,
+    /// 終了処理は済んだ。`ControlFlow::Exit` を立てた後も、そのイテレーションぶんの
+    /// イベントは届き続けるので、二度と後始末を走らせないための状態。
+    Done,
+}
+
+/// 閉じる要求を受けたとき、いま何をすべきか。
+#[derive(Debug, PartialEq, Eq)]
+enum CloseStep {
+    /// 全画面から抜けるよう頼んで、待ちに入る。
+    ExitFullscreen,
+    /// 待っている最中の要求。捨てる。
+    KeepWaiting,
+    /// 後始末をして終了する。
+    Finish,
+    /// もう終わっている。何もしない。
+    Ignore,
+}
+
+/// [`CloseStep`] を決める。窓もイベントループも要らないので、ここだけテストできる。
+///
+/// 待ちを終わらせるのは抜け終わりの通知（[`AppEvent::ExitedFullscreen`]）か期限
+/// （[`AppEvent::CloseDeadline`]）で、どちらもイベントとして届く。だからこの関数は
+/// 時刻を持たない。
+fn close_step(fullscreen: bool, closing: &Closing) -> CloseStep {
+    match closing {
+        Closing::Done => CloseStep::Ignore,
+        Closing::ExitingFullscreen => CloseStep::KeepWaiting,
+        Closing::No if fullscreen => CloseStep::ExitFullscreen,
+        Closing::No => CloseStep::Finish,
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_window_closes_immediately() {
+        assert_eq!(close_step(false, &Closing::No), CloseStep::Finish);
+    }
+
+    #[test]
+    fn a_fullscreen_window_exits_fullscreen_first() {
+        assert_eq!(close_step(true, &Closing::No), CloseStep::ExitFullscreen);
+    }
+
+    #[test]
+    fn close_requests_during_the_wait_are_ignored() {
+        // 待っている間は全画面かどうかを見ない。styleMask は抜け始めで false へ落ちるので、
+        // 見てしまうと待ちが即終わる。
+        assert_eq!(close_step(true, &Closing::ExitingFullscreen), CloseStep::KeepWaiting);
+        assert_eq!(close_step(false, &Closing::ExitingFullscreen), CloseStep::KeepWaiting);
+    }
+
+    #[test]
+    fn a_finished_close_ignores_later_requests() {
+        assert_eq!(close_step(true, &Closing::Done), CloseStep::Ignore);
+        assert_eq!(close_step(false, &Closing::Done), CloseStep::Ignore);
     }
 }
 

@@ -136,6 +136,109 @@ pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_appearance(_window: &tao::window::Window, _dark: bool) {}
 
+/// 窓がネイティブ全画面に入っているか。**「閉じる前に抜けるのを待つ必要があるか」の
+/// 判定だけに使う**（#59）。
+///
+/// ⚠️ **抜け終わったかの判定には使えない。** このビットは抜け*始め*で落ちる
+/// （`set_fullscreen(None)` の 17ms 後には false、実測 2026-09-23）。アニメーションは
+/// そこから 1 秒近く続くので、これを完了の合図に使うと結局「全画面のまま終了」になる。
+/// 完了は [`watch_exit_fullscreen`] の通知で受けること。
+///
+/// **tao の `Window::fullscreen()` も使えない。** あちらが返すのは tao 自前の状態で、
+/// `set_fullscreen(None)` は `toggleFullScreen:` を main queue へ積む**前**にその状態を
+/// 書き換える（tao 0.35 `platform_impl/macos/window.rs`）。頼んだ瞬間に `None` になる。
+///
+/// 緑ボタン・⌃⌘F（`setup_menu` の `toggleFullScreen:`）・`set_fullscreen` のどれで
+/// 入っても同じビットが立つ。入り口を問わないのが AppKit の実体を読む利点。
+#[cfg(target_os = "macos")]
+pub fn is_window_fullscreen(window: &tao::window::Window) -> bool {
+    use objc2_app_kit::{NSWindow, NSWindowStyleMask};
+    use tao::platform::macos::WindowExtMacOS;
+
+    let ptr = window.ns_window() as *mut NSWindow;
+    // 引き受けている不変条件は [`set_window_appearance`] と同じ 2 つだが、生存の根拠は
+    // 違う。こちらは閉じる経路から呼ぶので「窓を作った直後だから生きている」とは言えない。
+    // 代わりに、借りている `window` が生きている間はこのポインタも有効（tao の契約）で、
+    // 呼び出し側はイベントループのクロージャが所有する `window` を渡している、を根拠にする。
+    let Some(ns_window) = (unsafe { ptr.as_ref() }) else {
+        return false;
+    };
+    ns_window.styleMask().contains(NSWindowStyleMask::FullScreen)
+}
+
+/// #59 は「全画面の窓を閉じると別の Space が出てくる」という macOS 固有の症状で、
+/// 他の OS には全画面 Space に相当するものが無い。待つ必要が無いので常に false。
+#[cfg(not(target_os = "macos"))]
+pub fn is_window_fullscreen(_window: &tao::window::Window) -> bool {
+    false
+}
+
+/// [`watch_exit_fullscreen`] が返す札。**購読を解除する手段は持たない。**
+///
+/// 解除に要るのは `removeObserver:` で、札を落とすだけでは切れない（通知センターが
+/// 自分でも保持している）。それでも `Drop` を書かないのは、**走らないから**——
+/// `EventLoop::run` は終了時に `process::exit` するので、この札も含めて `Drop` は
+/// 一度も呼ばれない（`instance::Handle` が同じ理由で `Drop` を持たないのと揃える）。
+/// 窓も購読もプロセスと寿命を揃えるものなので、解除する場面がそもそも無い。
+#[cfg(target_os = "macos")]
+pub struct ExitFullscreenWatch(
+    #[allow(dead_code)]
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>,
+);
+
+#[cfg(not(target_os = "macos"))]
+pub struct ExitFullscreenWatch;
+
+/// 窓が全画面から**抜け終わった**ら `on_exit` を呼ぶ（#59）。
+///
+/// tao はこの遷移を外へ出さない。delegate は 4 つとも実装しているのに、利用者へ届くのは
+/// `Resized` / `Moved` だけで、アニメーション中に何度も来る同じイベントと区別が付かない
+/// （tao 0.35 `macos/window_delegate.rs`）。そこで AppKit の通知を直接購読する。
+/// 通知は delegate の呼び出しとは独立に出るので、**tao の delegate を奪わずに済む**
+/// （奪うと `CloseRequested` も `Resized` も死ぬ）。
+///
+/// `queue` に `None` を渡すので、ブロックは通知を出したスレッド＝メインスレッドで
+/// 同期に走る。イベントループのクロージャへ渡す手段（`EventLoopProxy`）はスレッド跨ぎで
+/// 安全なので、`on_exit` の中でそれを撃てばよい。
+#[cfg(target_os = "macos")]
+pub fn watch_exit_fullscreen<F: Fn() + 'static>(
+    window: &tao::window::Window,
+    on_exit: F,
+) -> Option<ExitFullscreenWatch> {
+    use objc2_app_kit::{NSWindow, NSWindowDidExitFullScreenNotification};
+    use objc2_foundation::NSNotificationCenter;
+    use tao::platform::macos::WindowExtMacOS;
+
+    let ptr = window.ns_window() as *mut NSWindow;
+    // 不変条件は [`is_window_fullscreen`] と同じ。借りている `window` が生きている間は
+    // このポインタも有効（tao の契約）で、メインスレッドから呼ばれる。
+    let ns_window = unsafe { ptr.as_ref() }?;
+
+    let block = block2::RcBlock::new(move |_notification: std::ptr::NonNull<_>| {
+        on_exit();
+    });
+    // 監視対象をこの窓に絞る（`object:` に窓を渡す）。絞らないと、将来窓が増えたときに
+    // 他の窓の遷移でも起こされる。
+    let token = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSWindowDidExitFullScreenNotification),
+            Some(ns_window),
+            None,
+            &block,
+        )
+    };
+    Some(ExitFullscreenWatch(token))
+}
+
+/// 購読しない。[`is_window_fullscreen`] が常に false を返すので、そもそも待ちに入らない。
+#[cfg(not(target_os = "macos"))]
+pub fn watch_exit_fullscreen<F: Fn() + 'static>(
+    _window: &tao::window::Window,
+    _on_exit: F,
+) -> Option<ExitFullscreenWatch> {
+    None
+}
+
 #[cfg(target_os = "macos")]
 pub fn get_frontmost_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;
