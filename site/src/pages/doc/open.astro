@@ -45,6 +45,13 @@ cat note.md | md     # 標準入力から読む`}</pre>
     ルートの外のファイルでもタブには乗ります（ツリーには出ません）。
   </p>
 
+  <p>
+    ただし<strong>作業の途中には割り込みません</strong>。
+    コメントを書いている最中と、<kbd>⌘P</kbd> でファイルを検索している最中は、
+    届いたファイルをタブに載せるだけで<strong>表示は切り替えません</strong>。
+    書きかけも打ちかけの検索語もそのままで、届いたことはタブとトーストで分かります。
+  </p>
+
   <div class="codebox">
     <div class="codebox-head"><span>Terminal</span></div>
     <pre>{`md intro.md          # ウィンドウが開く

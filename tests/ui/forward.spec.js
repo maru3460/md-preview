@@ -123,7 +123,7 @@ test('root の外のファイルも転送でタブに乗り、監視を頼む', 
 
 test('⌘P の検索は転送で畳まれず、入力も表示も残る', async ({ page }) => {
   // 転送はこちらから叩いた結果なのに、検索の途中を巻き添えにする理由が無い。
-  // 一覧は root のファイル一覧なので、裏のファイルが変わっても中身は有効なまま。
+  // パレットが残るだけでなく、覆っている裏の表示も動かない。
   await openFolder(page);
   await openFile(page, 'a.md');
   await page.keyboard.press('Meta+p');
