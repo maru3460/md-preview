@@ -141,6 +141,38 @@ test('⌘P の検索は転送で畳まれず、入力も表示も残る', async 
   await expect(body(page)).not.toContainText('長い見出し');
 });
 
+test('⌘P が覆っていても、届いたトーストは読める', async ({ page }) => {
+  // 表示を奪わない経路では、トーストが届いた唯一の証拠になる。パレットの一覧が
+  // 伸びると不透明なパネルの下端とトーストの下端が揃うので、重なりが起きる高さで測る。
+  await page.setViewportSize({ width: 1000, height: 420 });
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('Meta+p');
+  await expect(page.locator('#md-pal-backdrop')).toBeVisible();
+
+  await forward(page, [page.mdRoot + '/long.md']);
+
+  const seen = await page.evaluate(() => {
+    const t = document.querySelector('.md-toast');
+    const panel = document.querySelector('.md-pal-panel');
+    const tr = t.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    return {
+      text: t.textContent,
+      // 不透明なパネルと実際に重なっているか（重なっていなければ積み順を測る意味が無い）
+      overlapped: !(tr.right < pr.left || tr.left > pr.right ||
+                    tr.bottom < pr.top || tr.top > pr.bottom),
+      // 積み順。どちらも body 直下の position:fixed なので z-index の数値で決まる。
+      // elementFromPoint では測れない（トーストは pointer-events: none）。
+      toastZ: parseInt(getComputedStyle(t).zIndex, 10),
+      backdropZ: parseInt(getComputedStyle(document.getElementById('md-pal-backdrop')).zIndex, 10)
+    };
+  });
+  expect(seen.text).toContain('long.md');
+  expect(seen.overlapped).toBe(true);
+  expect(seen.toastZ).toBeGreaterThan(seen.backdropZ);
+});
+
 test('パレットを閉じても、開いたつもりのないファイルは出てこない', async ({ page }) => {
   // 表示を譲る理由はここにある。パレットは画面を覆っているので差し替えは見えず、
   // 奪われていると Esc を押した瞬間に別のファイルが出る。

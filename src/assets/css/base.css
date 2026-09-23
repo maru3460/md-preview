@@ -1628,7 +1628,11 @@ body.md-cmt-mode .source-main .copy-btn {
     left: 50%;
     bottom: 24px;
     transform: translateX(-50%) translateY(6px);
-    z-index: 1200;
+    /* ⌘P のバックドロップ(1300)とヘルプ(1200)より上。.md-copy-tick と同じ理由で、
+       合図が隠れると意味が無い。転送(#31)が ⌘P の裏でタブを増やしたときは、これが
+       届いた唯一の証拠になる——1200 のままだと、一覧が伸びたパレットの不透明な
+       パネルとちょうど重なって完全に隠れる（下端が揃う）。 */
+    z-index: 1350;
     max-width: calc(100vw - 32px);
     padding: 7px 14px;
     border-radius: 999px;
