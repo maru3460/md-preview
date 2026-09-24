@@ -189,6 +189,26 @@ fn message_to_forward(
     let mut msg = Message::new(ids);
     msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     msg.sender_pid = Some(std::process::id() as i32);
+    // 受け側の「閉じたら戻る先」（#49）。窓を持つプロセスは生き続けるので、
+    // 起動のたびにここを運ばないと 2 回目以降は最初の端末へ戻ることになる。
+    //
+    // Why not **転送が通ると分かってから取る**: 転送のホットパスで AppKit を
+    // 起こすことになるが、**実測では追加コストがほぼ 0**（送り側の短命プロセスで
+    // 6 回）。送り側は転送の直後に `activate_other` を撃ち、あれが
+    // `runningApplicationWithProcessIdentifier` で LaunchServices を起こすので、
+    // **代金は元から払っている**。先に払うと後ろが安くなるだけである。
+    //
+    // | | `activate_other` だけ | ここを足した形 |
+    // | -- | -- | -- |
+    // | frontmost | — | 0.72〜0.92ms |
+    // | lookup | 0.90〜1.71ms | 0.008〜0.013ms |
+    //
+    // 誰も居ないとき（冷スタート）は 0.8ms を捨てることになるが、その経路は
+    // 元から 259ms 掛かっているので、避けるために組み替える価値は無いと見た。
+    #[cfg(target_os = "macos")]
+    {
+        msg.launcher_pid = platform::get_frontmost_pid();
+    }
     // stdin の一時ディレクトリは受け側が引き取る。**送り側は消さない**——消すと
     // 受け側が死んだパスを開くことになる。門を通らないものは載せない（＝誰も
     // 消さない。消し損ねる方が誤削除より安い）。
@@ -462,12 +482,13 @@ fn main() {
         stdin_dir,
     } = config;
 
+    // 転送で開かれるたびに更新する（#49）ので mut。
     #[cfg(target_os = "macos")]
-    let launcher_pid = platform::get_frontmost_pid();
+    let mut launcher_pid = platform::get_frontmost_pid();
     // 戻し先を持たない OS でも同じ形で持ち回れるようにする。閉じる処理を
     // `finish_and_exit` に切ったので、ここが cfg で消えると呼び出し側まで cfg が要る。
     #[cfg(not(target_os = "macos"))]
-    let launcher_pid: Option<i32> = None;
+    let mut launcher_pid: Option<i32> = None;
 
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -775,6 +796,17 @@ fn main() {
                 if closing.pending_intent() == Some(CloseIntent::Hide) {
                     closing = Closing::No;
                 }
+                // 閉じたときの戻り先を、いま叩いた端末へ付け替える（#49）。
+                // 自分自身は弾く——md の窓が前に居るときに叩かれると送り側は
+                // それを「前に居たもの」として読むので、そのまま採ると ⌘W で
+                // 自分を前面化することになる。弾いたときは前の値を残す。
+                // `None` に落とすと「どこへも戻らない」になるが、直前に居た端末へ
+                // 戻る方が、戻り先を失うより外れても害が小さい。
+                if let Some(pid) = msg.launcher_pid {
+                    if pid != std::process::id() as i32 {
+                        launcher_pid = Some(pid);
+                    }
+                }
                 // 掃除の約束はワイヤから来た値を信用せず、送り側と同じ門に通してから
                 // 引き取る（信用した時点で `own=/etc` が通る道ができる）。
                 // 載っているのは実体化したファイルのパスで、門が消してよい親を返す。
@@ -913,11 +945,8 @@ fn hide_window(window: &tao::window::Window, closing: &mut Closing, launcher_pid
     *closing = Closing::No;
     window.set_visible(false);
     // 隠した後にフォーカスが誰へ行くかは OS 任せなので、終了するときと同じように
-    // 起動元へ明示的に返す。
-    //
-    // ⚠ `launcher_pid` は**この窓を作った起動**の値で固定されている。プロセスが
-    // 生き続けると、2 回目以降に転送で開いたときの起動元とずれる（転送は窓を作らない
-    // ので、ここを更新する経路がまだ無い）。どう更新するかは骨を測ってから決める。
+    // 起動元へ明示的に返す。`launcher_pid` は転送を受けるたびに付け替わる
+    // （`AppEvent::Open` の腕）ので、ここが指すのは**最後に叩いた端末**である。
     #[cfg(target_os = "macos")]
     if let Some(pid) = launcher_pid {
         platform::activate_pid(pid);
@@ -1019,10 +1048,9 @@ impl Closing {
 
 /// 閉じる要求の行き先。全画面から抜けるまでの手順は共通で、最後の一手だけが違う。
 ///
-/// いまの割り当ては**骨の暫定**で、ページの ⌘W だけが `Hide`、× とメニューの ⌘Q が
-/// `Quit`。本来 × は `Hide` だが、そうするとメニューの Quit（`performClose:`）まで
-/// 一緒に隠す側へ行き、終了する手段が UI から無くなる。⌘Q に自前の終了経路を作るのは
-/// 骨を測ってからにする（#49）。
+/// 入口で割り当てが決まる。ページの ⌘W と × ボタンが `Hide`、メニューの ⌘Q だけが
+/// `Quit`。⌘Q が `performClose:` ではなく自前の宛先を通るのは、あれが × と同じ穴で、
+/// 隠す側へ行くと終了する手段が UI から消えるため（`platform::setup_menu`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloseIntent {
     /// 窓を隠してプロセスは生かす。
