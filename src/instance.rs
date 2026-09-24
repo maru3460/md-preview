@@ -174,6 +174,18 @@ pub struct Message {
     pub cwd: Option<String>,
     /// 送り側の pid。いまは診断用。
     pub sender_pid: Option<i32>,
+    /// 送り側が起動した時点で**前に居たアプリ**の pid。**受け側の「閉じたら戻る先」**
+    /// になる（#49）。窓を持つプロセスが生き続けるようになったので、起動のたびに
+    /// 更新しないと 2 回目以降は最初の端末へ戻ってしまう。
+    ///
+    /// **親プロセスではない。** 実体は `NSWorkspace.frontmostApplication` で、
+    /// `getppid` で得られるのは端末の中のシェルであってアプリではない（前面化の
+    /// 相手にできない）。ふつうは叩いた端末がそこに居るので同じ物を指すが、
+    /// 「md を叩いたのが誰か」ではなく「そのとき前に居たのが誰か」である。
+    ///
+    /// 送り側は run loop を回さないので `frontmostApplication` は起動時点の値を
+    /// 握ったままだが、**欲しいのがまさにその値**なのでこれでよい。
+    pub launcher_pid: Option<i32>,
     /// 受け側を前面に出すか。#38 の 4 値設定の受け皿で、いまは常に true。
     pub activate: bool,
 }
@@ -192,6 +204,9 @@ impl Message {
         }
         if let Some(pid) = self.sender_pid {
             push_token(&mut out, &format!("pid={}", pid));
+        }
+        if let Some(pid) = self.launcher_pid {
+            push_token(&mut out, &format!("launcher={}", pid));
         }
         push_token(&mut out, if self.activate { "activate=1" } else { "activate=0" });
         for f in &self.files {
@@ -222,6 +237,7 @@ impl Message {
                 "own" => msg.own.push(value.to_string()),
                 "cwd" => msg.cwd = Some(value.to_string()),
                 "pid" => msg.sender_pid = value.parse().ok(),
+                "launcher" => msg.launcher_pid = value.parse().ok(),
                 "activate" => msg.activate = value != "0",
                 // 未知のキーは無視する。前方互換の約束そのものなので、ここで
                 // エラーにしてはいけない。

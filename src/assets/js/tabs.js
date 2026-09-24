@@ -188,6 +188,17 @@
     if (window.MdCommon && MdCommon.closeWindow) MdCommon.closeWindow();
   }
 
+  // 閉じたタブを Rust へ知らせる。パイプ入力を実体化した一時ファイルは、そのタブが
+  // 持ち主なので、閉じた時点で消してよい（#49。窓を閉じてもプロセスが生き続けるように
+  // なったので、終了まで持つと $TMPDIR へ積み上がる）。
+  // 一時ファイルでないパスも届くが、Rust 側が「自分が引き取ったもの」に絞って捨てる。
+  function reportClosed(closed) {
+    if (!window.ipc) return;
+    for (var i = 0; i < closed.length; i++) {
+      if (closed[i] && closed[i].path) ipc.postMessage('closed:' + closed[i].path);
+    }
+  }
+
   function closeAt(i) {
     // タブが 1 枚も無い（`md .` で起動してまだ何も開いていない）ときの ⌘W は
     // ウィンドウを閉じる。ここで抜けてしまうと、⌘W に割り当てられているのは
@@ -195,9 +206,20 @@
     if (!tabs.length) { closeWindow(); return; }
     if (i < 0 || i >= tabs.length) return;
     // 最後の 1 枚を閉じるのもウィンドウを閉じるのと同じ（⌘W の従来の意味）。
+    //
+    // Why not **タブも外す**: #49 で ⌘W はプロセスを終えずに窓を隠すだけになった
+    // ので、外すと次に窓を戻したとき空になっている。`echo x | md` で開いて ⌘W で
+    // 端末へ戻る、が一番多い使い方で、そこで読んでいたものが消えるのは困る。
+    //
+    // Why not **右クリックの「閉じる」だけ別扱いにする**: 1 枚のとき、この項目は
+    // タブを残して窓を消し、同じメニューの「すべてのタブを閉じる」はタブを消して
+    // 窓を残す——逆に見えるが、**項目名が `閉じる (⌘W)` で ⌘W を名乗っている**
+    // （contextmenu.js）。分けるとその案内が嘘になる。Safari も最後の 1 枚を
+    // 右クリックで閉じると窓が閉じるので、いまの形の方が揃っている。
+    // 分けるなら、ラベルから `(⌘W)` を外すのが先。
     if (tabs.length === 1) { closeWindow(); return; }
     var wasActive = (i === activeIdx);
-    tabs.splice(i, 1);
+    reportClosed(tabs.splice(i, 1));
     if (wasActive) {
       // 右隣へ移る（右端だったら左隣）。
       activeIdx = Math.min(i, tabs.length - 1);
@@ -212,6 +234,7 @@
     var keep = tabs[indexOf(path)];
     if (!keep) return;
     var wasActive = (tabs[activeIdx] === keep);
+    reportClosed(tabs.filter(function(t) { return t !== keep; }));
     tabs = [keep];
     activeIdx = 0;
     if (wasActive) render();
@@ -224,6 +247,7 @@
   // 「片付けたら道具ごと消えた」になる。
   function closeAll() {
     if (!tabs.length) return;
+    reportClosed(tabs);
     tabs = [];
     activeIdx = -1;
     render();

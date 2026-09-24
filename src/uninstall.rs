@@ -45,7 +45,7 @@ impl Removal {
 /// 置く唯一の場所なので、prefix がどこか（`/opt/homebrew` か `/usr/local` か、
 /// 独自の prefix か）を知らなくても見分けられる。
 ///
-/// 辿るので、バンドルの `~/.config/md-preview/app/md` から呼ばれても正しく出る。
+/// 辿るので、バンドルの `~/.config/md-preview/md/md` から呼ばれても正しく出る。
 pub fn detect(exe: &Path) -> Removal {
     let real = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
     if real.components().any(|c| c.as_os_str() == "Cellar") {

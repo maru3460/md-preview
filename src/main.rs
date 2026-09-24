@@ -44,6 +44,15 @@ enum AppEvent {
     ExitedFullscreen,
     /// 全画面から抜けるのを待つ期限が来た（#59）。
     CloseDeadline,
+    /// メニューの ⌘Q（#49）。⌘W と × は隠すので、**本当に終了する要求はこれだけ**。
+    /// `platform::setup_menu` に渡したクロージャから届く。
+    Quit,
+    /// タブが閉じられた（#49）。パイプ入力を実体化した一時ファイルの持ち主は
+    /// そのタブなので、閉じた時点で消してよい。
+    TabClosed(String),
+    /// アプリが前面に出た（#49）。隠してある窓を戻すために使う。
+    /// Dock アイコンのクリック・⌘Tab・転送してきた md の `activate` が引き金。
+    Reopen,
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -183,6 +192,26 @@ fn message_to_forward(
     let mut msg = Message::new(ids);
     msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     msg.sender_pid = Some(std::process::id() as i32);
+    // 受け側の「閉じたら戻る先」（#49）。窓を持つプロセスは生き続けるので、
+    // 起動のたびにここを運ばないと 2 回目以降は最初の端末へ戻ることになる。
+    //
+    // Why not **転送が通ると分かってから取る**: 転送のホットパスで AppKit を
+    // 起こすことになるが、**実測では追加コストがほぼ 0**（送り側の短命プロセスで
+    // 6 回）。送り側は転送の直後に `activate_other` を撃ち、あれが
+    // `runningApplicationWithProcessIdentifier` で LaunchServices を起こすので、
+    // **代金は元から払っている**。先に払うと後ろが安くなるだけである。
+    //
+    // | | `activate_other` だけ | ここを足した形 |
+    // | -- | -- | -- |
+    // | frontmost | — | 0.72〜0.92ms |
+    // | lookup | 0.90〜1.71ms | 0.008〜0.013ms |
+    //
+    // 誰も居ないとき（冷スタート）は 0.8ms を捨てることになるが、その経路は
+    // 元から 259ms 掛かっているので、避けるために組み替える価値は無いと見た。
+    #[cfg(target_os = "macos")]
+    {
+        msg.launcher_pid = platform::get_frontmost_pid();
+    }
     // stdin の一時ディレクトリは受け側が引き取る。**送り側は消さない**——消すと
     // 受け側が死んだパスを開くことになる。門を通らないものは載せない（＝誰も
     // 消さない。消し損ねる方が誤削除より安い）。
@@ -456,12 +485,13 @@ fn main() {
         stdin_dir,
     } = config;
 
+    // 転送で開かれるたびに更新する（#49）ので mut。
     #[cfg(target_os = "macos")]
-    let launcher_pid = platform::get_frontmost_pid();
+    let mut launcher_pid = platform::get_frontmost_pid();
     // 戻し先を持たない OS でも同じ形で持ち回れるようにする。閉じる処理を
     // `finish_and_exit` に切ったので、ここが cfg で消えると呼び出し側まで cfg が要る。
     #[cfg(not(target_os = "macos"))]
-    let launcher_pid: Option<i32> = None;
+    let mut launcher_pid: Option<i32> = None;
 
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -591,6 +621,8 @@ fn main() {
                         if let Some(path) = request::id_to_path(id) {
                             watch_extra(&ipc_watcher, &path);
                         }
+                    } else if let Some(id) = body.strip_prefix("closed:") {
+                        let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
                     } else if let Some(text) = body.strip_prefix("copy:") {
                         platform::copy_to_clipboard(text);
                     }
@@ -601,11 +633,26 @@ fn main() {
         .build(&window)
         .expect("Failed to create WebView");
 
+    // メニューの ⌘Q はイベントループへ流す（#49）。宛先も購読も **NSMenuItem や
+    // 通知センター側では保持されない** ので、ここで持ち続ける。`EventLoop::run` は
+    // 戻らないので、この束縛はプロセスと寿命を揃えることになる。
     #[cfg(target_os = "macos")]
-    {
-        platform::setup_menu();
+    let _menu_targets = {
+        let proxy = fullscreen_proxy.clone();
+        let targets = platform::setup_menu(move || {
+            let _ = proxy.send_event(AppEvent::Quit);
+        });
         platform::set_dock_icon();
-    }
+        targets
+    };
+
+    // 隠した窓へ戻る道（#49）。全画面の購読と同じく、解除の手段は持たない。
+    let _app_active_watch = platform::watch_app_active({
+        let proxy = fullscreen_proxy.clone();
+        move || {
+            let _ = proxy.send_event(AppEvent::Reopen);
+        }
+    });
 
     // 転送（#31）はページの準備を待たない。ソケットは窓より先に受けられるし、窓が
     // 出てからページが MdOpenFiles を定義するまでにも間がある。その間の
@@ -614,8 +661,8 @@ fn main() {
     let mut pending_opens: Vec<String> = Vec::new();
 
     // 掃除を約束した一時ディレクトリ。自分の stdin と、転送で所有権を引き取った
-    // ぶんが混ざって溜まる。**プロセスが終わるときに消すもの**で、タブを閉じても
-    // 消さない（1 回あたり数 KB で、置き場所は $TMPDIR）。
+    // ぶんが混ざって溜まる。**持ち主はタブ**で、閉じられた時点で `drop_owned_for` が
+    // 消す。ここに残るのは開いたままのタブのぶんだけで、それは終了時に消える。
     let mut owned_dirs: Vec<PathBuf> = stdin_dir.into_iter().collect();
 
     // 閉じる処理の進み具合（#59）。全画面のときだけ「抜け終わるのを待つ」状態を挟む。
@@ -635,53 +682,57 @@ fn main() {
         *control_flow = ControlFlow::Wait;
 
         match event {
+            // ⌘W（ページ経由）と × は隠す、⌘Q だけが終了（#49）。
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
+            } => {
+                request_close(
+                    CloseIntent::Hide,
+                    &window,
+                    &mut closing,
+                    &mut owned_dirs,
+                    &seat,
+                    launcher_pid,
+                    &fullscreen_proxy,
+                    control_flow,
+                );
             }
-            | Event::UserEvent(AppEvent::Close) => {
-                // Why not 「抜けている最中」も待つ: styleMask は抜け始めで false に
-                // 落ちるので、⌃⌘F で抜けるアニメーション中（約 1 秒）に閉じると、ここは
-                // 「全画面ではない」と読んで即終了する＝ #59 の症状がそのまま出る。
-                // 塞ぐには `NSWindowWillExitFullScreenNotification` をもう 1 本購読して
-                // 「遷移中」を自前で持つことになるが、**わざわざその 1 秒に ⌘W を押した
-                // 場合だけ**で、しかも直す前と同じ着地にしかならない。割に合わないと見た。
-                match close_step(platform::is_window_fullscreen(&window), &closing) {
-                    CloseStep::ExitFullscreen => {
-                        // 座はここで手放す。閉じると決めた窓が受け口を持ったままだと、
-                        // 抜けるのを待っている 1 秒ほどの間に届いた転送が、タブを足した
-                        // 直後にプロセスごと消える（＝叩いたのに何も出ない）。先に
-                        // ソケットを消せば、後から来た md は繋がらず自分で窓を開く。
-                        // unlink は冪等なので、終了時にもう一度撃っても構わない。
-                        if let Some(handle) = &seat {
-                            handle.unlink();
-                        }
-                        // 抜けるのは tao 経由で頼む。`toggleFullScreen:` を直接叩くより
-                        // 安全で、遷移の最中に呼ばれたぶんは tao が積み直してくれる。
-                        window.set_fullscreen(None);
-                        closing = Closing::ExitingFullscreen;
-                        // 期限は別スレッドから送る。`ControlFlow::WaitUntil` は使えない
-                        // ——このクロージャは 1 周回に何度も呼ばれ、頭の `Wait` が
-                        // 周回の最後に必ず上書きするので、タイマーが張られない（実測）。
-                        // 監視と IPC が使っている「スレッド → proxy」に揃える。
-                        let proxy = fullscreen_proxy.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(FULLSCREEN_EXIT_WAIT);
-                            let _ = proxy.send_event(AppEvent::CloseDeadline);
-                        });
-                    }
-                    CloseStep::Finish => {
-                        finish_and_exit(
-                            &mut closing,
-                            &mut owned_dirs,
-                            &seat,
-                            launcher_pid,
-                            control_flow,
-                        );
-                    }
-                    // 待っている最中に来た要求（⌘W 連打、待ち中の赤ボタンや ⌘Q）と、
-                    // 終了処理の後に届いたぶんは捨てる。
-                    CloseStep::KeepWaiting | CloseStep::Ignore => {}
+            Event::UserEvent(AppEvent::Close) => {
+                request_close(
+                    CloseIntent::Hide,
+                    &window,
+                    &mut closing,
+                    &mut owned_dirs,
+                    &seat,
+                    launcher_pid,
+                    &fullscreen_proxy,
+                    control_flow,
+                );
+            }
+            Event::UserEvent(AppEvent::Quit) => {
+                request_close(
+                    CloseIntent::Quit,
+                    &window,
+                    &mut closing,
+                    &mut owned_dirs,
+                    &seat,
+                    launcher_pid,
+                    &fullscreen_proxy,
+                    control_flow,
+                );
+            }
+            Event::UserEvent(AppEvent::TabClosed(id)) => {
+                drop_owned_for(&mut owned_dirs, &id);
+            }
+            // 隠した窓へ戻る道（#49）。前に出たのに窓が無い、という状態を作らない。
+            Event::UserEvent(AppEvent::Reopen) => {
+                // 前面化は窓が出ているときにも起きる（⌘Tab、転送の `activate`）ので、
+                // 出ているなら何もしない。無条件に `set_focus` すると、転送で届いた
+                // タブ切り替えの直後に割り込んで宛先を奪う。
+                if !window.is_visible() {
+                    window.set_visible(true);
+                    window.set_focus();
                 }
             }
             // 全画面から抜け終わった。
@@ -692,15 +743,31 @@ fn main() {
                 // 死ぬ**（⌘W・⌘P・⌘F …。実測では窓をクリックするまで戻らない）。
                 // 全画面に入るときは styleMask を戻さないので、こちらだけで起きる。
                 let _ = webview.focus();
-                if closing == Closing::ExitingFullscreen {
-                    finish_and_exit(&mut closing, &mut owned_dirs, &seat, launcher_pid, control_flow);
+                if let Some(intent) = closing.pending_intent() {
+                    finish_close(
+                        intent,
+                        &window,
+                        &mut closing,
+                        &mut owned_dirs,
+                        &seat,
+                        launcher_pid,
+                        control_flow,
+                    );
                 }
             }
             // 抜け終わりの通知が来ないまま期限が過ぎた（#59）。閉じられない窓を残すより
             // 諦めて閉じる。着地は #59 を直す前と同じ（デスクトップ Space）で、悪化はしない。
             Event::UserEvent(AppEvent::CloseDeadline) => {
-                if closing == Closing::ExitingFullscreen {
-                    finish_and_exit(&mut closing, &mut owned_dirs, &seat, launcher_pid, control_flow);
+                if let Some(intent) = closing.pending_intent() {
+                    finish_close(
+                        intent,
+                        &window,
+                        &mut closing,
+                        &mut owned_dirs,
+                        &seat,
+                        launcher_pid,
+                        control_flow,
+                    );
                 }
             }
             Event::WindowEvent {
@@ -730,6 +797,24 @@ fn main() {
                 }
             }
             Event::UserEvent(AppEvent::Open(msg)) => {
+                // 隠すと決めた後でも、全画面から抜けるのを待っている間（最大 2.5 秒）に
+                // 転送が届いたら隠すのをやめる。隠す経路は座を手放さないので受け口は
+                // 生きていて、ここへ来られる。終了の待ちは座を手放してから始めるので、
+                // 同じ状況は起きない。
+                if closing.pending_intent() == Some(CloseIntent::Hide) {
+                    closing = Closing::No;
+                }
+                // 閉じたときの戻り先を、いま叩いた端末へ付け替える（#49）。
+                // 自分自身は弾く——md の窓が前に居るときに叩かれると送り側は
+                // それを「前に居たもの」として読むので、そのまま採ると ⌘W で
+                // 自分を前面化することになる。弾いたときは前の値を残す。
+                // `None` に落とすと「どこへも戻らない」になるが、直前に居た端末へ
+                // 戻る方が、戻り先を失うより外れても害が小さい。
+                if let Some(pid) = msg.launcher_pid {
+                    if pid != std::process::id() as i32 {
+                        launcher_pid = Some(pid);
+                    }
+                }
                 // 掃除の約束はワイヤから来た値を信用せず、送り側と同じ門に通してから
                 // 引き取る（信用した時点で `own=/etc` が通る道ができる）。
                 // 載っているのは実体化したファイルのパスで、門が消してよい親を返す。
@@ -768,8 +853,140 @@ fn main() {
     });
 }
 
+/// 閉じる要求を捌く。入口は 3 つ（ページの ⌘W・× ボタン・メニューの ⌘Q）あり、
+/// 行き先は `intent` で変わるが、**全画面なら先に抜ける**という手順は共通なので
+/// ここへ集める（#59 / #49）。
+///
+/// 抜けるのを待つ必要があるかは [`close_step`] が決める。待ちに入ったら、続きは
+/// 抜け終わりの通知か期限から [`finish_close`] へ戻ってくる。
+#[allow(clippy::too_many_arguments)]
+fn request_close(
+    intent: CloseIntent,
+    window: &tao::window::Window,
+    closing: &mut Closing,
+    owned_dirs: &mut Vec<PathBuf>,
+    seat: &Option<md_preview::instance::Handle>,
+    launcher_pid: Option<i32>,
+    fullscreen_proxy: &tao::event_loop::EventLoopProxy<AppEvent>,
+    control_flow: &mut ControlFlow,
+) {
+    // Why not 「抜けている最中」も待つ: styleMask は抜け始めで false に
+    // 落ちるので、⌃⌘F で抜けるアニメーション中（約 1 秒）に閉じると、ここは
+    // 「全画面ではない」と読んで即終了する＝ #59 の症状がそのまま出る。
+    // 塞ぐには `NSWindowWillExitFullScreenNotification` をもう 1 本購読して
+    // 「遷移中」を自前で持つことになるが、**わざわざその 1 秒に ⌘W を押した
+    // 場合だけ**で、しかも直す前と同じ着地にしかならない。割に合わないと見た。
+    match close_step(platform::is_window_fullscreen(window), closing) {
+        CloseStep::ExitFullscreen => {
+            // 座を手放すのは終了するときだけ。閉じると決めた窓が受け口を持ったままだと、
+            // 抜けるのを待っている 1 秒ほどの間に届いた転送が、タブを足した直後に
+            // プロセスごと消える（＝叩いたのに何も出ない）。先にソケットを消せば、
+            // 後から来た md は繋がらず自分で窓を開く。unlink は冪等なので、終了時に
+            // もう一度撃っても構わない。
+            //
+            // 隠すときは手放さない。受け口が生きているのがこの機能そのものだし、
+            // 待っている間に届いた転送は隠すのをやめて受ければよい（`AppEvent::Open`）。
+            if intent == CloseIntent::Quit {
+                if let Some(handle) = seat {
+                    handle.unlink();
+                }
+            }
+            // 抜けるのは tao 経由で頼む。`toggleFullScreen:` を直接叩くより
+            // 安全で、遷移の最中に呼ばれたぶんは tao が積み直してくれる。
+            window.set_fullscreen(None);
+            *closing = Closing::ExitingFullscreen(intent);
+            // 期限は別スレッドから送る。`ControlFlow::WaitUntil` は使えない
+            // ——イベントループのクロージャは 1 周回に何度も呼ばれ、頭の `Wait` が
+            // 周回の最後に必ず上書きするので、タイマーが張られない（実測）。
+            // 監視と IPC が使っている「スレッド → proxy」に揃える。
+            let proxy = fullscreen_proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(FULLSCREEN_EXIT_WAIT);
+                let _ = proxy.send_event(AppEvent::CloseDeadline);
+            });
+        }
+        CloseStep::Finish => finish_close(
+            intent,
+            window,
+            closing,
+            owned_dirs,
+            seat,
+            launcher_pid,
+            control_flow,
+        ),
+        // 待っている最中に来た要求（⌘W 連打、待ち中の赤ボタンや ⌘Q）と、
+        // 終了処理の後に届いたぶんは捨てる。
+        CloseStep::KeepWaiting | CloseStep::Ignore => {}
+    }
+}
+
+/// 全画面の始末が済んだ窓を、`intent` どおりに着地させる。
+#[allow(clippy::too_many_arguments)]
+fn finish_close(
+    intent: CloseIntent,
+    window: &tao::window::Window,
+    closing: &mut Closing,
+    owned_dirs: &mut Vec<PathBuf>,
+    seat: &Option<md_preview::instance::Handle>,
+    launcher_pid: Option<i32>,
+    control_flow: &mut ControlFlow,
+) {
+    match intent {
+        CloseIntent::Quit => {
+            finish_and_exit(closing, owned_dirs, seat, launcher_pid, control_flow)
+        }
+        CloseIntent::Hide => hide_window(window, closing, launcher_pid),
+    }
+}
+
+/// 窓を隠す。プロセスも webview も WebKit の 3 プロセスも生かしたまま残す（#49）。
+///
+/// 次の `md file.md` は座（ソケット）経由で `AppEvent::Open` として届き、そこで
+/// 隠しを解く。**イベントループも監視もそのまま走り続ける**ので、隠している間に
+/// ファイルが変わればリロードのイベントも飛ぶ（見えない窓に対して）。
+///
+/// ページを捨てるところまではまだやっていない。占有し続けるメモリが実測で
+/// どれだけ残るかを先に測るため（#49 の「実測しないと決められないこと」）。
+fn hide_window(window: &tao::window::Window, closing: &mut Closing, launcher_pid: Option<i32>) {
+    // 隠しただけなので、また開かれてまた閉じられる。「終わった」を意味する
+    // `Done` ではなく、まっさらな `No` へ戻す。
+    *closing = Closing::No;
+    window.set_visible(false);
+    // 隠した後にフォーカスが誰へ行くかは OS 任せなので、終了するときと同じように
+    // 起動元へ明示的に返す。`launcher_pid` は転送を受けるたびに付け替わる
+    // （`AppEvent::Open` の腕）ので、ここが指すのは**最後に叩いた端末**である。
+    #[cfg(target_os = "macos")]
+    if let Some(pid) = launcher_pid {
+        platform::activate_pid(pid);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = launcher_pid;
+}
+
+/// 閉じたタブが持っていた一時ディレクトリを消す（#49）。
+///
+/// 窓を閉じてもプロセスが生き続けるようになったので、終了まで持つと**パイプで
+/// 開くたびに $TMPDIR へ積み上がる**。持ち主はタブなので、タブと寿命を揃える。
+///
+/// 識別子はページから来る（＝ワイヤ越しの値と同じ扱い）。消してよい親を導くのは
+/// `owned_stdin_dir` の門で、さらに**自分が引き取ったものだけ**に絞る。門を通った
+/// だけの偽の識別子を投げられても、`owned_dirs` に無ければ何も消えない。
+///
+/// 照合するのは**ディレクトリ**であって、引き取ったファイルそのものではない。
+/// 一時ディレクトリには実体化したファイルが 1 つしか入らない（`spool_stdin`）ので
+/// いまは同じことだが、2 つ入れる経路を足すなら、片方のタブを閉じただけで
+/// もう片方が死ぬ。そのときはここを (ファイル, ディレクトリ) の組にすること。
+fn drop_owned_for(dirs: &mut Vec<PathBuf>, id: &str) {
+    let Some(dir) = app_config::owned_stdin_dir(Path::new(id)) else { return };
+    let Some(at) = dirs.iter().position(|d| *d == dir) else { return };
+    let dir = dirs.swap_remove(at);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// 掃除を約束した一時ディレクトリを消す。**プロセスが終わるときに呼ぶもの**で、
-/// 呼ぶのは [`finish_and_exit`] だけ。
+/// 呼ぶのは [`finish_and_exit`] だけ。タブを閉じて消えたぶんは既に
+/// [`drop_owned_for`] が持っていっているので、ここへ残るのは開いたままのタブの
+/// ぶんだけ。
 fn drop_owned(dirs: &mut Vec<PathBuf>) {
     for dir in dirs.drain(..) {
         let _ = std::fs::remove_dir_all(dir);
@@ -780,8 +997,8 @@ fn drop_owned(dirs: &mut Vec<PathBuf>) {
 ///
 /// 4 つの手順をここ 1 箇所に集める。閉じる要求は #59 で「全画面なら先に抜ける」という
 /// 待ちを挟むようになり、終了に至る入口が 2 つ（要求を受けた所と、抜け終わった所）に
-/// 増えたため。#49（窓を閉じてもプロセスを生かす）が入ったら、隠す経路はこれを呼ばず、
-/// 本当の終了だけがここへ来る。
+/// 増えたため。#49 で閉じる要求の大半は隠す側（[`hide_window`]）へ抜けたので、
+/// ここへ来るのは [`CloseIntent::Quit`] だけになった。
 fn finish_and_exit(
     closing: &mut Closing,
     owned_dirs: &mut Vec<PathBuf>,
@@ -838,11 +1055,38 @@ const FULLSCREEN_EXIT_WAIT: Duration = Duration::from_millis(2500);
 #[derive(Debug, PartialEq, Eq)]
 enum Closing {
     No,
-    /// 全画面から抜けるよう頼んで、抜け終わるのを待っている。
-    ExitingFullscreen,
+    /// 全画面から抜けるよう頼んで、抜け終わるのを待っている。抜け終わったら
+    /// この `CloseIntent` どおりに着地する。
+    ExitingFullscreen(CloseIntent),
     /// 終了処理は済んだ。`ControlFlow::Exit` を立てた後も、そのイテレーションぶんの
     /// イベントは届き続けるので、二度と後始末を走らせないための状態。
+    ///
+    /// **隠す経路はここへ来ない。** 隠した窓はまた開かれてまた閉じられるので、
+    /// [`hide_window`] は `No` へ戻す。
     Done,
+}
+
+impl Closing {
+    /// 待ちの最中なら、抜け終わったらやることを返す。
+    fn pending_intent(&self) -> Option<CloseIntent> {
+        match self {
+            Closing::ExitingFullscreen(intent) => Some(*intent),
+            _ => None,
+        }
+    }
+}
+
+/// 閉じる要求の行き先。全画面から抜けるまでの手順は共通で、最後の一手だけが違う。
+///
+/// 入口で割り当てが決まる。ページの ⌘W と × ボタンが `Hide`、メニューの ⌘Q だけが
+/// `Quit`。⌘Q が `performClose:` ではなく自前の宛先を通るのは、あれが × と同じ穴で、
+/// 隠す側へ行くと終了する手段が UI から消えるため（`platform::setup_menu`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseIntent {
+    /// 窓を隠してプロセスは生かす。
+    Hide,
+    /// 後始末をして本当に終了する。
+    Quit,
 }
 
 /// 閉じる要求を受けたとき、いま何をすべきか。
@@ -866,7 +1110,7 @@ enum CloseStep {
 fn close_step(fullscreen: bool, closing: &Closing) -> CloseStep {
     match closing {
         Closing::Done => CloseStep::Ignore,
-        Closing::ExitingFullscreen => CloseStep::KeepWaiting,
+        Closing::ExitingFullscreen(_) => CloseStep::KeepWaiting,
         Closing::No if fullscreen => CloseStep::ExitFullscreen,
         Closing::No => CloseStep::Finish,
     }
@@ -890,8 +1134,12 @@ mod close_tests {
     fn close_requests_during_the_wait_are_ignored() {
         // 待っている間は全画面かどうかを見ない。styleMask は抜け始めで false へ落ちるので、
         // 見てしまうと待ちが即終わる。
-        assert_eq!(close_step(true, &Closing::ExitingFullscreen), CloseStep::KeepWaiting);
-        assert_eq!(close_step(false, &Closing::ExitingFullscreen), CloseStep::KeepWaiting);
+        let waiting = Closing::ExitingFullscreen(CloseIntent::Quit);
+        assert_eq!(close_step(true, &waiting), CloseStep::KeepWaiting);
+        assert_eq!(close_step(false, &waiting), CloseStep::KeepWaiting);
+        let waiting = Closing::ExitingFullscreen(CloseIntent::Hide);
+        assert_eq!(close_step(true, &waiting), CloseStep::KeepWaiting);
+        assert_eq!(close_step(false, &waiting), CloseStep::KeepWaiting);
     }
 
     #[test]
@@ -1048,6 +1296,49 @@ fn spawn_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `$TMPDIR/md-stdin-<何か>/stdin.md` の形をした、実在しないパス。
+    /// `owned_stdin_dir` は形だけを見るので、実体は要らない。
+    ///
+    /// $TMPDIR を正規化するのは門と揃えるため。macOS の $TMPDIR は
+    /// `/var` → `/private/var` の symlink 越しに来るので、揃えないと門が弾く。
+    fn spooled(tag: &str) -> (PathBuf, PathBuf) {
+        let tmp = std::env::temp_dir();
+        let tmp = tmp.canonicalize().unwrap_or(tmp);
+        let dir = tmp.join(format!("md-stdin-{}", tag));
+        (dir.join("stdin.md"), dir)
+    }
+
+    #[test]
+    fn closing_a_tab_drops_the_temp_dir_it_owned() {
+        let (doc, dir) = spooled("owned");
+        let mut dirs = vec![dir.clone()];
+        drop_owned_for(&mut dirs, &doc.to_string_lossy());
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn an_id_outside_the_gate_is_left_alone() {
+        // 門（$TMPDIR 直下の md-stdin-*）を通らない識別子では何も起きない。
+        // ここが破れると、ページから任意のパスを消せることになる。
+        let (_, dir) = spooled("kept");
+        let mut dirs = vec![dir.clone()];
+        for id in ["/etc/hosts", "/", "", "not-a-path"] {
+            drop_owned_for(&mut dirs, id);
+        }
+        assert_eq!(dirs, vec![dir]);
+    }
+
+    #[test]
+    fn an_id_we_never_took_ownership_of_is_left_alone() {
+        // 門は通るが引き取っていない。偽の識別子で他人の md-stdin-* を
+        // 消せないことの担保。`owned_dirs` に無いので何も消えない。
+        let (other, _) = spooled("someone-else");
+        let (_, mine) = spooled("mine");
+        let mut dirs = vec![mine.clone()];
+        drop_owned_for(&mut dirs, &other.to_string_lossy());
+        assert_eq!(dirs, vec![mine]);
+    }
 
     fn top(s: &str) -> bool {
         is_top_frame(&s.parse::<wry::http::Uri>().unwrap())

@@ -40,6 +40,8 @@ fn encode_decode_keeps_the_file_order() {
     let mut msg = Message::new(vec!["/a.md".into(), "/b.md".into(), "/c.md".into()]);
     msg.cwd = Some("/work".into());
     msg.sender_pid = Some(4242);
+    // 戻り先（#49）。載せ忘れても両側 None で素通りしてしまうので、立てて比べる。
+    msg.launcher_pid = Some(1234);
     msg.own = vec!["/tmp/md-stdin-1".into()];
     assert_eq!(Message::decode(&msg.encode()), Some(msg));
 }

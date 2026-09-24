@@ -31,6 +31,18 @@ use std::path::Path;
 /// いなければならない（一致しないと macOS はバンドルと認めない）。
 const BIN_NAME: &str = "md";
 
+/// バンドルのディレクトリ名。**これがそのまま Dock やホバーに出るアプリ名になる。**
+///
+/// `Info.plist` の `CFBundleDisplayName` / `CFBundleName` は効かない（実測。書いても
+/// `app` のままだった）。`.app` ではないディレクトリを LaunchServices はアプリの
+/// バンドルとして扱いきらず、名前もアイコンもファイルシステム上のアイテムから
+/// 取る。だから直す場所は plist ではなくここ。
+const APP_DIR_NAME: &str = "md";
+
+/// 名前を `app` から [`APP_DIR_NAME`] へ変える前に使っていたディレクトリ。
+/// 見つけたら消す。
+const OLD_APP_DIR_NAME: &str = "app";
+
 /// 乗り換え済みの目印。`already_inside` の stat が失敗して判定が狂っても exec が
 /// 繰り返されないようにするための、構造的な歯止め。
 const RELAUNCHED_ENV: &str = "MD_BUNDLED";
@@ -41,6 +53,17 @@ const DISABLE_ENV: &str = "MD_NO_BUNDLE";
 /// 必要なキーは実測では `CFBundleExecutable` が実在する隣のファイルを指している
 /// こと 1 つだけ。`NSHighResolutionCapable` は保険で、plist が無い今は AppKit の
 /// 既定で Retina 描画になっているが、置くと「キーが無い = NO」と読まれる恐れがある。
+///
+/// Why not **`CFBundleDisplayName` / `CFBundleIconFile` を足す**: 実測で**どちらも
+/// 読まれない**。前者を書いても Dock のホバーは `app`（＝ディレクトリ名）のまま、
+/// 後者で隣に `.icns` を置いて指しても、終了してタイルが畳まれる間のアイコンは
+/// 汎用のまま化けた。`.app` ではないディレクトリを LaunchServices はアプリの
+/// バンドルとして扱いきらず、名前もアイコンも**ファイルシステム上のアイテム**から
+/// 取っている。名前は [`APP_DIR_NAME`] を変えて直した。アイコンは #40 へ。
+///
+/// 下に残っている `CFBundleName` も同じ理由で読まれていない（これが `md` なのに
+/// Dock には `app` が出ていた）。**残しているのは害が無いからで、効くからではない。**
+/// 名前をここで直せると思って触らないこと。
 const INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>md</string>
@@ -64,7 +87,7 @@ pub fn relaunch_in_flat_bundle() {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return };
-    let Some(app_dir) = crate::config_dir().map(|d| d.join("app")) else { return };
+    let Some(app_dir) = app_dir() else { return };
     if already_inside(&exe, &app_dir) {
         return;
     }
@@ -99,6 +122,11 @@ fn already_inside(exe: &Path, app_dir: &Path) -> bool {
     a.dev() == b.dev() && a.ino() == b.ino()
 }
 
+/// バンドルの置き場所 `~/.config/md-preview/md`。
+fn app_dir() -> Option<std::path::PathBuf> {
+    crate::config_dir().map(|d| d.join(APP_DIR_NAME))
+}
+
 /// `app_dir` に `Info.plist` と本体への symlink を揃える。
 ///
 /// どちらも中身が既に正しければ触らない。起動のたびに書き直すと、`cargo install`
@@ -106,6 +134,23 @@ fn already_inside(exe: &Path, app_dir: &Path) -> bool {
 #[cfg(target_os = "macos")]
 fn prepare(app_dir: &Path, exe: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(app_dir)?;
+
+    // 名前を変える前の置き場所を片付ける。残しておくと「`app` って何」がずっと
+    // 残るので、見つけた側が消す。
+    //
+    // 中身の形を確かめてから消す。`~/.config/md-preview` は md の名前空間なので
+    // 素朴に消しても実害は無いはずだが、`uninstall.rs` の `webkit_dir_is_ours` が
+    // 同じ流儀（自分が作った形だと確認してから消す）を採っているので揃える。
+    //
+    // Why not **一度きりにする**: 済んだ印を置くと、それ自体が次に「これ何」に
+    // なる。毎起動の `exists` 1 回は無視できる。旧版の md と併用すると
+    // 「旧版が作る → 新版が消す」で振動するが、旧版も次の起動で作り直すので
+    // 自己修復する（壊れるのは旧版の IME 候補が 1 回出ないことだけ）。
+    if let Some(old) = app_dir.parent().map(|p| p.join(OLD_APP_DIR_NAME)) {
+        if old != app_dir && old.join("Info.plist").is_file() && old.join(BIN_NAME).is_symlink() {
+            let _ = std::fs::remove_dir_all(old);
+        }
+    }
 
     let plist = app_dir.join("Info.plist");
     if std::fs::read_to_string(&plist).map(|s| s != INFO_PLIST).unwrap_or(true) {
@@ -138,7 +183,7 @@ mod tests {
     fn prepare_creates_the_bundle_and_is_idempotent() {
         let dir = std::env::temp_dir().join(format!("md-bundle-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let app = dir.join("app");
+        let app = dir.join(APP_DIR_NAME);
         let exe = dir.join("fake-md");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&exe, b"x").unwrap();
@@ -161,10 +206,55 @@ mod tests {
     }
 
     #[test]
+    fn prepare_removes_the_bundle_that_used_the_old_name() {
+        let dir = std::env::temp_dir().join(format!("md-oldname-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let exe = dir.join("fake-md");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&exe, b"x").unwrap();
+
+        // 旧版が作った形（Info.plist と本体への symlink）を置く。
+        let old = dir.join(OLD_APP_DIR_NAME);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("Info.plist"), INFO_PLIST).unwrap();
+        std::os::unix::fs::symlink(&exe, old.join(BIN_NAME)).unwrap();
+        // 隣にある、md のものではないディレクトリ。
+        let stranger = dir.join("themes");
+        std::fs::create_dir_all(&stranger).unwrap();
+
+        prepare(&dir.join(APP_DIR_NAME), &exe).unwrap();
+
+        assert!(!old.exists(), "旧名のバンドルは消える");
+        assert!(stranger.exists(), "形が違う隣人には手を出さない");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn preparing_into_the_old_name_does_not_delete_itself() {
+        // `app_dir` 自身が旧名だったときに自爆しないこと。いまの `app_dir()` は
+        // 新しい名前を返すので通らない道だが、**自分を消す分岐が存在しない**ことを
+        // 固定しておく（ここが壊れると起動のたびにバンドルが消える）。
+        let dir = std::env::temp_dir().join(format!("md-selfdel-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let exe = dir.join("fake-md");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&exe, b"x").unwrap();
+
+        let app = dir.join(OLD_APP_DIR_NAME);
+        prepare(&app, &exe).unwrap();
+        prepare(&app, &exe).unwrap();
+
+        assert_eq!(std::fs::read_link(app.join(BIN_NAME)).unwrap(), exe);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn already_inside_survives_a_dot_dot_path() {
         let dir = std::env::temp_dir().join(format!("md-inside-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let app = dir.join("app");
+        let app = dir.join(APP_DIR_NAME);
         std::fs::create_dir_all(&app).unwrap();
 
         // 外から起動された（＝乗り換えが要る）。
@@ -172,7 +262,7 @@ mod tests {
         // バンドルの中から起動された。
         assert!(already_inside(&app.join("md"), &app));
         // `..` を挟んでも同じディレクトリだと分かる（文字列比較では破れる形）。
-        assert!(already_inside(&app.join("..").join("app").join("md"), &app));
+        assert!(already_inside(&app.join("..").join(APP_DIR_NAME).join("md"), &app));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
