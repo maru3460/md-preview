@@ -47,6 +47,9 @@ enum AppEvent {
     /// メニューの ⌘Q（#49）。⌘W と × は隠すので、**本当に終了する要求はこれだけ**。
     /// `platform::setup_menu` に渡したクロージャから届く。
     Quit,
+    /// タブが閉じられた（#49）。パイプ入力を実体化した一時ファイルの持ち主は
+    /// そのタブなので、閉じた時点で消してよい。
+    TabClosed(String),
     /// アプリが前面に出た（#49）。隠してある窓を戻すために使う。
     /// Dock アイコンのクリック・⌘Tab・転送してきた md の `activate` が引き金。
     Reopen,
@@ -618,6 +621,8 @@ fn main() {
                         if let Some(path) = request::id_to_path(id) {
                             watch_extra(&ipc_watcher, &path);
                         }
+                    } else if let Some(id) = body.strip_prefix("closed:") {
+                        let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
                     } else if let Some(text) = body.strip_prefix("copy:") {
                         platform::copy_to_clipboard(text);
                     }
@@ -656,8 +661,8 @@ fn main() {
     let mut pending_opens: Vec<String> = Vec::new();
 
     // 掃除を約束した一時ディレクトリ。自分の stdin と、転送で所有権を引き取った
-    // ぶんが混ざって溜まる。**プロセスが終わるときに消すもの**で、タブを閉じても
-    // 消さない（1 回あたり数 KB で、置き場所は $TMPDIR）。
+    // ぶんが混ざって溜まる。**持ち主はタブ**で、閉じられた時点で `drop_owned_for` が
+    // 消す。ここに残るのは開いたままのタブのぶんだけで、それは終了時に消える。
     let mut owned_dirs: Vec<PathBuf> = stdin_dir.into_iter().collect();
 
     // 閉じる処理の進み具合（#59）。全画面のときだけ「抜け終わるのを待つ」状態を挟む。
@@ -716,6 +721,9 @@ fn main() {
                     &fullscreen_proxy,
                     control_flow,
                 );
+            }
+            Event::UserEvent(AppEvent::TabClosed(id)) => {
+                drop_owned_for(&mut owned_dirs, &id);
             }
             // 隠した窓へ戻る道（#49）。前に出たのに窓が無い、という状態を作らない。
             Event::UserEvent(AppEvent::Reopen) => {
@@ -955,8 +963,30 @@ fn hide_window(window: &tao::window::Window, closing: &mut Closing, launcher_pid
     let _ = launcher_pid;
 }
 
+/// 閉じたタブが持っていた一時ディレクトリを消す（#49）。
+///
+/// 窓を閉じてもプロセスが生き続けるようになったので、終了まで持つと**パイプで
+/// 開くたびに $TMPDIR へ積み上がる**。持ち主はタブなので、タブと寿命を揃える。
+///
+/// 識別子はページから来る（＝ワイヤ越しの値と同じ扱い）。消してよい親を導くのは
+/// `owned_stdin_dir` の門で、さらに**自分が引き取ったものだけ**に絞る。門を通った
+/// だけの偽の識別子を投げられても、`owned_dirs` に無ければ何も消えない。
+///
+/// 照合するのは**ディレクトリ**であって、引き取ったファイルそのものではない。
+/// 一時ディレクトリには実体化したファイルが 1 つしか入らない（`spool_stdin`）ので
+/// いまは同じことだが、2 つ入れる経路を足すなら、片方のタブを閉じただけで
+/// もう片方が死ぬ。そのときはここを (ファイル, ディレクトリ) の組にすること。
+fn drop_owned_for(dirs: &mut Vec<PathBuf>, id: &str) {
+    let Some(dir) = app_config::owned_stdin_dir(Path::new(id)) else { return };
+    let Some(at) = dirs.iter().position(|d| *d == dir) else { return };
+    let dir = dirs.swap_remove(at);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// 掃除を約束した一時ディレクトリを消す。**プロセスが終わるときに呼ぶもの**で、
-/// 呼ぶのは [`finish_and_exit`] だけ。
+/// 呼ぶのは [`finish_and_exit`] だけ。タブを閉じて消えたぶんは既に
+/// [`drop_owned_for`] が持っていっているので、ここへ残るのは開いたままのタブの
+/// ぶんだけ。
 fn drop_owned(dirs: &mut Vec<PathBuf>) {
     for dir in dirs.drain(..) {
         let _ = std::fs::remove_dir_all(dir);
@@ -1266,6 +1296,49 @@ fn spawn_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `$TMPDIR/md-stdin-<何か>/stdin.md` の形をした、実在しないパス。
+    /// `owned_stdin_dir` は形だけを見るので、実体は要らない。
+    ///
+    /// $TMPDIR を正規化するのは門と揃えるため。macOS の $TMPDIR は
+    /// `/var` → `/private/var` の symlink 越しに来るので、揃えないと門が弾く。
+    fn spooled(tag: &str) -> (PathBuf, PathBuf) {
+        let tmp = std::env::temp_dir();
+        let tmp = tmp.canonicalize().unwrap_or(tmp);
+        let dir = tmp.join(format!("md-stdin-{}", tag));
+        (dir.join("stdin.md"), dir)
+    }
+
+    #[test]
+    fn closing_a_tab_drops_the_temp_dir_it_owned() {
+        let (doc, dir) = spooled("owned");
+        let mut dirs = vec![dir.clone()];
+        drop_owned_for(&mut dirs, &doc.to_string_lossy());
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn an_id_outside_the_gate_is_left_alone() {
+        // 門（$TMPDIR 直下の md-stdin-*）を通らない識別子では何も起きない。
+        // ここが破れると、ページから任意のパスを消せることになる。
+        let (_, dir) = spooled("kept");
+        let mut dirs = vec![dir.clone()];
+        for id in ["/etc/hosts", "/", "", "not-a-path"] {
+            drop_owned_for(&mut dirs, id);
+        }
+        assert_eq!(dirs, vec![dir]);
+    }
+
+    #[test]
+    fn an_id_we_never_took_ownership_of_is_left_alone() {
+        // 門は通るが引き取っていない。偽の識別子で他人の md-stdin-* を
+        // 消せないことの担保。`owned_dirs` に無いので何も消えない。
+        let (other, _) = spooled("someone-else");
+        let (_, mine) = spooled("mine");
+        let mut dirs = vec![mine.clone()];
+        drop_owned_for(&mut dirs, &other.to_string_lossy());
+        assert_eq!(dirs, vec![mine]);
+    }
 
     fn top(s: &str) -> bool {
         is_top_frame(&s.parse::<wry::http::Uri>().unwrap())

@@ -271,6 +271,39 @@ test('最後の 1 枚とタブ 0 枚の ⌘W はウィンドウを閉じる', as
   await expect(page.locator('.md-tab')).toHaveCount(1);
 });
 
+test('閉じたタブは Rust へ知らされる（一時ファイルの持ち主がタブだから）', async ({ page }) => {
+  // #49 で窓を閉じてもプロセスが死ななくなったので、パイプ入力を実体化した
+  // 一時ファイルを終了まで持つと $TMPDIR へ積み上がる。閉じた時点で知らせる。
+  await openFolder(page);
+  const closed = () => page.evaluate(() =>
+    window.__mdIpc.filter((m) => m.startsWith('closed:')).map((m) => m.slice('closed:'.length)));
+
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+  await openFile(page, 'long.md');
+
+  // 1 枚閉じる（⌘W）。
+  await page.keyboard.press('Meta+w');
+  await expect.poll(closed).toHaveLength(1);
+
+  // まとめて閉じる。残り 2 枚ぶんが届く。
+  await page.evaluate(() => window.MdTabs.closeAll());
+  await expect.poll(async () => (await closed()).length).toBe(3);
+  const all = await closed();
+  expect(all.every((p) => p.startsWith('/'))).toBe(true);
+  expect(new Set(all).size).toBe(3);
+});
+
+test('最後の 1 枚は閉じずに窓を閉じるので、知らせも飛ばない', async ({ page }) => {
+  // 閉じていないタブのぶんを消すと、窓を戻したときに死んだタブが残る。
+  // ⌘W の「最後の 1 枚はウィンドウを閉じる」と対で守る約束。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('Meta+w');
+  await expect.poll(() => page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length)).toBe(1);
+  expect(await page.evaluate(() => window.__mdIpc.filter((m) => m.startsWith('closed:')))).toEqual([]);
+});
+
 test('「すべてのタブを閉じる」は窓を残してタブ帯だけを空にする', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');

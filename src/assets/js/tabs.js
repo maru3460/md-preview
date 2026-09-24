@@ -188,6 +188,17 @@
     if (window.MdCommon && MdCommon.closeWindow) MdCommon.closeWindow();
   }
 
+  // 閉じたタブを Rust へ知らせる。パイプ入力を実体化した一時ファイルは、そのタブが
+  // 持ち主なので、閉じた時点で消してよい（#49。窓を閉じてもプロセスが生き続けるように
+  // なったので、終了まで持つと $TMPDIR へ積み上がる）。
+  // 一時ファイルでないパスも届くが、Rust 側が「自分が引き取ったもの」に絞って捨てる。
+  function reportClosed(closed) {
+    if (!window.ipc) return;
+    for (var i = 0; i < closed.length; i++) {
+      if (closed[i] && closed[i].path) ipc.postMessage('closed:' + closed[i].path);
+    }
+  }
+
   function closeAt(i) {
     // タブが 1 枚も無い（`md .` で起動してまだ何も開いていない）ときの ⌘W は
     // ウィンドウを閉じる。ここで抜けてしまうと、⌘W に割り当てられているのは
@@ -197,7 +208,7 @@
     // 最後の 1 枚を閉じるのもウィンドウを閉じるのと同じ（⌘W の従来の意味）。
     if (tabs.length === 1) { closeWindow(); return; }
     var wasActive = (i === activeIdx);
-    tabs.splice(i, 1);
+    reportClosed(tabs.splice(i, 1));
     if (wasActive) {
       // 右隣へ移る（右端だったら左隣）。
       activeIdx = Math.min(i, tabs.length - 1);
@@ -212,6 +223,7 @@
     var keep = tabs[indexOf(path)];
     if (!keep) return;
     var wasActive = (tabs[activeIdx] === keep);
+    reportClosed(tabs.filter(function(t) { return t !== keep; }));
     tabs = [keep];
     activeIdx = 0;
     if (wasActive) render();
@@ -224,6 +236,7 @@
   // 「片付けたら道具ごと消えた」になる。
   function closeAll() {
     if (!tabs.length) return;
+    reportClosed(tabs);
     tabs = [];
     activeIdx = -1;
     render();
