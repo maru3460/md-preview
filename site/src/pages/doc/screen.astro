@@ -51,6 +51,28 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     フォルダを移してもタブは消えません。ツリーから外れたファイルもタブには残り、編集すれば自動リロードも効きます。
   </p>
 
+  <h2>Quick Access</h2>
+  <p>
+    サイドバーの下端に、よく行く先を留めておけます。リポジトリをまたいで行ったり来たりするときの固定リンクです。
+  </p>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">留める</div>
+      <div class="fdesc">ヘッダの <kbd>☆</kbd> で、いま開いているフォルダをそのまま留めます。ツリーの行・タブ・本文を右クリックして「Quick Access に追加」でも同じです。ツリー内なら <kbd>m</kbd> でカーソル行を留められます。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">飛ぶ</div>
+      <div class="fdesc">行をクリックすると、フォルダならそこへ移り、ファイルならタブで開きます。ツリーから <kbd>j</kbd> で枠へ降りて <kbd>Enter</kbd> でも同じです。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">外す</div>
+      <div class="fdesc">留めたときと同じ操作（<kbd>★</kbd> / 右クリック / <kbd>m</kbd>）でそのまま外れます。並びは留めた順で、消えたファイルやフォルダは押したときに知らせます。</div>
+    </div>
+  </div>
+  <p class="note">
+    留めた先は <code>~/.config/md-preview/quick-access</code> に残るので、ウィンドウを閉じても次に開いたときに並んでいます。
+  </p>
+
   <h2>タブ</h2>
   <div class="flist">
     <div class="fitem">

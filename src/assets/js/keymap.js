@@ -158,6 +158,12 @@
     { cat: 'tree', keys: '⌘[ / ⌘]', desc: 'フォルダの履歴を戻る / 進む',
       run: 'root-history', match: keys('[', ']'),
       when: function(e) { return metaOnly(e) && !inField(e) && !overlayOpen(); } },
+    // Quick Access（#35）。ツリーのカーソル行を留める / 外す。★ と右クリックだけだと
+    // マウス専用になるので、キーからも同じことができるようにする。
+    // `m` は vim の mark から。素キーの空き（`b` は #32 のベルが取る）。
+    { cat: 'tree', keys: 'm', desc: 'カーソル行を Quick Access に留める / 外す',
+      run: 'quick-toggle', match: keys('m'),
+      when: function(e) { return bare(e) && inTree(); } },
     // 以下はツリーにフォーカスがある時だけ。
     { cat: 'tree', keys: 'ツリー内', desc: 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ',
       run: 'tree', match: keys('j', 'k', 'g', 'G', 'l', 'h', 'Enter',

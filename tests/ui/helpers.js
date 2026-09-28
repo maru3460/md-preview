@@ -34,8 +34,10 @@ function id(page, rel) {
 }
 
 /// ツリーの行。`rel` は root 相対で書く（data-path は識別子なのでここで組む）。
+/// **`#sidebar` の中だけ**を指す。Quick Access の行（#35）も同じ `.tree-item` を
+/// 着ているので、絞らないと同じパスを留めた瞬間に strict mode 違反で落ちる。
 function treeItem(page, rel) {
-  return page.locator(`.tree-item[data-path="${id(page, rel)}"]`);
+  return page.locator(`#sidebar .tree-item[data-path="${id(page, rel)}"]`);
 }
 
 /// タブ。`rel` は root 相対。

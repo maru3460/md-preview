@@ -29,8 +29,13 @@
       <button id="root-forward" class="sb-icon" type="button" title="進む" aria-label="進む">›</button>
       <button id="root-name" class="sb-name" type="button" title="親フォルダへ"></button>
       <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">↻</button>
+      <button id="root-star" class="sb-icon" type="button" title="Quick Access に入れる" aria-label="Quick Access に入れる">☆</button>
     </div>
     <div id="sidebar" tabindex="-1"></div>
+    <div id="quick-access">
+      <div id="quick-access-title">Quick Access</div>
+      <div id="quick-access-list"></div>
+    </div>
   </div>
   <div id="resizer"></div>
   <div id="main-col">
