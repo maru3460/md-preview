@@ -62,6 +62,26 @@ fn value_side_equals_is_not_split_again() {
 }
 
 #[test]
+fn a_directory_travels_as_a_root_swap_with_no_files() {
+    // `md <dir>`（#34）。タブは 1 枚も増えないので files は空のまま渡る——
+    // 受け側が「ファイルが無いから捨てる」と読んではいけない。
+    let mut msg = Message::new(Vec::new());
+    msg.root = Some("/work/docs".into());
+    let back = Message::decode(&msg.encode()).unwrap();
+    assert_eq!(back.root, Some("/work/docs".to_string()));
+    assert!(back.files.is_empty());
+}
+
+#[test]
+fn root_is_read_alongside_the_files_whatever_the_token_order() {
+    // `root=` は後から足したキー。先に並んでいても、後続の `file=` を食べない。
+    let wire = b"md-preview\x001\x00root=/work\x00file=/a.md\x00\x00" as &[u8];
+    let msg = Message::decode(wire).unwrap();
+    assert_eq!(msg.root, Some("/work".to_string()));
+    assert_eq!(msg.files, vec!["/a.md".to_string()]);
+}
+
+#[test]
 fn broken_input_is_rejected() {
     assert_eq!(Message::decode(b""), None, "空");
     assert_eq!(Message::decode(b"other\0" as &[u8]), None, "マジック違い");

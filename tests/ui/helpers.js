@@ -2,7 +2,7 @@
 //
 // 各 spec が実物のページを開くまでの手順（オンボーディング抑止・初期描画待ち）は
 // どこでも同じなので、ここ 1 か所に置く。サーバは playwright.config.js が
-// 3 つ立てていて、URL の使い分けだけをここで持つ。
+// 4 つ立てていて、URL の使い分けだけをここで持つ。
 const { expect } = require('@playwright/test');
 
 /// フォルダ起動（`md tests/ui-fixtures`。タブ 0 枚）。baseURL なので '/' で足りる。
@@ -11,6 +11,8 @@ const FOLDER_URL = '/';
 const ONE_FILE_URL = 'http://127.0.0.1:7879/';
 /// 複数ファイル起動（`md a.md b.md` 相当。タブが 2 枚並んだ状態で始まる）。
 const MULTI_URL = 'http://127.0.0.1:7880/';
+/// root の移動（#34）専用。ここだけ**サーバの root が動く**ので、他と混ぜない。
+const ROOT_URL = 'http://127.0.0.1:7881/';
 
 /// 初回オンボーディング（? のヘルプ自動表示）を抑止して開く。
 /// 出したままだと isOverlayOpen が true になり、素キーが全部止まる。
@@ -59,7 +61,7 @@ async function nextFrames(page) {
 }
 
 module.exports = {
-  FOLDER_URL, ONE_FILE_URL, MULTI_URL,
+  FOLDER_URL, ONE_FILE_URL, MULTI_URL, ROOT_URL,
   open, openFolder, nextFrames,
   id, treeItem, tab, display,
 };

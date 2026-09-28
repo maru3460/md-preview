@@ -53,6 +53,9 @@ enum AppEvent {
     /// アプリが前面に出た（#49）。隠してある窓を戻すために使う。
     /// Dock アイコンのクリック・⌘Tab・転送してきた md の `activate` が引き金。
     Reopen,
+    /// ツリーの頂点を張り替える（#34）。ページの `root:` と、別プロセスから
+    /// 転送されてきた `md <dir>` の両方がここへ集まる。
+    SetRoot(PathBuf),
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -167,6 +170,19 @@ fn message_to_forward(
 ) -> Option<md_preview::instance::Message> {
     use md_preview::instance::Message;
 
+    // フォルダ指定は「ツリーの頂点を張り替えろ」という要求として転送する（#34）。
+    // タブは 1 枚も増えないので `files` は空のまま。
+    //
+    // ⚠️ **引き受けた穴。** `root=` を知らない古い受け側（＝入れ替える前のバイナリが
+    // 持っている窓）へ届くと、未知キーとして捨てられて `files` が空になり、
+    // **窓が前に出るだけでフォルダが変わらない。** 変更前はフォルダ指定を転送せず
+    // 新しい窓を開いていたので、その場面だけ悪くなっている。
+    //
+    // Why not 挨拶に「root を解せる」印を足して、無ければ転送しない: 踏むのは
+    // 「古い窓が生きたまま入れ替えた」ときだけで、⌘Q すれば消える。#31 が決めた
+    // 「未知のキーは無視。キーを足してもバージョンは上げない」に手を入れる対価の方が
+    // 大きいと見た。`plan.md` 4.5 に「入れ替えの前に ⌘Q」を書いてある。
+    let mut root = None;
     let ids = if stdin_mode {
         // パイプ入力も `md file.md` と同じ経路に乗せる。実体化は main の頭で済んで
         // いるので、ここはそのパスを識別子にするだけ。
@@ -174,22 +190,18 @@ fn message_to_forward(
             .canonicalize()
             .ok()?;
         vec![request::file_id(&doc)]
+    } else if let Some(dir) = single_dir_arg(targets) {
+        root = Some(request::file_id(&dir));
+        Vec::new()
     } else {
-        // ディレクトリ引数は転送しない。タブに乗らないし、既存の窓の root を
-        // 差し替える仕組みもまだ無い（#34）。ここを転送に回すと、#34 が入るまで
-        // 「別のフォルダを開く」手段が完全に消える。**#34 が入ったら外す暫定。**
-        if let [only] = targets {
-            if Path::new(only).is_dir() {
-                return None;
-            }
-        }
         app_config::plan_paths(targets, current_dir).1
     };
-    if ids.is_empty() {
+    if ids.is_empty() && root.is_none() {
         return None;
     }
 
     let mut msg = Message::new(ids);
+    msg.root = root;
     msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     msg.sender_pid = Some(std::process::id() as i32);
     // 受け側の「閉じたら戻る先」（#49）。窓を持つプロセスは生き続けるので、
@@ -229,6 +241,23 @@ fn message_to_forward(
         }
     }
     Some(msg)
+}
+
+/// 引数が「フォルダ 1 つ」なら、その正規化済みの絶対パス。
+///
+/// `plan_paths` の先頭の分岐と同じ判定をここにも書いているのは、あちらが
+/// 「転送できるか」だけを聞ける形になっていないため（フォルダかどうかを知るのに
+/// パス解決を伴い、開けなければ `exit(1)` する）。ここが `None` を返した後で
+/// `plan_paths` を通るので、**落ちる条件は従来と同じ**。落ちる場所を増やして
+/// いないだけで、落ちないようにしているわけではない。
+fn single_dir_arg(targets: &[String]) -> Option<PathBuf> {
+    let [only] = targets else { return None };
+    let path = Path::new(only).canonicalize().ok()?;
+    if path.is_dir() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 /// 既に動いている md へ渡せたら true（呼び出し側はそのまま終了する）。
@@ -498,6 +527,8 @@ fn main() {
     // 全画面まわりの通知と、閉じる待ちの期限を自分へ戻すぶん。`proxy` は下で
     // ipc_handler へムーブされるので、控えをここで取っておく。
     let fullscreen_proxy = event_loop.create_proxy();
+    // root を張り替えるたびに監視を立て直す（#34）。新しい debouncer に渡すぶん。
+    let watcher_proxy = event_loop.create_proxy();
 
     // 転送の受け口を開ける。accept ループは別スレッドで、届いたものは
     // EventLoopProxy 経由でメインスレッドへ渡す（ファイル監視と同じ形）。
@@ -625,6 +656,12 @@ fn main() {
                         if let Some(path) = request::id_to_path(id) {
                             watch_extra(&ipc_watcher, &path);
                         }
+                    } else if let Some(id) = body.strip_prefix("root:") {
+                        // `watch:` と同じ理由で `id_to_path` を通す。ここを素通しに
+                        // すると「識別子とファイルの唯一の関門」が嘘になる。
+                        if let Some(path) = request::id_to_path(id) {
+                            let _ = proxy.send_event(AppEvent::SetRoot(path));
+                        }
                     } else if let Some(id) = body.strip_prefix("closed:") {
                         let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
                     } else if let Some(text) = body.strip_prefix("copy:") {
@@ -663,6 +700,12 @@ fn main() {
     // evaluate_script は黙って落ちるので、`Ready` が来るまで溜めておく。
     let mut page_ready = false;
     let mut pending_opens: Vec<String> = Vec::new();
+    // 同じ理由で溜める root の張り替え（#34）。`MdSetRoot` は `folder.js` の中にあり
+    // document-start で注入されるので**呼ぶだけなら窓を作った直後から通る**が、通ると
+    // 壊れる。中で使う `MdCommon` は `<head>` のモジュールで folder.js より後に
+    // 評価されるので ReferenceError になり、履歴は DOMContentLoaded で
+    // `[rootDir()]` に入れ直されるので、先に動かした 1 歩が消える。
+    let mut pending_root: Option<PathBuf> = None;
 
     // 掃除を約束した一時ディレクトリ。自分の stdin と、転送で所有権を引き取った
     // ぶんが混ざって溜まる。**持ち主はタブ**で、閉じられた時点で `drop_owned_for` が
@@ -788,12 +831,18 @@ fn main() {
                     let _ = webview.set_background_color(color);
                 }
             }
+            Event::UserEvent(AppEvent::SetRoot(path)) => {
+                change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, path);
+            }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
                 let _ = webview.evaluate_script(&script);
             }
             Event::UserEvent(AppEvent::Ready) => {
                 page_ready = true;
+                if let Some(root) = pending_root.take() {
+                    change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, root);
+                }
                 let script = md_preview::html::open_files_script(&pending_opens);
                 pending_opens.clear();
                 if !script.is_empty() {
@@ -841,6 +890,20 @@ fn main() {
                 // Why not ここで id_to_path を通す: 落とすと「窓は前に出たのに何も
                 // 起きない」になる。`watch:` が通すのは監視という副作用を伴うからで、
                 // 「ページへ文字列を渡すだけ」のここに同じ門は要らない。
+                // `md <dir>` は root の張り替えだけを載せてくる（#34）。ファイルの
+                // 経路と違って副作用（監視の張り替え）があるので、`change_root` の
+                // 中で `canonicalize` と「ディレクトリか」を確かめ直す。
+                // 形（先頭が `/`）だけは `files` と同じく見る。実体への解決は
+                // `change_root` の `canonicalize` が引き受けるが、相対パスを通すと
+                // **受け側の cwd** を基準に解決されるので、そこは隣の行と揃える。
+                if let Some(root) = msg.root.as_deref().filter(|r| r.starts_with('/')) {
+                    let root = PathBuf::from(root);
+                    if page_ready {
+                        change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, root);
+                    } else {
+                        pending_root = Some(root);
+                    }
+                }
                 let ids: Vec<String> =
                     msg.files.into_iter().filter(|id| id.starts_with('/')).collect();
                 if ids.is_empty() {
@@ -1227,13 +1290,65 @@ fn resolve_target(id: &str) -> Option<PathBuf> {
     request::id_to_path(id)
 }
 
+type Watcher = notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>;
+/// 監視は IPC ハンドラ（別スレッド）からも足されるので共有の可変で持つ。
+/// `None` は「監視を張れなかった」——ホットリロードが無いだけで窓は動く。
+type SharedWatcher = std::sync::Mutex<Option<Watcher>>;
+
+/// ツリーの頂点を張り替える（#34）。**root を動かすのはこの関数 1 本だけ。**
+/// 呼ぶ側は 2 経路ある——ページの `root:`（[`AppEvent::SetRoot`] 経由）と、
+/// 別プロセスからの `md <dir>`（[`AppEvent::Open`] から直に呼ぶ）。
+/// `SetRoot` のアームにガードを足しても転送には効かないので注意すること。
+///
+/// 監視を張り替える順序に意味がある。**新しいものを先に立ててから差し替える。**
+/// 先に落とすと、その隙間に起きた変更がどちらの監視にも載らず、ホットリロードが
+/// 1 回ぶん黙って抜ける。
+///
+/// 張り替えで消えるのは `watch_extra` が足した root 外タブの個別監視も同じなので、
+/// **ページが `watch:` を送り直す**（`folder.js` の `MdSetRoot`）。タブの一覧を
+/// 持っているのはページなので、再登録リストを Rust 側に置くと二重帳簿になる。
+///
+/// **root の外のタブには隙間が残る。** 再登録は evaluate_script → JS → IPC と
+/// 往復するので、その間に起きた root 外ファイルの変更はどちらの監視にも載らない。
+/// 上の「隙間が無い」は root 配下の再帰監視の話で、こちらは受け入れている。
+fn change_root(
+    ctx: &request::RequestContext,
+    watcher: &SharedWatcher,
+    proxy: &tao::event_loop::EventLoopProxy<AppEvent>,
+    window: &tao::window::Window,
+    webview: &wry::WebView,
+    root: PathBuf,
+) {
+    let Ok(root) = root.canonicalize() else { return };
+    if !root.is_dir() {
+        return;
+    }
+
+    // 同じ場所へ移る要求でも、ツリーは描き直す（`md <dir>` を叩き直したときに
+    // 中身の変化が出る）。監視だけは張り替えない——何も変わらないのに
+    // FSEvents のストリームを立て直すのは、そのぶん取りこぼす機会を作るだけ。
+    if ctx.root() != root {
+        // Why not `*guard = spawn_watcher(...)`: 張り直しに失敗したとき（消えたフォルダ・
+        // FSEvents を張れないボリューム）に `None` を入れると、**それまで動いていた監視まで
+        // 道連れで消える**。`watch_extra` も `None` には足せないので、root の外のタブを
+        // 含めてホットリロードが全滅する。失敗したら古い監視を残す——新しい root が
+        // 見えないだけで済む。
+        if let Some(fresh) = spawn_watcher(root.clone(), proxy.clone()) {
+            if let Ok(mut guard) = watcher.lock() {
+                *guard = Some(fresh);
+            }
+        }
+    }
+    ctx.set_root(root.clone());
+
+    window.set_title(&app_config::dir_name(&root));
+    let _ = webview.evaluate_script(&md_preview::html::set_root_script(&root));
+}
+
 /// root の外のファイルを監視対象に足す。エディタの「別ファイルを書いて rename」に
 /// 耐えるよう、ファイルそのものではなく親ディレクトリを非再帰で見る。
 /// 既に見ている場所を重ねて watch しても notify 側が畳むので、重複管理はしない。
-fn watch_extra(
-    watcher: &std::sync::Mutex<Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>>>,
-    file: &Path,
-) {
+fn watch_extra(watcher: &SharedWatcher, file: &Path) {
     let Some(dir) = file.parent() else { return };
     let Ok(mut guard) = watcher.lock() else { return };
     if let Some(d) = guard.as_mut() {
@@ -1266,7 +1381,7 @@ fn is_blocked_ext(path: &Path) -> bool {
 fn spawn_watcher(
     root: PathBuf,
     proxy: tao::event_loop::EventLoopProxy<AppEvent>,
-) -> Option<notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>> {
+) -> Option<Watcher> {
     let mut debouncer = new_debouncer(Duration::from_millis(80), move |res: notify_debouncer_mini::DebounceEventResult| {
         let Ok(events) = res else { return };
         for ev in events {
@@ -1291,9 +1406,10 @@ fn spawn_watcher(
     // root 配下は再帰で見る。root の外のファイルはページから watch: が飛んでくるので
     // watch_extra が個別に足す。
     //
-    // root は `/` にもなりうる（`md /`）。つまりここはボリューム全体の FSEvents を
-    // 受けうる。**その重さは測っていない。**重いと分かったら、受け取る側
-    // （`MdReload` は表示中の 1 ファイルしか見ていない）に合わせてタブ単位へ寄せること。
+    // root は `/` にもなりうる（`md /` も、`h` を天井で押し続けた先も）。つまりここは
+    // ボリューム全体の FSEvents を受けうる。**その重さは測っていない。**
+    // 重いと分かったら、受け取る側（`MdReload` は表示中の 1 ファイルしか見ていない）に
+    // 合わせてタブ単位の監視へ寄せること。
     debouncer.watcher().watch(&root, RecursiveMode::Recursive).ok()?;
     Some(debouncer)
 }

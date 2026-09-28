@@ -618,27 +618,90 @@ body:has(> .html-page),
 
 /* 幅は CSS 変数が持つ（リサイザは変数を書き換えるだけ）。こうしておくと開閉は
    body.sidebar-closed の付け外しだけで済み、閉じる前の幅を JS で退避しなくてよい。 */
-#sidebar {
+/* ヘッダ＋ツリーの列。幅を持つのはここで、ツリー（#sidebar）はその中で伸びる。
+   ヘッダを #sidebar の中に入れない理由は 2 つ。ヘッダを動かさずツリーだけを
+   スクロールさせたいのと、**#sidebar が tabindex=-1 だから**——中にヘッダを置くと
+   押しただけで #sidebar へフォーカスが移り（実測）、`nav-tree` の枠が出ていないのに
+   ツリーのキーが効く半端な状態になる。外へ出すと BODY に落ちるだけで、本文の
+   スクロール素キーはそのまま効く（これも実測）。 */
+#sidebar-col {
     width: var(--md-sidebar-w, 250px);
     min-width: 120px;
     height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 8px 0;
+    overflow: hidden;
     font-size: 13px;
     box-sizing: border-box;
     flex-shrink: 0;
     transition: width 0.15s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+#sidebar {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px 0;
+}
+
+/* ── サイドバーのヘッダ（#34）──────────────────────────────
+   `‹ ›` と ⟳ は固定幅、フォルダ名だけが縮む。幅の下限（120px）では名前が
+   ほぼアイコンに食われるが、狭いときにボタンを隠す案は採らない（閾値が 1 つ増える
+   のと、名前が読めれば操作は成立するため）。 */
+#sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 6px 4px;
+    flex-shrink: 0;
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 14%, transparent);
+}
+
+#sidebar-header button {
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+#sidebar-header button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--md-accent, Highlight) 18%, transparent);
+}
+
+#sidebar-header button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.sb-icon {
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.sb-name {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* 閉じた状態（⌘B）。min-width も殺さないと 120px で止まる。 */
-body.sidebar-closed #sidebar {
+body.sidebar-closed #sidebar-col {
     width: 0;
     min-width: 0;
 }
 
 /* ドラッグ中はポインタに幅を張り付かせる（transition が効くと遅れて付いてくる）。 */
-body.sidebar-resizing #sidebar {
+body.sidebar-resizing #sidebar-col {
     transition: none;
 }
 

@@ -4,6 +4,8 @@
 //  - タブ（.md-tab）を右クリック → そのタブを対象（開閉の項目が増える）。
 //  - サイドバーのツリー項目（.tree-item）を右クリック → その項目を対象（VS Code の
 //    Explorer 的な操作）。プレビューに何も開いていなくても効く。
+//  - サイドバーのヘッダ（#sidebar-header）→ いまの root が対象。ツリーに行が無い
+//    root 自身にも、パスのコピーと Finder 表示を効かせるため。
 //  - それ以外（プレビュー領域など）→ 現在プレビュー中のファイル。
 //
 // 安全性の考え方:
@@ -25,15 +27,22 @@
   //   id    … IPC / コピーに使う識別子（何も開いていなければ ''）
   //   relOk … 「相対パスをコピー」が意味を持つか
   //   has   … パス系の操作（絶対/Finder/開く）が可能か
+  //   dir   … フォルダか（「ここを root にする」が意味を持つか）
   function resolveContext(e) {
     // タブを右クリック → そのタブが対象（開閉の操作が増える）。
     var tab = e.target.closest && e.target.closest('.md-tab');
     if (tab && tab.dataset && tab.dataset.path) {
       return { id: tab.dataset.path, relOk: true, has: true, tab: tab.dataset.path };
     }
+    // サイドバーのヘッダ（フォルダ名）→ いまの root が対象（#34）。パスのコピーや
+    // Finder 表示を、ツリーに行が無い root 自身に対しても効かせる。
+    if (e.target.closest && e.target.closest('#sidebar-header')) {
+      var root = (window.MdCommon && MdCommon.rootDir) ? MdCommon.rootDir() : '';
+      if (root) return { id: root, relOk: true, has: true, dir: true };
+    }
     var ti = e.target.closest && e.target.closest('.tree-item');
     if (ti && ti.dataset && ti.dataset.path) {
-      return { id: ti.dataset.path, relOk: true, has: true };
+      return { id: ti.dataset.path, relOk: true, has: true, dir: ti.dataset.kind === 'dir' };
     }
     if (currentId) return { id: currentId, relOk: true, has: true };
     return { id: '', relOk: false, has: false };
@@ -92,8 +101,8 @@
       case 'tab-close-all':
         if (window.MdTabs) MdTabs.closeAll();
         break;
-      case 'reload':
-        if (window.MdReload) window.MdReload();
+      case 'set-root':
+        if (window.MdRoot) window.MdRoot.set(ctx.id);
         break;
       case 'palette':
         if (window.MdPalette) window.MdPalette.open();
@@ -138,6 +147,16 @@
       });
       items.push({ sep: true });
     }
+    // フォルダが対象のときだけ。いま居る root には**出さない**——押しても何も
+    // 起きないので、灰色で 1 行取る意味が無い（`enabled: false` にすると
+    // `render` が disabled の行をそのまま並べる）。
+    if (ctx.dir) {
+      var root = (window.MdCommon && MdCommon.rootDir) ? MdCommon.rootDir() : '';
+      if (ctx.id !== root) {
+        items.push({ label: 'ここを root にする', action: 'set-root', enabled: true });
+        items.push({ sep: true });
+      }
+    }
     // パス系。対象が無いとき（何も開いていない本文の右クリック）は disabled で残す。
     items.push({ label: '相対パスをコピー', action: 'copy-rel', enabled: ctx.relOk });
     items.push({ label: '絶対パスをコピー', action: 'copy-abs', enabled: ctx.has });
@@ -152,8 +171,6 @@
       action: 'sidebar-toggle',
       enabled: true
     });
-    items.push({ sep: true });
-    items.push({ label: '再読み込み', action: 'reload', enabled: true });
     items.push({ sep: true });
     items.push({ label: 'ショートカット一覧 (?)', action: 'help', enabled: true });
     return trimSeparators(items);

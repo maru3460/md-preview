@@ -366,6 +366,13 @@
     closeByPath: function(path) { closeAt(indexOf(path)); },
     closeOthers: closeOthers,
     closeAll: closeAll,
-    count: function() { return tabs.length; }
+    count: function() { return tabs.length; },
+    // 開いているタブの識別子。root が動いたとき（#34）に「どれが root の外に
+    // なったか」をページ側で数えるために要る。
+    ids: function() { return tabs.map(function(t) { return t.path; }); },
+    // 名前を付け直す。タブの見出しは root を剥いだ表示名なので、root が動くと
+    // 同じタブの名前が変わる。render() は毎回 displayOf から組み直すので、
+    // これを呼ぶだけで済む。
+    relabel: render
   };
 })();

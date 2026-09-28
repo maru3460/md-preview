@@ -170,8 +170,11 @@ pub struct Message {
     /// 弾かれる（一度そうなっていて、転送したぶんの一時ファイルが漏れていた）。
     /// 受け側は**自分でも門を通してから**引き取ること（ワイヤから来た値なので）。
     pub own: Vec<String>,
-    /// 送り側の作業ディレクトリ。いまは診断用で、#34 がディレクトリを受けるときに要る。
+    /// 送り側の作業ディレクトリ。いまは診断用。
     pub cwd: Option<String>,
+    /// 受け側に張り替えてほしいツリーの頂点（#34）。`md <dir>` がこれだけを載せる
+    /// （フォルダ指定はタブを 1 枚も開かないので `files` は空になる）。
+    pub root: Option<String>,
     /// 送り側の pid。いまは診断用。
     pub sender_pid: Option<i32>,
     /// 送り側が起動した時点で**前に居たアプリ**の pid。**受け側の「閉じたら戻る先」**
@@ -201,6 +204,9 @@ impl Message {
         push_token(&mut out, &VERSION.to_string());
         if let Some(cwd) = &self.cwd {
             push_token(&mut out, &format!("cwd={}", cwd));
+        }
+        if let Some(root) = &self.root {
+            push_token(&mut out, &format!("root={}", root));
         }
         if let Some(pid) = self.sender_pid {
             push_token(&mut out, &format!("pid={}", pid));
@@ -236,6 +242,7 @@ impl Message {
                 "file" => msg.files.push(value.to_string()),
                 "own" => msg.own.push(value.to_string()),
                 "cwd" => msg.cwd = Some(value.to_string()),
+                "root" => msg.root = Some(value.to_string()),
                 "pid" => msg.sender_pid = value.parse().ok(),
                 "launcher" => msg.launcher_pid = value.parse().ok(),
                 "activate" => msg.activate = value != "0",

@@ -847,7 +847,15 @@ pub fn build_folder_html(
 </head>
 <body class="folder-mode">
 <div class="folder-layout">
-  <div id="sidebar" tabindex="-1"></div>
+  <div id="sidebar-col">
+    <div id="sidebar-header">
+      <button id="root-back" class="sb-icon" type="button" title="戻る" aria-label="戻る">‹</button>
+      <button id="root-forward" class="sb-icon" type="button" title="進む" aria-label="進む">›</button>
+      <button id="root-name" class="sb-name" type="button" title="親フォルダへ"></button>
+      <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">⟳</button>
+    </div>
+    <div id="sidebar" tabindex="-1"></div>
+  </div>
   <div id="resizer"></div>
   <div id="main-col">
     <div id="tabbar"></div>
@@ -871,6 +879,17 @@ pub fn open_files_script(ids: &[String]) -> String {
     }
     let list = ids.iter().map(|s| json_string(s)).collect::<Vec<_>>().join(",");
     format!("window.MdOpenFiles && window.MdOpenFiles([{}]);", list)
+}
+
+/// ツリーの頂点が動いたことをページへ伝えるスクリプト（#34）。
+///
+/// `MD_ROOT_DIR` は起動スクリプトで 1 回きり入るので、実行中に root が動く経路は
+/// これしかない。`open_files_script` と同じく、パスのエスケープをここで済ませる。
+pub fn set_root_script(root: &std::path::Path) -> String {
+    format!(
+        "window.MdSetRoot && window.MdSetRoot({});",
+        json_string(&root.to_string_lossy())
+    )
 }
 
 #[cfg(test)]
