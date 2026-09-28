@@ -563,6 +563,15 @@ fn main() {
     if let Some(color) = bg {
         webview_builder = webview_builder.with_background_color(color);
     }
+
+    // 配信の文脈はクロージャの外で作る。root は実行中に動く（#34）ので、
+    // イベントループ側からも同じものを触れる必要がある。
+    let ctx = std::sync::Arc::new(request::RequestContext::new(
+        root_dir.clone(),
+        html_bytes,
+        theme_css,
+        custom_css,
+    ));
     let webview = webview_builder
         .with_initialization_script(&init_script)
         .with_navigation_handler(|url: String| {
@@ -582,12 +591,7 @@ fn main() {
             // リクエストごとにスレッドを立てる。ローカルファイルの読み出しが主で
             // 個々は短命なので、プールを挟んで重いリクエストの後ろに軽いリクエストが
             // 詰まる（画像が 1 枚ずつしか出ない等）弊害の方を避ける。
-            let ctx = std::sync::Arc::new(request::RequestContext {
-                root_dir: root_dir.clone(),
-                index_html: html_bytes,
-                theme_css,
-                custom_css,
-            });
+            let ctx = ctx.clone();
             move |_webview_id, request, responder: RequestAsyncResponder| {
                 let url_path = percent_decode(request.uri().path());
                 let query = request.uri().query().unwrap_or("").to_string();

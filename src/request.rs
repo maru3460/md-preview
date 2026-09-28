@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
 use crate::urlpath::{asset_url, display_id, DocBase, ABS_PREFIX};
@@ -768,11 +769,44 @@ fn inject_style_gate(bytes: Vec<u8>) -> Vec<u8> {
 pub struct RequestContext {
     /// ツリーが見せる範囲の頂点。URL（`safe_join`）もここから出るものを拒否する。
     /// 識別子（`?file=`）は root の外も指せるので、これは配信の境界ではない。
-    pub root_dir: PathBuf,
+    ///
+    /// 実行中に動く（#34）。フォルダ移動はイベントループのスレッドから来て、
+    /// リクエストは 1 本ずつ別スレッドで走るので、共有の可変にするしかない。
+    root_dir: RwLock<PathBuf>,
     /// `/` で返す初期ページ。起動時に組み立て済み。
     pub index_html: Vec<u8>,
     pub theme_css: String,
     pub custom_css: String,
+}
+
+impl RequestContext {
+    pub fn new(root_dir: PathBuf, index_html: Vec<u8>, theme_css: String, custom_css: String) -> Self {
+        RequestContext { root_dir: RwLock::new(root_dir), index_html, theme_css, custom_css }
+    }
+
+    /// いまの root。**借りるのではなく複製して返す。**
+    ///
+    /// 1 リクエストは `?files=1` のようにミリ秒では終わらないものを含むので、
+    /// ガードを持ったまま処理へ入ると、その間フォルダ移動が固まる。`PathBuf` 1 つの
+    /// 複製のほうが安い。
+    ///
+    /// 毒（poison）の枝は**いまは到達しない**——`set_root` は `PathBuf` を代入する
+    /// だけで、代入も drop もパニックしないため。それでも `unwrap` にしないのは、
+    /// ここが落ちると窓ごと消えるのに対し、root は「いまどこを見ているか」でしかなく、
+    /// 古い値で 1 リクエスト返すほうが安いから。
+    pub fn root(&self) -> PathBuf {
+        match self.root_dir.read() {
+            Ok(g) => g.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    pub fn set_root(&self, root: PathBuf) {
+        match self.root_dir.write() {
+            Ok(mut g) => *g = root,
+            Err(poisoned) => *poisoned.into_inner() = root,
+        }
+    }
 }
 
 /// URL とクエリが指す処理。
@@ -861,7 +895,7 @@ fn respond_fragment(body_class: &str, html: String) -> Response {
 
 fn serve_view(ctx: &RequestContext, id: &str, mode: ViewMode) -> Response {
     let Some(path) = id_to_path(id) else { return not_found_response() };
-    let Some(r) = render_file(&path, &ctx.root_dir, mode) else { return not_found_response() };
+    let Some(r) = render_file(&path, &ctx.root(), mode) else { return not_found_response() };
     respond_fragment(r.body_class, r.html)
 }
 
@@ -885,16 +919,16 @@ fn serve_diffstat(id: &str) -> Response {
 pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Response {
     match parse_route(url_path, query) {
         Route::BuiltinLib(name) => serve_builtin_lib(name),
-        Route::Dir(id) => handle_dir(&id, &ctx.root_dir),
-        Route::HasMd(id) => handle_has_md(&id, &ctx.root_dir),
-        Route::Files => handle_files(&ctx.root_dir),
-        Route::Changed => handle_changed(&ctx.root_dir),
+        Route::Dir(id) => handle_dir(&id, &ctx.root()),
+        Route::HasMd(id) => handle_has_md(&id, &ctx.root()),
+        Route::Files => handle_files(&ctx.root()),
+        Route::Changed => handle_changed(&ctx.root()),
         Route::View(id) => serve_view(ctx, &id, ViewMode::Normal),
         Route::Raw(id) => serve_view(ctx, &id, ViewMode::RawSource),
         Route::Diff(id) => serve_diff(&id),
         Route::DiffStat(id) => serve_diffstat(&id),
         Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html.clone()),
-        Route::Asset(p) => handle_asset(p, &ctx.root_dir, &ctx.theme_css, &ctx.custom_css),
+        Route::Asset(p) => handle_asset(p, &ctx.root(), &ctx.theme_css, &ctx.custom_css),
     }
 }
 
@@ -926,6 +960,32 @@ fn handle_has_md(id: &str, root_dir: &Path) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swapping_the_root_changes_what_the_tree_can_reach() {
+        // #34。root は実行中に動くので、`RequestContext` を組んだ時点の値に
+        // 引きずられないことを、配信の答えで確かめる（フィールドを読むだけだと
+        // 「読む側が別の値を掴んでいる」形の壊れ方を見逃す）。
+        let base = std::env::temp_dir().canonicalize().unwrap().join("md-root-swap-test");
+        let inner = base.join("inner");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&inner).unwrap();
+
+        let ctx = RequestContext::new(base.clone(), Vec::new(), String::new(), String::new());
+        let ask = |ctx: &RequestContext, dir: &Path| {
+            handle_request(ctx, "/", &format!("dir={}", dir.to_string_lossy())).status()
+        };
+
+        assert_eq!(ask(&ctx, &base), 200, "起動時の root は読める");
+        assert_eq!(ask(&ctx, &inner), 200, "その配下も読める");
+
+        ctx.set_root(inner.clone());
+
+        assert_eq!(ask(&ctx, &inner), 200, "新しい root は読める");
+        assert_eq!(ask(&ctx, &base), 404, "外に出た旧 root はもう読めない");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn every_response_forbids_disk_caching() {

@@ -49,12 +49,7 @@ fn main() {
     );
     let index = inject_boot_script(&config.html_bytes, &boot);
 
-    let ctx = Arc::new(RequestContext {
-        root_dir: config.root_dir.clone(),
-        index_html: index,
-        theme_css,
-        custom_css,
-    });
+    let ctx = Arc::new(RequestContext::new(config.root_dir.clone(), index, theme_css, custom_css));
 
     let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {
         eprintln!("ポート {} を開けませんでした: {}", port, e);
