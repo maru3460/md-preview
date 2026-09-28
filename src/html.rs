@@ -852,7 +852,7 @@ pub fn build_folder_html(
       <button id="root-back" class="sb-icon" type="button" title="戻る" aria-label="戻る">‹</button>
       <button id="root-forward" class="sb-icon" type="button" title="進む" aria-label="進む">›</button>
       <button id="root-name" class="sb-name" type="button" title="親フォルダへ"></button>
-      <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">⟳</button>
+      <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">↻</button>
     </div>
     <div id="sidebar" tabindex="-1"></div>
   </div>

@@ -192,7 +192,7 @@ test('⌘P を開いたまま root が動いたら、一覧も追従する', asy
 });
 
 test('右クリックメニューに「再読み込み」は無い', async ({ page }) => {
-  // 本文の追従は watcher、ツリーはヘッダの ⟳ が担うので、この項目に残る仕事が無い。
+  // 本文の追従は watcher、ツリーはヘッダの ↻ が担うので、この項目に残る仕事が無い。
   await openRoot(page);
   await treeItem(page, 'a.md').click({ button: 'right' });
 
@@ -260,7 +260,7 @@ test('root が動いたら本文を出し直す（相対リンクが別のファ
   await expect(page.locator('.md-tab.active')).toHaveAttribute('title', 'ui-fixtures/sub/a.md');
 });
 
-test('⟳ はツリーだけを作り直し、展開状態とカーソルを戻す', async ({ page }) => {
+test('↻ はツリーだけを作り直し、展開状態とカーソルを戻す', async ({ page }) => {
   await openRoot(page);
   await treeItem(page, 'sub').click();
   await expect(treeItem(page, 'sub/a.md')).toBeVisible();

@@ -646,7 +646,7 @@ body:has(> .html-page),
 }
 
 /* ── サイドバーのヘッダ（#34）──────────────────────────────
-   `‹ ›` と ⟳ は固定幅、フォルダ名だけが縮む。幅の下限（120px）では名前が
+   `‹ ›` と ↻ は固定幅、フォルダ名だけが縮む。幅の下限（120px）では名前が
    ほぼアイコンに食われるが、狭いときにボタンを隠す案は採らない（閾値が 1 つ増える
    のと、名前が読めれば操作は成立するため）。 */
 #sidebar-header {
@@ -677,11 +677,31 @@ body:has(> .html-page),
     cursor: default;
 }
 
+/* アイコンの的。13px の文字のままだと ↻ が「読める」だけの大きさで、狙って
+   押すには小さい。24px 角の的を作って、グリフもその中で 15px まで上げる。
+   id を頭に付けているのは padding を上書きするため（`#sidebar-header button` の
+   方が詳細度で勝つ）。 */
+#sidebar-header .sb-icon {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    line-height: 1;
+}
+
+/* ↻ だけは他より一回り小さく見える（字面が小さい字）。的は上で揃えたので、
+   ここで動かすのはグリフの見た目だけ。
+   Why not ⟳(U+27F3): 同じ字面で 22px まで上げても ☆ と釣り合わなかった（実測）。
+   ⭮(U+2BAE) はグリフを持たないフォントがあり、豆腐になる。 */
+#sidebar-header #tree-reload {
+    font-size: 20px;
+}
+
 .sb-icon {
     flex-shrink: 0;
-    width: 20px;
-    text-align: center;
-    line-height: 1.2;
 }
 
 .sb-name {
