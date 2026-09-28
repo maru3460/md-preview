@@ -606,15 +606,22 @@
     if (cursorRow.dataset.kind === 'dir') cursorRow.click();
     else openCursorFile();
   }
-  // h / ← : 開いた dir=畳む（カーソルはその dir に残る）/ それ以外=親 dir へ
-  function collapseOrParent() {
+  // h / ← : 開いた dir=畳む（カーソルはその dir に残る）/ それ以外=親 dir へ。
+  // ツリーの天井まで来たら、root そのものを親フォルダへ上げる（#34）。
+  function collapseOrParent(e) {
     if (!cursorRow) return;
     if (cursorRow.dataset.kind === 'dir' && cursorRow.classList.contains('dir-open')) {
       cursorRow.click();
-    } else {
-      var parent = parentDirRow(cursorRow);
-      if (parent) setCursor(parent);
+      return;
     }
+    var parent = parentDirRow(cursorRow);
+    if (parent) { setCursor(parent); return; }
+    // ここから先は木が丸ごと入れ替わる。**キーリピートでは越えさせない**——
+    // 深いツリーを畳むつもりで押しっぱなしにしたとき、畳み終わった勢いで
+    // 上の階層へ突き抜ける。端に達したリピートの 1 回を食って、指を離して
+    // 押し直したときだけ上がる。
+    if (e && e.repeat) return;
+    goToParentRoot();
   }
 
   // [ / ] : 表示中の描画可能ファイルを DOM 順に巡回。端ではクランプ（wrap しない）。
@@ -640,6 +647,208 @@
     if (wasTree) { setCursor(row); focusTree(); }
   }
 
+  // ── root（ツリーの頂点）の移動 ────────────────────────────────
+  // 入口は 4 つ（ヘッダのフォルダ名 / `h` の天井 / 右クリックの「ここを root にする」/
+  // ⌘[ ⌘]）あるが、どれも `root:` の IPC 1 本に集まる。実際に動かすのは Rust 側で
+  // （監視の張り替えと窓のタイトルがあるため）、こちらは結果を `MdSetRoot` で受ける。
+  //
+  // 履歴はページが持つ。Rust は「どこへ移るか」しか知らないので、戻る / 進むを
+  // 向こうへ置くと同じ台帳が 2 つになる。
+  var rootHistory = [];
+  var rootIndex = -1;
+  // 戻る / 進むで送った要求の行き先。`MdSetRoot` が届いた時に「履歴を押す」のか
+  // 「添え字を動かす」のかを決める。要求が通らないこともある（消えたフォルダ）ので、
+  // **届いた root と突き合わせてから**動かす。
+  var pendingRootIndex = null;
+
+  function rootParent(root) {
+    if (!root || root === '/') return null;
+    var i = root.lastIndexOf('/');
+    if (i < 0) return null;
+    return i === 0 ? '/' : root.slice(0, i);
+  }
+
+  // ヘッダに出す名前。`/` には名前が無いので、そのまま `/` を出す。
+  function rootLabel() {
+    var root = MdCommon.rootDir();
+    if (!root) return '';
+    return root === '/' ? '/' : (root.split('/').pop() || root);
+  }
+
+  function requestRoot(path) {
+    if (!path || !window.ipc) return;
+    pendingRootIndex = null;
+    window.ipc.postMessage('root:' + path);
+  }
+
+  function navigateRoot(idx) {
+    if (!window.ipc) return;
+    if (idx < 0 || idx >= rootHistory.length || idx === rootIndex) return;
+    pendingRootIndex = idx;
+    window.ipc.postMessage('root:' + rootHistory[idx]);
+  }
+
+  function goToParentRoot() { requestRoot(rootParent(MdCommon.rootDir())); }
+
+  // 外（右クリックメニュー）から root を動かす口。`root:` を直に投げると履歴の
+  // 予約（`pendingRootIndex`）を外す処理が抜けるので、必ずここを通す。
+  window.MdRoot = { set: requestRoot };
+
+  function updateRootHeader() {
+    var name = document.getElementById('root-name');
+    if (!name) return;
+    var root = MdCommon.rootDir();
+    name.textContent = rootLabel();
+    // パンくずを置かない代わりに、フルパスはここで読めるようにする。
+    name.title = root ? root + '（クリックで親フォルダへ）' : '';
+    name.disabled = !rootParent(root);
+    var back = document.getElementById('root-back');
+    var fwd = document.getElementById('root-forward');
+    if (back) back.disabled = rootIndex <= 0;
+    if (fwd) fwd.disabled = rootIndex >= rootHistory.length - 1;
+  }
+
+  function treeEl() { return document.getElementById('sidebar'); }
+
+  // 最初のツリーも root の識別子で聞く。`?dir=` に載るのは常に識別子、という契約を
+  // 1 本にするため（空文字を「root の意味」にすると経路が 2 つになる）。
+  function fetchTree() {
+    return fetch('/?dir=' + encodeURIComponent(MdCommon.rootDir())).then(function(r) {
+      // 空文字が「root の意味」だった頃と違い、このリクエストは 404 しうる
+      // （`resolve_tree_dir` が識別子として解決できなければ落とす）。
+      if (!r.ok) throw new Error('tree ' + r.status);
+      return r.json();
+    });
+  }
+
+  // ツリー取得の世代。root は外（`md <dir>` の転送）からも動くので、`?dir=` の応答が
+  // 着いたときに「まだ自分が最新か」を確かめないと、**古い root の木**が後から
+  // 上書きする。浅い方へ移ったときは 404 にもならず、古いディレクトリの中身が
+  // 200 で返ってくるので黙って勝つ。本文フェッチが同じ穴を持っていて #31 で
+  // 塞いだのと同じ形。
+  //
+  // 起動時の 1 本目はここを通さない。転送は `Ready`（初期描画の後）まで Rust 側が
+  // 溜めるので、追い越す相手がいない。
+  var treeSeq = 0;
+
+  function refreshTree(after) {
+    var mySeq = ++treeSeq;
+    // catch は**取得にだけ**掛ける。後ろに置くと、木が取れた後に `after()` が
+    // throw したときまで拾って「読めているのに読めなかった」と画面に出す
+    // （初期ロードの下にも同じ注意が書いてある）。
+    return fetchTree()
+      .catch(function(e) { treeLoadFailed(e); return null; })
+      .then(function(items) {
+        if (items === null || mySeq !== treeSeq) return;
+        renderTree(items);
+        if (after) return after();
+      });
+  }
+
+  function renderTree(items) {
+    var tree = treeEl();
+    if (!tree) return;
+    // 消える行にカーソルを残さない（`cursorRow` は DOM から外れた行を掴み続ける）。
+    setCursor(null);
+    tree.innerHTML = '';
+    renderItems(items, tree, 0);
+  }
+
+  function treeLoadFailed(e) {
+    // 無音で終わらせない。窓はデタッチすると stderr が /dev/null へ行くので、
+    // 画面に出しておかないと「なぜか真っ白」しか手掛かりが残らない。
+    showNotice(document.getElementById('preview-pane'),
+      'フォルダを読み込めませんでした: ' + (MdCommon.rootDir() || '(未設定)'));
+    if (window.console) console.error('ツリーを取得できませんでした', e);
+  }
+
+  // いま開いているフォルダの識別子。文書順＝浅い順で並ぶ。
+  function openDirPaths() {
+    return Array.prototype.map.call(
+      document.querySelectorAll('.tree-item.dir-open'),
+      function(r) { return r.dataset.path; }
+    );
+  }
+
+  // 浅い順に 1 つずつ開き直す。子は親を開くまで描かれていないので並行にはできない。
+  function reopenDirs(paths) {
+    var i = 0;
+    function step() {
+      if (i >= paths.length) return Promise.resolve();
+      var row = findRow(paths[i++], 'dir');
+      if (!row || !row._expand) return step();
+      return Promise.resolve(row._expand()).then(step);
+    }
+    return step();
+  }
+
+  // ヘッダの ⟳。**ツリーだけを作り直す。**本文は巻き込まない——ファイルの中身は
+  // watcher が既に追従しているので、ここが担うのは「フォルダの中身の変化」だけ。
+  function reloadTree() {
+    var tree = treeEl();
+    if (!tree) return;
+    var opened = openDirPaths();
+    var cursorPath = cursorRow && cursorRow.dataset.path;
+    var scrollTop = tree.scrollTop;
+    refreshTree(function() {
+      return reopenDirs(opened).then(function() {
+        if (currentFilePath) updateActiveItem(currentFilePath);
+        var row = cursorPath ? findRow(cursorPath) : null;
+        if (row) setCursor(row);
+        // setCursor の scrollIntoView より後に戻す。先に戻すと押し返される。
+        //
+        // 実測では**この行が無くても位置は変わらない**（WebKit は `innerHTML = ''`
+        // で `scrollTop` を 0 に畳まない）。それでも残すのは、行数が減って
+        // クランプが効く形になったときの保険が 1 行で買えるため。
+        // 「戻している」とは言えないので、ドキュメントでもそう主張しない。
+        tree.scrollTop = scrollTop;
+      });
+    });
+  }
+
+  // root が動いたことを Rust から受ける唯一の入口（#34）。**動いた後**に届く。
+  window.MdSetRoot = function(root) {
+    window.MD_ROOT_DIR = root;
+    if (pendingRootIndex !== null && rootHistory[pendingRootIndex] === root) {
+      rootIndex = pendingRootIndex;
+    } else if (rootHistory[rootIndex] === root) {
+      // 同じ場所への張り替え（`md <dir>` を同じフォルダで叩き直した）。ツリーは
+      // 描き直すが、履歴に同じ行き先を 2 つ積むと ⌘[ が空振りに見える。
+    } else {
+      // 新しい行き先。進む側に残っていたものは捨てる（ブラウザの履歴と同じ）。
+      rootHistory = rootHistory.slice(0, rootIndex + 1);
+      rootHistory.push(root);
+      rootIndex = rootHistory.length - 1;
+    }
+    pendingRootIndex = null;
+    updateRootHeader();
+
+    // 別の木なので展開状態は引き継がない（⟳ と違うのはここ）。
+    refreshTree(function() {
+      if (currentFilePath) updateActiveItem(currentFilePath);
+    });
+
+    // root の内外が入れ替わる。前は root の再帰監視に載っていたタブが外へ出るし、
+    // 監視は張り替えで作り直されているので個別監視の登録も消えている。
+    // タブの一覧を持っているのはページなので、再登録はここから送る。
+    if (window.ipc && window.MdTabs && MdTabs.ids) {
+      MdTabs.ids().forEach(function(id) {
+        if (MdCommon.isOutsideRoot(id)) window.ipc.postMessage('watch:' + id);
+      });
+    }
+    // タブの名前は root を剥いだ形なので、付け直す。
+    if (window.MdTabs && MdTabs.relabel) MdTabs.relabel();
+    // ⌘P の一覧は root 配下を集めたもの。捨てておかないと、次に開いた一瞬だけ
+    // 前の root のファイルが並ぶ（取り直すのは開いた時。ここでやると `h` の
+    // 連打がそのまま全走査の連打になる）。
+    if (window.MdPalette && MdPalette.invalidate) MdPalette.invalidate();
+
+    // 描画済みの本文に残っている root 相対 URL（`/docs/fig.png`）は、**新しい root から**
+    // 解決される。画像は取得済みなので見た目は変わらないが、相対リンクはクリックした
+    // 瞬間に別のファイルを開く。開いているファイルは変えずに、本文だけ出し直す。
+    if (currentFilePath) loadPreview(currentFilePath, true);
+  };
+
   // キーの割り当て・効く文脈は keymap.js の表が持つ。ここは実処理だけ。
   //
   // 注: このファイルは初期化スクリプト（document-start）として注入されるので、
@@ -656,6 +865,15 @@
       focusTree();
     });
     MdKeymap.on('sidebar-toggle', toggleSidebar);
+    // ⌘[ / ⌘] はフォルダの履歴。ファイルの「戻る」はタブが担っているので積まない。
+    //
+    // Why not `h` と同じ `e.repeat` ガードを足す: 要らない。`rootIndex` が動くのは
+    // `MdSetRoot` が届いた時なので、押しっぱなしの 2 回目以降は**同じ行き先**を
+    // 投げ直すだけになる。結果として 1 歩しか戻らない——`h` のガードが作る
+    // 挙動とここは同じで、作りが違うだけ。
+    MdKeymap.on('root-history', function(e) {
+      navigateRoot(e.key === '[' ? rootIndex - 1 : rootIndex + 1);
+    });
     MdKeymap.on('file-cycle', function(e) {
       gotoAdjacentFile(e.key === '[' ? -1 : 1);
     });
@@ -667,7 +885,7 @@
         case 'g':                    cursorEdge(false); break;
         case 'G':                    cursorEdge(true); break;
         case 'l': case 'ArrowRight': expandOrOpen(); break;
-        case 'h': case 'ArrowLeft':  collapseOrParent(); break;
+        case 'h': case 'ArrowLeft':  collapseOrParent(e); break;
         case 'Enter':                toggleOrOpen(); break;
         default: break;
       }
@@ -686,8 +904,26 @@
 
   document.addEventListener('DOMContentLoaded', function() {
     registerKeys();
+
+    // ヘッダ（#34）。並ぶのは `‹ ›`・フォルダ名・⟳ だけ。
+    // 履歴の 1 つ目は「起動時の root」で、ここから積み始める。
+    rootHistory = [MdCommon.rootDir()];
+    rootIndex = 0;
+    updateRootHeader();
+    function headerButton(elId, fn) {
+      var el = document.getElementById(elId);
+      if (el) el.addEventListener('click', fn);
+    }
+    headerButton('root-name', goToParentRoot);
+    headerButton('root-back', function() { navigateRoot(rootIndex - 1); });
+    headerButton('root-forward', function() { navigateRoot(rootIndex + 1); });
+    headerButton('tree-reload', reloadTree);
+
     var resizer = document.getElementById('resizer');
-    var sidebar = document.getElementById('sidebar');
+    // 幅を持っているのは列（#sidebar-col）。ツリー（#sidebar）は中で伸びるだけなので、
+    // いまはどちらを測っても同じ値になるが、**幅を持つ要素を測る**方に合わせておく
+    // （列に padding や border が付いた日に、ここだけ静かにずれる）。
+    var sidebar = document.getElementById('sidebar-col');
     var isDragging = false;
     var startX, startWidth;
     resizer.addEventListener('mousedown', function(e) {
@@ -778,25 +1014,12 @@
       pumpMdChecks();
     }
 
-    // 最初のツリーも root の識別子で聞く。`?dir=` に載るのは常に識別子、という
-    // 契約を 1 本にするため（空文字を「root の意味」にすると経路が 2 つになる）。
-    //
     // 取得の失敗だけをここで畳んで null にする。catch を後ろに置くと、木が取れた
     // 後に初期タブの描画で throw したときまで拾ってしまい、「読めているのに
     // 読めなかった」と言いながら描いた本文を消すことになる。
-    fetch('/?dir=' + encodeURIComponent(MdCommon.rootDir()))
-      .then(function(r) {
-        // 空文字が「root の意味」だった頃と違い、このリクエストは 404 しうる
-        // （`resolve_tree_dir` が識別子として解決できなければ落とす）。
-        if (!r.ok) throw new Error('tree ' + r.status);
-        return r.json();
-      })
+    fetchTree()
       .catch(function(e) {
-        // 無音で終わらせない。窓はデタッチすると stderr が /dev/null へ行くので、
-        // 画面に出しておかないと「なぜか真っ白」しか手掛かりが残らない。
-        showNotice(document.getElementById('preview-pane'),
-          'フォルダを読み込めませんでした: ' + (MdCommon.rootDir() || '(未設定)'));
-        if (window.console) console.error('ツリーを取得できませんでした', e);
+        treeLoadFailed(e);
         return null;
       })
       .then(function(items) {
@@ -804,7 +1027,7 @@
           setTimeout(function() { markInitialRenderDone(); }, 0);
           return;
         }
-        renderItems(items, sidebar, 0);
+        renderTree(items);
         // 起動時に開くファイル（`md a.md b.md` なら 2 枚のタブ。先頭が最初に見える）。
         var initial = (typeof INITIAL_FILES !== 'undefined' && INITIAL_FILES) || [];
         if (initial.length && window.MdTabs) {

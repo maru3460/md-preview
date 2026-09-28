@@ -149,6 +149,10 @@ test('⌘P が覆っていても、届いたトーストは読める', async ({ 
   await openFile(page, 'a.md');
   await page.keyboard.press('Meta+p');
   await expect(page.locator('#md-pal-backdrop')).toBeVisible();
+  // **一覧が届くまで待つ。** パネルの高さは行数で決まるので、`?files=1` の前に
+  // 測ると「読み込み中…」だけの低いパネルになり、重なりが起きずに落ちる
+  // （このテスト自身が持っていたレース。負荷が上がると実際に踏む）。
+  await expect(page.locator('.md-pal-row').first()).toBeVisible();
 
   await forward(page, [page.mdRoot + '/long.md']);
 

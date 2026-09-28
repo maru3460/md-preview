@@ -61,12 +61,12 @@ struct Resp {
 }
 
 fn get(root: &Path, url_path: &str, query: &str) -> Resp {
-    let ctx = RequestContext {
-        root_dir: root.to_path_buf(),
-        index_html: b"<!-- index -->".to_vec(),
-        theme_css: String::new(),
-        custom_css: String::new(),
-    };
+    let ctx = RequestContext::new(
+        root.to_path_buf(),
+        b"<!-- index -->".to_vec(),
+        String::new(),
+        String::new(),
+    );
     let resp = handle_request(&ctx, url_path, query);
     Resp {
         status: resp.status().as_u16(),

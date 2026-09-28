@@ -115,8 +115,14 @@ impl AppConfig {
 }
 
 /// ウィンドウのタイトルに使うディレクトリ名。
-fn dir_name(p: &Path) -> String {
-    p.file_name().and_then(|n| n.to_str()).unwrap_or(".").to_string()
+///
+/// `/` には `file_name` が無い。そこで `.` に落とすと、root を `/` まで上げた窓の
+/// タイトルが「.」になってどこを見ているか分からなくなるので、パスそのものを名前にする。
+pub fn dir_name(p: &Path) -> String {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
 /// 引数のパス群から「root」と「起動時にタブとして開く識別子」を決める。
@@ -163,24 +169,24 @@ fn resolve_file_args(args: &[String]) -> Vec<PathBuf> {
 /// 全部が cwd 配下ならこれまでどおり cwd を root にし、そうでなければ指定された
 /// ファイルたちの共通の親まで広げる（1 つだけなら、そのファイルの親ディレクトリ）。
 fn files_root(paths: &[PathBuf], current_dir: &Option<PathBuf>) -> PathBuf {
-    let root = current_dir
+    // Why not: root が `/` まで広がっても止めない。ここには「`/` は重いから開かせない」
+    // という門があったが、**門として成立していなかった。** `plan_paths` がフォルダ単発を
+    // 手前で返すので `md /` には一度も効かず、効いていたのはファイル指定の 2 経路だけ
+    // だった——共通の親が `/` に広がる `md ~/a.md /tmp/b.md` と、cwd がそのまま
+    // root になる `cd / && md a.md`。「フォルダなら通るのにファイルなら止まる」という
+    // 一貫しない門だったので外した。
+    //
+    // 門が挙げていた重さ（`/` の再帰監視・⌘P の予算切れ）は**消えていない。**
+    // 再帰監視は `main.rs` の `spawn_watcher` がいまも張るし、⌘P の
+    // `FILE_LIST_MAX`（`request.rs`）もそのまま在る。`h` で天井を越えられるように
+    // なったぶん、到達しやすくもなっている。それでも外したのは、門が守れていた範囲が
+    // 上の 2 経路しか無く、`md /` を塞げていない以上「重さへの対策」として
+    // 機能していなかったため（判断はユーザー）。
+    current_dir
         .clone()
         .filter(|cwd| paths.iter().all(|p| p.starts_with(cwd)))
         .or_else(|| common_ancestor(paths))
-        .unwrap_or_else(|| PathBuf::from("/"));
-    // root がファイルシステムの根まで広がったら開かない。ツリーのドット判定は
-    // 予算付きになった（`request::md_presence`）ので、もう門の理由ではない。残る
-    // 理由は 2 つで、どちらも走査の予算では消せない。(1) root はまるごと再帰監視
-    // されるので、`/` ではボリューム全体の FSEvents を受ける（`main.rs` の watcher）。
-    // (2) ⌘P のファイル一覧が 20,000 件の予算を `/System` などの浅い階層で使い切り、
-    // 目的のファイルが載らない一覧になる（`request::FILE_LIST_MAX`）。幅優先なので
-    // `/Users` に届かないわけではないが、届いた先にはもう予算が残っていない。
-    if root.parent().is_none() {
-        eprintln!("md: root がファイルシステムの根（'/'）に広がるため開けません");
-        eprintln!("    同じフォルダのファイルを指定するか、フォルダごと開いてください");
-        std::process::exit(1);
-    }
-    root
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// 渡されたファイルを全部含む、いちばん深いディレクトリ。
@@ -207,25 +213,18 @@ fn resolve_arg_path(arg: &str) -> PathBuf {
     })
 }
 
-/// stdin を開くときの root。作業ディレクトリを使うが、そこが `/` のときだけは
-/// 一時ファイルの置き場所へ逃がす。`/` を root にするとボリューム全体が再帰監視の
-/// 対象になり、ファイル一覧も予算を使い切る（`files_root` の門と同じ理由）。
-/// ファイル指定と違ってユーザーは root を指定していないので、ここは終了させずに畳む。
+/// stdin を開くときの root。作業ディレクトリをそのまま使う。
 ///
 /// 作業ディレクトリが取れないとき（cwd が消えている等）に `.` へ落とさないのは、
 /// root がそのまま `?dir=` の識別子になるため。識別子は絶対パスでなければ
 /// `request::id_to_path` が弾き、ツリーも初期タブも出ない真っ白になる。
+///
+/// Why not: cwd が `/` のときに一時ファイルの場所へ逃がす枝があったが、外した。
+/// `files_root` の門と同じ理由で書かれていたので、門と一緒に理由が消えている。
 fn stdin_root(doc: &Path, current_dir: &Option<PathBuf>) -> PathBuf {
-    let Some(cwd) = current_dir.clone() else {
-        // `/` へは落とさない。この関数が存在する理由そのもの（`/` を root にすると
-        // ボリューム全体が再帰監視され、⌘P の予算も使い切る）を裏切る値なので、
-        // 一時ファイルの置き場所へ逃がす。
-        return doc.parent().map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
-    };
-    if cwd.parent().is_none() {
-        return doc.parent().unwrap_or(&cwd).to_path_buf();
-    }
-    cwd
+    current_dir
+        .clone()
+        .unwrap_or_else(|| doc.parent().map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir))
 }
 
 /// プロセスが終わるときに消してよい一時ディレクトリ。
@@ -345,8 +344,11 @@ mod tests {
             files_root(&paths(&["/work/docs/a.md", "/work/lib/b.md"]), &None),
             PathBuf::from("/work")
         );
-        // 共通の親が `/` まで広がるケースは値を返さずプロセスを終える（ボリューム
-        // 全体の再帰監視になるため）ので、ここでは呼ばない。
+        // 別のボリューム同士など、共通の親が `/` まで広がっても開ける。
+        assert_eq!(
+            files_root(&paths(&["/work/a.md", "/tmp/b.md"]), &None),
+            PathBuf::from("/")
+        );
     }
 
     /// `spool_stdin` が作るのと同じ形の（存在しない）パス。
@@ -385,13 +387,13 @@ mod tests {
     }
 
     #[test]
-    fn stdin_root_never_becomes_the_filesystem_root() {
-        // cwd が `/` のときに root を `/` にすると、ボリューム全体が再帰監視される。
-        // ユーザーは root を指定していないので、終了させずに一時ファイルの場所へ逃がす。
+    fn stdin_root_is_the_working_directory_and_falls_back_to_the_spool() {
         let doc = spooled("slash");
-        assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/"))), doc.parent().unwrap());
-        // 普通の cwd はそのまま root。
+        // cwd はそのまま root。`/` も例外ではない。
         assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/work"))), PathBuf::from("/work"));
+        assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/"))), PathBuf::from("/"));
+        // cwd が取れないときだけ、一時ファイルの置き場所へ逃がす（相対パスにしない）。
+        assert_eq!(stdin_root(&doc, &None), doc.parent().unwrap());
     }
 
     #[test]

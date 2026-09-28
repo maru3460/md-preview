@@ -37,6 +37,10 @@
   var truncation = null;
   var fetched = false;
   var fetching = null;
+  // 取得の世代。root は実行中に動く（#34）ので、`?files=1` の応答が着いたときに
+  // 「まだ自分が最新か」を確かめないと、**古い root の一覧**で埋め直される。
+  // `folder.js` のツリーが同じ穴を持っていて `treeSeq` で塞いでいる。
+  var loadSeq = 0;
 
   var rows = [];         // 表示中の行 [{ path, el }]
   var cursor = 0;
@@ -437,18 +441,20 @@
   // 並べ替えとバッジが無いだけの、以前と同じパレットになる）。
   function load() {
     if (fetching) return fetching;
-    fetching = Promise.all([loadFiles(), loadChanged()])
-      .then(rebuild)
+    var mySeq = ++loadSeq;
+    fetching = Promise.all([loadFiles(mySeq), loadChanged(mySeq)])
+      .then(function() { if (mySeq === loadSeq) rebuild(); })
       .catch(function() {})
       .then(function() { fetching = null; });
     return fetching;
   }
 
-  function loadFiles() {
+  function loadFiles(mySeq) {
     return fetch('/?files=1', { cache: 'no-store' })
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
         if (!data || !Array.isArray(data.files)) return;
+        if (mySeq !== loadSeq) return;
         serverFiles = data.files;
         truncation = data.truncated
           ? { reason: data.reason || '', limit: data.limit || 0 }
@@ -458,11 +464,12 @@
       .catch(function() {});
   }
 
-  function loadChanged() {
+  function loadChanged(mySeq) {
     return fetch('/?changed=1', { cache: 'no-store' })
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
         if (!data || !Array.isArray(data.changed)) return;
+        if (mySeq !== loadSeq) return;
         // リポジトリ外なら空配列が返る。前回の結果を残さないよう毎回作り直す。
         var map = Object.create(null); // パス由来のキーなので __proto__ 等を踏まない器にする
         var paths = [];
@@ -520,6 +527,30 @@
     },
     // 起動直後に一覧を温めておく（初回の ⌘P を待たせない）。
     prefetch: function() { load(); },
+    // 溜めた一覧を捨てる。root が動いた（#34）ときに呼ぶ。
+    //
+    // Why not 閉じているときも取り直す: `?files=1` は root 配下の全走査なので、
+    // `h` を何度か押すだけで重い走査が連なる。`open()` がどのみち開くたびに
+    // 取り直すので、閉じているなら捨てるだけでよい。
+    //
+    // **開いている最中は捨てるだけでは足りない。** `rebuild()` は検索対象を作り直す
+    // だけで DOM を触らないので、一覧は古い root のファイルを並べたまま残り、
+    // Enter で開けてしまう（`md <dir>` の転送でこの状況が作れる）。描き直して
+    // 「読み込み中…」へ戻し、新しい root で取り直す。
+    invalidate: function() {
+      // 進行中の応答を捨てる。`fetching` を残すと `load()` が古い方を共有してしまう。
+      loadSeq++;
+      fetching = null;
+      serverFiles = [];
+      changedPaths = [];
+      stats = null;
+      truncation = null;
+      fetched = false;
+      rebuild();
+      if (!overlay) return;
+      render();
+      load().then(function() { if (overlay) render(); });
+    },
     // 転送（#31）の受け側が「作業の途中か」を見るのに使う（folder.js）。
     isOpen: isOpen,
     open: open,

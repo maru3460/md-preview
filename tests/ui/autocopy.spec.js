@@ -129,7 +129,8 @@ test('選択が残ったままでも、右クリックでは再コピーされ�
 
   // メニューの行を選んでも同じ。ここは mousedown を preventDefault して
   // 選択を保つので、素朴な実装だと必ず誤爆する。
-  await page.locator('#md-context-menu .md-context-menu-item', { hasText: '再読み込み' }).first().click();
+  // 選ぶ行はコピーと無関係なものなら何でもよい（ツリーの開閉を使う）。
+  await page.locator('#md-context-menu .md-context-menu-item', { hasText: 'ファイルツリー' }).first().click();
   expect(await copies(page)).toHaveLength(0);
 });
 

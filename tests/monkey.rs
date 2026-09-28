@@ -126,12 +126,7 @@ fn id_of(root: &Path, rel: &str) -> String {
 /// **識別子**（絶対パス）、`Asset` は **URL**（root 相対）。名前空間が違うので
 /// 混ぜないこと——混ぜると片方の関門（`id_to_path` / `safe_join`）に一度も届かない。
 fn perform(action: &Action, root: &Path) -> u16 {
-    let ctx = RequestContext {
-        root_dir: root.to_path_buf(),
-        index_html: Vec::new(),
-        theme_css: String::new(),
-        custom_css: String::new(),
-    };
+    let ctx = RequestContext::new(root.to_path_buf(), Vec::new(), String::new(), String::new());
     match action {
         Action::ListDir(rel) => handle_request(&ctx, "/", &format!("dir={}", id_of(root, rel))),
         Action::HasMd(rel) => handle_request(&ctx, "/", &format!("has_md={}", id_of(root, rel))),

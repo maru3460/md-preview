@@ -138,12 +138,12 @@ fn request(query: &str) -> String {
         Some(_) => (query, ""),
         None => ("/", query),
     };
-    let ctx = RequestContext {
-        root_dir: fixtures(),
-        index_html: b"<!-- index -->".to_vec(),
-        theme_css: THEME_CSS.to_string(),
-        custom_css: CUSTOM_CSS.to_string(),
-    };
+    let ctx = RequestContext::new(
+        fixtures(),
+        b"<!-- index -->".to_vec(),
+        THEME_CSS.to_string(),
+        CUSTOM_CSS.to_string(),
+    );
     let resp = handle_request(&ctx, url_path, query);
     let status = resp.status().as_u16();
     let ctype = resp
