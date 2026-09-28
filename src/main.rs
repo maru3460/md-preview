@@ -101,7 +101,7 @@ fn detach_self(
 
     // 引数のエラーは、標準エラー出力を持っている親のうちに出しておく。子は stderr を
     // 持たないので、ここを素通りさせると「窓も出ずエラーも出ず終了コード 0」になる。
-    // 本体の from_paths と同じ関門（開けないパス・フォルダ混在・root の広がり）を通す。
+    // 本体の from_paths と同じ関門（開けないパス・フォルダ混在）を通す。
     if !targets.is_empty() {
         let _ = app_config::plan_paths(targets, current_dir);
     }
@@ -158,7 +158,7 @@ fn may_forward(flags: &cli::OpenFlags) -> bool {
 
 /// 転送する内容を組み立てる。転送に向かない引数なら `None`（従来どおり窓を開く）。
 ///
-/// パスの検証（開けないパス・フォルダ混在・root の広がり）は `plan_paths` に任せる。
+/// パスの検証（開けないパス・フォルダ混在）は `plan_paths` に任せる。
 /// ここは stderr を持っている経路なので、落ちるなら人に見える形で落ちてよい。
 fn message_to_forward(
     stdin_mode: bool,
@@ -1287,8 +1287,9 @@ fn spawn_watcher(
     // root 配下は再帰で見る。root の外のファイルはページから watch: が飛んでくるので
     // watch_extra が個別に足す。
     //
-    // root を `/` にできない理由の 1 つがここ。再帰監視はボリューム全体の FSEvents を
-    // 受けることになり、走査に予算を付けても減らせない（`app_config::files_root` の門）。
+    // root は `/` にもなりうる（`md /`）。つまりここはボリューム全体の FSEvents を
+    // 受けうる。**その重さは測っていない。**重いと分かったら、受け取る側
+    // （`MdReload` は表示中の 1 ファイルしか見ていない）に合わせてタブ単位へ寄せること。
     debouncer.watcher().watch(&root, RecursiveMode::Recursive).ok()?;
     Some(debouncer)
 }
