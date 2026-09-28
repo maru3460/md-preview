@@ -44,7 +44,9 @@ fn main() {
     let boot = format!(
         "{}\n{}\n{}",
         IPC_STUB,
-        config.page_globals(appearance),
+        // Quick Access は空で始める。IPC が無いので登録も保存も効かないうえ、
+        // ここで `~/.config` を読むと UI テストが手元の登録内容に左右される。
+        config.page_globals(appearance, &[]),
         md_preview::html::FOLDER_JS
     );
     let index = inject_boot_script(&config.html_bytes, &boot);
@@ -94,6 +96,8 @@ fn parse_args(args: Vec<String>) -> (u16, Vec<String>) {
 /// `?files=` も new root から答える）ので、ページ側だけ切り替えても嘘のツリーになる。
 /// `/__setroot` へ回してから `MdSetRoot` を呼ぶ——ウィンドウ側で `main.rs` が
 /// 「root を差し替えてから evaluate_script」とやっているのと同じ順序。
+/// 解決できなかったときに `MdRootFailed` を呼ぶのも窓と同じ（#35。消えたフォルダを
+/// 押したときに知らせる経路で、これが無いと UI テストから触れない）。
 const IPC_STUB: &str = "window.__mdIpc = []; \
 window.ipc = { postMessage: function(m) { \
   window.__mdIpc.push(m); \
@@ -102,6 +106,7 @@ window.ipc = { postMessage: function(m) { \
     return r.ok ? r.text() : null; \
   }).then(function(resolved) { \
     if (resolved && window.MdSetRoot) window.MdSetRoot(resolved); \
+    else if (!resolved && window.MdRootFailed) window.MdRootFailed(m.slice(5)); \
   }); \
 } };";
 

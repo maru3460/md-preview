@@ -52,18 +52,28 @@ impl AppConfig {
     /// - `MD_STDIN_PREFIX`   パイプ入力を実体化する一時ディレクトリの名前の頭。
     ///                       定義元はこのモジュールの `STDIN_DIR_PREFIX`。タブが「同名なら親の名前を
     ///                       添える」規則を、パイプの置き場所には当てないために要る。
-    pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
+    /// - `MD_QUICK_ACCESS`   Quick Access の並び（#35）。`[{path, dir}]` で、並びが表示順。
+    ///
+    /// `quick` を引数で受けるのは、これが AppConfig（起動の入力）ではなく
+    /// **ユーザーの持ち物**だから。`~/.config` をここで読むと、`examples/serve.rs` で
+    /// 立てる UI テストが手元の登録内容に左右される。
+    pub fn page_globals(
+        &self,
+        appearance: crate::theme::Appearance,
+        quick: &[crate::quick_access::Entry],
+    ) -> String {
         let renderable = request::RENDERABLE_EXT
             .iter()
             .map(|e| json_string(e))
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {};",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_QUICK_ACCESS = [{}];",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
             json_string(STDIN_DIR_PREFIX),
+            quick_json(quick),
         )
     }
 
@@ -112,6 +122,16 @@ impl AppConfig {
         let (root, ids) = plan_paths(args, current_dir);
         Self::folder(root, theme_css, custom_css, &ids)
     }
+}
+
+/// `MD_QUICK_ACCESS` に載せる形。**並びが表示順**なので、受け取った順のまま出す。
+/// `dir` を持たせるのは、消えたパスでも行を描けるようにするため（#35）。
+fn quick_json(quick: &[crate::quick_access::Entry]) -> String {
+    quick
+        .iter()
+        .map(|e| format!("{{\"path\":{},\"dir\":{}}}", json_string(&e.path), e.is_dir))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// ウィンドウのタイトルに使うディレクトリ名。
@@ -419,6 +439,24 @@ mod tests {
         // 見るので $TMPDIR にぶつかるため。ここを取り違えると、受け側が引き取れず
         // 転送したぶんの一時ファイルが黙って漏れる（実際に一度漏らした）。
         assert_eq!(owned_stdin_dir(&dir), None, "ディレクトリを載せてはいけない");
+    }
+
+    #[test]
+    fn quick_access_reaches_the_page_in_order_with_its_kind() {
+        use crate::quick_access::Entry;
+        let list = vec![
+            Entry { path: "/a/proj".into(), is_dir: true },
+            Entry { path: "/a/n\"1.md".into(), is_dir: false },
+        ];
+        assert_eq!(
+            quick_json(&list),
+            r#"{"path":"/a/proj","dir":true},{"path":"/a/n\"1.md","dir":false}"#
+        );
+    }
+
+    #[test]
+    fn nothing_pinned_is_an_empty_array_not_a_hole() {
+        assert_eq!(quick_json(&[]), "");
     }
 
     #[test]

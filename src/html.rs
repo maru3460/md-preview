@@ -852,9 +852,14 @@ pub fn build_folder_html(
       <button id="root-back" class="sb-icon" type="button" title="戻る" aria-label="戻る">‹</button>
       <button id="root-forward" class="sb-icon" type="button" title="進む" aria-label="進む">›</button>
       <button id="root-name" class="sb-name" type="button" title="親フォルダへ"></button>
-      <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">⟳</button>
+      <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">↻</button>
+      <button id="root-star" class="sb-icon" type="button" title="Quick Access に入れる" aria-label="Quick Access に入れる">☆</button>
     </div>
     <div id="sidebar" tabindex="-1"></div>
+    <div id="quick-access">
+      <div id="quick-access-title">Quick Access</div>
+      <div id="quick-access-list"></div>
+    </div>
   </div>
   <div id="resizer"></div>
   <div id="main-col">
@@ -890,6 +895,18 @@ pub fn set_root_script(root: &std::path::Path) -> String {
         "window.MdSetRoot && window.MdSetRoot({});",
         json_string(&root.to_string_lossy())
     )
+}
+
+/// root を動かせなかったことをページへ伝えるスクリプト（#35）。
+///
+/// **黙って終わらせないために要る。** Quick Access は消えた行を台帳に残す
+/// （起動のたびに存在確認をしないため）ので、押したときに理由を出せるのは
+/// ここだけである。#34 の「ここを root にする」も同じ口に乗る。
+///
+/// 渡すのは**ページが送ってきた識別子**。正規化できなかったものを知らせるので、
+/// こちらに正規化済みのパスは無い。
+pub fn root_failed_script(id: &str) -> String {
+    format!("window.MdRootFailed && window.MdRootFailed({});", json_string(id))
 }
 
 #[cfg(test)]
@@ -1216,6 +1233,12 @@ mod tests {
     fn open_files_script_keeps_the_given_order() {
         let s = open_files_script(&["/a.md".to_string(), "/b.md".to_string()]);
         assert!(s.contains(r#"["/a.md","/b.md"]"#), "{s}");
+    }
+
+    #[test]
+    fn root_failed_script_escapes_the_identifier() {
+        let s = root_failed_script(r#"/tmp/a"b\c"#);
+        assert_eq!(s, "window.MdRootFailed && window.MdRootFailed(\"/tmp/a\\\"b\\\\c\");");
     }
 
     #[test]

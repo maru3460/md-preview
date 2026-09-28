@@ -174,8 +174,11 @@
   }
 
   // パスと種別に一致するツリー行を、描画済みの中から探す。
+  // **`#sidebar` の中だけ**を見る。Quick Access の行も `.tree-item` を着ているので、
+  // 絞らないと `revealFile` が「まだ展開していない祖先」の代わりに枠の行を掴み、
+  // `_expand` を持たないそれを見て「祖先が無い」と諦める。
   function findRow(path, kind) {
-    var rows = document.querySelectorAll('.tree-item');
+    var rows = document.querySelectorAll('#sidebar .tree-item');
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].dataset.path === path &&
           (!kind || rows[i].dataset.kind === kind)) {
@@ -197,6 +200,17 @@
     if (row) {
       row.classList.add('active');
       row.scrollIntoView({ block: 'nearest' });
+    }
+    // Quick Access に同じファイルが居れば、そちらにも帯を付ける。root の外の
+    // ファイルはツリーに行が無いので、ここが唯一の「開いている」の表示になる。
+    // スクロールは寄せない——枠は下部に固定で、常に見えている。
+    var list = quickListEl();
+    var pinned = list ? list.children : [];
+    for (var i = 0; i < pinned.length; i++) {
+      // 属性セレクタを組まないのは、識別子に `"` や `\` が入りうるため。
+      if (pinned[i].dataset.path === id && pinned[i].dataset.kind === 'file') {
+        pinned[i].classList.add('active');
+      }
     }
   }
 
@@ -477,16 +491,27 @@
   var cursorRow = null;
 
   // 画面に見えている .tree-item（畳んだフォルダ内の隠れ行は offsetParent===null で除外）。
+  // **Quick Access の行も含む**。j / k はツリーの末尾から枠へそのまま降りていく。
   function visibleRows() {
     return Array.prototype.filter.call(
       document.querySelectorAll('.tree-item'),
       function(r) { return r.offsetParent !== null; }
     );
   }
-  // 見えている描画可能ファイル行（[ / ] の巡回対象）。
+  // ツリーの中だけ。`g` / `G` が指す「端」は木の端であって、その下に固定されている
+  // 枠の端ではない。
+  function visibleTreeRows() {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('#sidebar .tree-item'),
+      function(r) { return r.offsetParent !== null; }
+    );
+  }
+  // 見えている描画可能ファイル行（[ / ] の巡回対象）。**ツリーの中だけ**——
+  // あれは「いま見えている木のファイルを順に見る」操作で、その下に固定されている
+  // Quick Access の行は木の一部ではない。
   function visibleFileRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('.tree-item.md-file'),
+      document.querySelectorAll('#sidebar .tree-item.md-file'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -519,7 +544,9 @@
     document.body.classList.add('nav-tree');
     // カーソルが未設定/不可視なら、開いているファイル→先頭可視行の順で置く。
     if (!cursorRow || cursorRow.offsetParent === null) {
-      var active = document.querySelector('.tree-item.active');
+      // 木の中の帯だけを見る。root の外のファイルを留めていると、帯が付くのは
+      // Quick Access の行だけになり、Tab がカーソルを枠の底へ置いてしまう。
+      var active = document.querySelector('#sidebar .tree-item.active');
       var rows = visibleRows();
       setCursor((active && active.offsetParent !== null) ? active : (rows[0] || null));
     } else {
@@ -563,7 +590,7 @@
     setCursor(rows[Math.max(0, Math.min(rows.length - 1, i + delta))]);
   }
   function cursorEdge(toEnd) {
-    var rows = visibleRows();
+    var rows = visibleTreeRows();
     if (rows.length) setCursor(rows[toEnd ? rows.length - 1 : 0]);
   }
 
@@ -610,6 +637,10 @@
   // ツリーの天井まで来たら、root そのものを親フォルダへ上げる（#34）。
   function collapseOrParent(e) {
     if (!cursorRow) return;
+    // Quick Access の行は木の一部ではないので、畳む先も親も無い。root を上げる
+    // 天井の振る舞い（下）まで落とすと、`h` がフォルダの移動になってしまう。
+    // 木へ戻る道は `k`（枠の外まで繋がっている）が持っている。
+    if (isQuickRow(cursorRow)) return;
     if (cursorRow.dataset.kind === 'dir' && cursorRow.classList.contains('dir-open')) {
       cursorRow.click();
       return;
@@ -628,7 +659,7 @@
   function gotoAdjacentFile(delta) {
     var files = visibleFileRows();
     if (!files.length) return;
-    var cur = document.querySelector('.tree-item.active');
+    var cur = document.querySelector('#sidebar .tree-item.active');
     var i = (cur && cur.offsetParent !== null) ? files.indexOf(cur) : -1;
     var ni;
     if (i === -1) {
@@ -694,6 +725,15 @@
   // 予約（`pendingRootIndex`）を外す処理が抜けるので、必ずここを通す。
   window.MdRoot = { set: requestRoot };
 
+  // root を動かせなかったことを Rust から受ける入口（#35）。消えたフォルダを
+  // 押したときに来る。履歴の予約を解いておかないと、次に届いた `MdSetRoot` が
+  // 関係ない行き先を予約の添え字に書き込む。
+  window.MdRootFailed = function(id) {
+    pendingRootIndex = null;
+    var name = id === '/' ? '/' : ((id || '').split('/').pop() || id);
+    MdCommon.toast('フォルダを開けませんでした: ' + name);
+  };
+
   function updateRootHeader() {
     var name = document.getElementById('root-name');
     if (!name) return;
@@ -706,7 +746,171 @@
     var fwd = document.getElementById('root-forward');
     if (back) back.disabled = rootIndex <= 0;
     if (fwd) fwd.disabled = rootIndex >= rootHistory.length - 1;
+    updateStar();
   }
+
+  // ── Quick Access（#35）──────────────────────────────────────
+  // よく行く先を下部に留めておく。フォルダなら root がそこへ動き、ファイルなら
+  // タブで開く。
+  //
+  // **並びを持っているのはページ**。Rust は `quick:add|remove` を受けてディスクへ
+  // 写すだけなので、行の描き換えは送った側でやる（root の移動と逆で、向こうに
+  // 判断が要らないため折り返しを待たない）。
+  //
+  // 行にはツリーと同じ `.tree-item` / `.md-file` を着せる。カーソル（j/k の
+  // `visibleRows`）・開いているファイルの帯・右クリックの対象解決（contextmenu.js の
+  // `.tree-item` 探し）・テーマが塗るファイルのアイコンが、何も足さずにそのまま乗る。
+  // `[` / `]` の巡回に混ざらないのは、あちらが `#sidebar` の中だけを見るため。
+  // 借りないのはフォルダの `›` だけ（開閉の合図なので、開かない行に着けると嘘になる）。
+  var quick = (window.MD_QUICK_ACCESS || []).slice();
+
+  function quickListEl() { return document.getElementById('quick-access-list'); }
+
+  function quickIndex(path) {
+    for (var i = 0; i < quick.length; i++) {
+      if (quick[i].path === path) return i;
+    }
+    return -1;
+  }
+
+  // 行に出す名前。フォルダは末尾の `/` で示す（ツリーの `›` は開閉の合図なので、
+  // 開かない行に着けると嘘になる）。
+  function quickName(entry) {
+    var base = entry.path === '/' ? '/' : (entry.path.split('/').pop() || entry.path);
+    return entry.dir ? base + '/' : base;
+  }
+
+  // 直上のフォルダ名。別のリポジトリの同名ファイルが並ぶので、名前だけでは足りない。
+  function parentName(path) {
+    var segs = path.split('/');
+    segs.pop();
+    return segs.pop() || '';
+  }
+
+  function renderQuick() {
+    var list = quickListEl();
+    if (!list) return;
+    // 行を作り直すので、カーソルがこの中に居たら位置（添え字）で拾い直す。
+    // パスで拾えないのは、いま外した行の上にカーソルが載っていた場合があるため。
+    var cursorAt = -1;
+    if (cursorRow && cursorRow.parentNode === list) {
+      cursorAt = Array.prototype.indexOf.call(list.children, cursorRow);
+    }
+    list.innerHTML = '';
+
+    if (!quick.length) {
+      var hint = document.createElement('div');
+      hint.className = 'qa-empty';
+      // 1 件も無いなら root も留まっていない ＝ ヘッダのボタンは `☆` の側。
+      hint.textContent = '☆ でいまのフォルダを登録';
+      list.appendChild(hint);
+      if (cursorAt >= 0) setCursor(null);
+      return;
+    }
+
+    quick.forEach(function(entry) {
+      var row = document.createElement('div');
+      // 描画できるファイルだけがアイコンを持つ（ツリーと同じ条件。`notes.txt` に
+      // 出ないのもツリーと揃う）。
+      row.className = 'tree-item qa-item'
+        + (!entry.dir && isRenderablePath(entry.path) ? ' md-file' : '');
+      row.dataset.path = entry.path;
+      row.dataset.kind = entry.dir ? 'dir' : 'file';
+      row.title = entry.path;
+
+      var icon = document.createElement('span');
+      icon.className = 'icon';
+      row.appendChild(icon);
+
+      var name = document.createElement('span');
+      name.className = 'qa-name';
+      name.textContent = quickName(entry);
+      row.appendChild(name);
+
+      var parent = parentName(entry.path);
+      if (parent) {
+        var dir = document.createElement('span');
+        dir.className = 'qa-parent';
+        dir.textContent = parent;
+        row.appendChild(dir);
+      }
+
+      row.addEventListener('click', function(e) {
+        e.stopPropagation();
+        openQuick(entry);
+      });
+      list.appendChild(row);
+    });
+
+    if (cursorAt >= 0) {
+      setCursor(list.children[Math.min(cursorAt, list.children.length - 1)]);
+    }
+    // 開いているファイルが Quick Access にも居るなら帯を付け直す（root の外の
+    // ファイルはツリーに行が無いので、ここが唯一の居場所の表示になる）。
+    if (currentFilePath) updateActiveItem(currentFilePath);
+  }
+
+  // 行を押したとき。**消えたパスはここで初めて気づく**（起動時に存在確認はしない。
+  // 台帳が 1 つでも消えていると毎回の起動が走査になるため）。
+  //
+  // 消えていたときに知らせるのは Rust 側（`MdRootFailed` / `showLoadError`）。
+  // Why not ここで `?dir=` を叩いて先に確かめる: **あの門は root の中しか答えない**
+  // （`resolve_tree_dir` が `starts_with(root)` で絞る）。Quick Access が留めるのは
+  // まさに root の外なので、確かめた瞬間に全部「無い」ことになる。
+  function openQuick(entry) {
+    if (!entry.dir) {
+      loadPreview(entry.path); // 開けなければペインに理由が出る（showLoadError）
+      return;
+    }
+    requestRoot(entry.path);
+  }
+
+  function quickAdd(path, isDir) {
+    if (!path || quickIndex(path) >= 0) return;
+    quick.push({ path: path, dir: !!isDir });
+    if (window.ipc) window.ipc.postMessage('quick:add:' + path);
+    renderQuick();
+    updateStar();
+  }
+
+  function quickRemove(path) {
+    var i = quickIndex(path);
+    if (i < 0) return;
+    quick.splice(i, 1);
+    if (window.ipc) window.ipc.postMessage('quick:remove:' + path);
+    renderQuick();
+    updateStar();
+  }
+
+  function quickToggle(path, isDir) {
+    if (quickIndex(path) >= 0) quickRemove(path);
+    else quickAdd(path, isDir);
+  }
+
+  // ヘッダの ★。対象はいつも「いま見ているフォルダ」＝ root。
+  function updateStar() {
+    var star = document.getElementById('root-star');
+    if (!star) return;
+    var on = quickIndex(MdCommon.rootDir()) >= 0;
+    star.textContent = on ? '★' : '☆';
+    star.classList.toggle('on', on);
+    var label = on ? 'このフォルダを Quick Access から外す'
+                   : 'このフォルダを Quick Access に入れる';
+    star.title = label;
+    star.setAttribute('aria-label', label);
+  }
+
+  // カーソル行が Quick Access の行か。ツリーの操作（`h` の親へ戻る）を、親の無い
+  // この枠へ持ち込まないために要る。
+  function isQuickRow(row) {
+    return !!(row && row.classList && row.classList.contains('qa-item'));
+  }
+
+  // 外（右クリックメニュー）から触る口。
+  window.MdQuick = {
+    has: function(path) { return quickIndex(path) >= 0; },
+    toggle: quickToggle
+  };
 
   function treeEl() { return document.getElementById('sidebar'); }
 
@@ -749,7 +953,9 @@
     var tree = treeEl();
     if (!tree) return;
     // 消える行にカーソルを残さない（`cursorRow` は DOM から外れた行を掴み続ける）。
-    setCursor(null);
+    // 消えるのは木の行だけなので、Quick Access の枠に居るカーソルは触らない——
+    // ↻ を押しただけで、枠に置いたカーソルが木へ飛ぶ / 消える。
+    if (!isQuickRow(cursorRow)) setCursor(null);
     tree.innerHTML = '';
     renderItems(items, tree, 0);
   }
@@ -782,7 +988,7 @@
     return step();
   }
 
-  // ヘッダの ⟳。**ツリーだけを作り直す。**本文は巻き込まない——ファイルの中身は
+  // ヘッダの ↻。**ツリーだけを作り直す。**本文は巻き込まない——ファイルの中身は
   // watcher が既に追従しているので、ここが担うのは「フォルダの中身の変化」だけ。
   function reloadTree() {
     var tree = treeEl();
@@ -823,7 +1029,7 @@
     pendingRootIndex = null;
     updateRootHeader();
 
-    // 別の木なので展開状態は引き継がない（⟳ と違うのはここ）。
+    // 別の木なので展開状態は引き継がない（↻ と違うのはここ）。
     refreshTree(function() {
       if (currentFilePath) updateActiveItem(currentFilePath);
     });
@@ -877,6 +1083,12 @@
     MdKeymap.on('file-cycle', function(e) {
       gotoAdjacentFile(e.key === '[' ? -1 : 1);
     });
+    // `m`（mark）。カーソル行を Quick Access へ入れる / から外す。ツリーの行でも
+    // Quick Access の行でも効く（後者は「外す」側にしか倒れない）。
+    MdKeymap.on('quick-toggle', function() {
+      if (!cursorRow || !cursorRow.dataset.path) return;
+      quickToggle(cursorRow.dataset.path, cursorRow.dataset.kind === 'dir');
+    });
     // ツリーにフォーカスがある時だけ呼ばれる（keymap.js 側の when が保証する）。
     MdKeymap.on('tree', function(e) {
       switch (e.key) {
@@ -905,7 +1117,7 @@
   document.addEventListener('DOMContentLoaded', function() {
     registerKeys();
 
-    // ヘッダ（#34）。並ぶのは `‹ ›`・フォルダ名・⟳ だけ。
+    // ヘッダ（#34）。並ぶのは `‹ ›`・フォルダ名・↻・★ だけ。
     // 履歴の 1 つ目は「起動時の root」で、ここから積み始める。
     rootHistory = [MdCommon.rootDir()];
     rootIndex = 0;
@@ -918,6 +1130,12 @@
     headerButton('root-back', function() { navigateRoot(rootIndex - 1); });
     headerButton('root-forward', function() { navigateRoot(rootIndex + 1); });
     headerButton('tree-reload', reloadTree);
+    // ★ の対象はいつも root。`quickToggle` の第 2 引数はフォルダかどうかで、
+    // root は必ずフォルダ。
+    headerButton('root-star', function() { quickToggle(MdCommon.rootDir(), true); });
+
+    // Quick Access（#35）。並びは起動スクリプトが焼き込んだ `MD_QUICK_ACCESS`。
+    renderQuick();
 
     var resizer = document.getElementById('resizer');
     // 幅を持っているのは列（#sidebar-col）。ツリー（#sidebar）は中で伸びるだけなので、

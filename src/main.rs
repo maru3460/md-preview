@@ -23,6 +23,7 @@ mod platform;
 use md_preview::app_config::{self, AppConfig};
 use md_preview::cli;
 use md_preview::html::json_string;
+use md_preview::quick_access;
 use md_preview::request::{self, handle_request, percent_decode};
 use md_preview::theme;
 
@@ -56,6 +57,10 @@ enum AppEvent {
     /// ツリーの頂点を張り替える（#34）。ページの `root:` と、別プロセスから
     /// 転送されてきた `md <dir>` の両方がここへ集まる。
     SetRoot(PathBuf),
+    /// root を動かせなかった（消えたフォルダ）。中身はページが送ってきた識別子で、
+    /// 名前を出すためだけに運ぶ。**黙って終わらせないために要る**——Quick Access は
+    /// 消えた行を残す設計（#35）なので、押した結果が何も起きないと故障に見える。
+    RootFailed(String),
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -506,7 +511,11 @@ fn main() {
     };
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
-    let init_script = format!("{}\n{}", config.page_globals(appearance), md_preview::html::FOLDER_JS);
+    let init_script = format!(
+        "{}\n{}",
+        config.page_globals(appearance, &quick_access::load()),
+        md_preview::html::FOLDER_JS
+    );
     let AppConfig {
         title,
         html_bytes,
@@ -659,8 +668,32 @@ fn main() {
                     } else if let Some(id) = body.strip_prefix("root:") {
                         // `watch:` と同じ理由で `id_to_path` を通す。ここを素通しに
                         // すると「識別子とファイルの唯一の関門」が嘘になる。
-                        if let Some(path) = request::id_to_path(id) {
-                            let _ = proxy.send_event(AppEvent::SetRoot(path));
+                        match request::id_to_path(id) {
+                            Some(path) => { let _ = proxy.send_event(AppEvent::SetRoot(path)); }
+                            None => {
+                                let _ = proxy.send_event(AppEvent::RootFailed(id.to_string()));
+                            }
+                        }
+                    } else if let Some(rest) = body.strip_prefix("quick:") {
+                        // Quick Access の台帳（#35）。**並びを持っているのはページ**で、
+                        // ここは足す / 外すを受けてディスクへ写すだけ。ページは自分の
+                        // 行を先に書き換えるので、結果を返す経路は要らない。
+                        let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
+                        match verb {
+                            // `watch:` / `root:` と同じ関門を通す。無いものは登録できない。
+                            // **積むのは関門を通った実体ではなく識別子そのもの。**
+                            // `id_to_path` は canonicalize なので、symlink の下では
+                            // ページが持つ並びと別の文字列になり、同じ行を外せなくなる
+                            // （ツリーの識別子は symlink を辿らない。#33 の決め）。
+                            "add" => {
+                                if let Some(path) = request::id_to_path(id) {
+                                    quick_access::add(id, path.is_dir());
+                                }
+                            }
+                            // 外す側は素の識別子で引く。`id_to_path` は
+                            // `canonicalize` なので、**消えたパスを外せなくなる**。
+                            "remove" => quick_access::remove(id),
+                            _ => {}
                         }
                     } else if let Some(id) = body.strip_prefix("closed:") {
                         let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
@@ -832,7 +865,15 @@ fn main() {
                 }
             }
             Event::UserEvent(AppEvent::SetRoot(path)) => {
-                change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, path);
+                // 関門を通った後でも失敗しうる（ディレクトリがファイルに置き換わった等）。
+                // 経路が 1 本なので、知らせるのもここ 1 箇所で済む。
+                let id = path.to_string_lossy().into_owned();
+                if !change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, path) {
+                    let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
+                }
+            }
+            Event::UserEvent(AppEvent::RootFailed(id)) => {
+                let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
@@ -899,6 +940,10 @@ fn main() {
                 if let Some(root) = msg.root.as_deref().filter(|r| r.starts_with('/')) {
                     let root = PathBuf::from(root);
                     if page_ready {
+                        // Why not 失敗をページへ知らせる（`SetRoot` のアームはそうしている）:
+                        // こちらの依頼主は別プロセスの `md <dir>` で、窓の前に人が居るとは
+                        // 限らない。消えたフォルダを渡されて窓に赤い字が出るより、
+                        // 何も起きない方が筋が通る。
                         change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, root);
                     } else {
                         pending_root = Some(root);
@@ -1318,10 +1363,10 @@ fn change_root(
     window: &tao::window::Window,
     webview: &wry::WebView,
     root: PathBuf,
-) {
-    let Ok(root) = root.canonicalize() else { return };
+) -> bool {
+    let Ok(root) = root.canonicalize() else { return false };
     if !root.is_dir() {
-        return;
+        return false;
     }
 
     // 同じ場所へ移る要求でも、ツリーは描き直す（`md <dir>` を叩き直したときに
@@ -1343,6 +1388,7 @@ fn change_root(
 
     window.set_title(&app_config::dir_name(&root));
     let _ = webview.evaluate_script(&md_preview::html::set_root_script(&root));
+    true
 }
 
 /// root の外のファイルを監視対象に足す。エディタの「別ファイルを書いて rename」に

@@ -104,6 +104,9 @@
       case 'set-root':
         if (window.MdRoot) window.MdRoot.set(ctx.id);
         break;
+      case 'quick-toggle':
+        if (window.MdQuick) window.MdQuick.toggle(ctx.id, !!ctx.dir);
+        break;
       case 'palette':
         if (window.MdPalette) window.MdPalette.open();
         break;
@@ -156,6 +159,16 @@
         items.push({ label: 'ここを root にする', action: 'set-root', enabled: true });
         items.push({ sep: true });
       }
+    }
+    // Quick Access（#35）。ツリーの行・ヘッダのフォルダ名・タブ・Quick Access の行、
+    // どこからでも同じ 1 行を出す。対象が無いときだけ出さない（登録するものが無い）。
+    if (ctx.has && window.MdQuick) {
+      items.push({
+        label: MdQuick.has(ctx.id) ? 'Quick Access から外す' : 'Quick Access に追加',
+        action: 'quick-toggle',
+        enabled: true
+      });
+      items.push({ sep: true });
     }
     // パス系。対象が無いとき（何も開いていない本文の右クリック）は disabled で残す。
     items.push({ label: '相対パスをコピー', action: 'copy-rel', enabled: ctx.relOk });
