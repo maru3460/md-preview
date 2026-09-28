@@ -29,8 +29,12 @@ pub struct AppConfig {
     pub title: String,
     pub html_bytes: Vec<u8>,
     pub root_dir: PathBuf,
-    /// stdin を実体化した一時ディレクトリ。ウィンドウを閉じるときに消す。
+    /// stdin を実体化した一時ディレクトリ。**プロセスが終わるときに消す**
+    /// （表示中はドキュメントそのものなので、読んだ直後には消せない）。
     /// stdin 以外では None。
+    ///
+    /// これは「自分が掘ったぶん」だけ。転送（#31）で他のプロセスから所有権を
+    /// 引き取ったぶんと合流して、`main.rs` の `owned_dirs` がまとめて面倒を見る。
     pub stdin_dir: Option<PathBuf>,
 }
 
@@ -42,25 +46,39 @@ impl AppConfig {
     /// - `MD_APPEARANCE`     解決済みテーマの外観。JS で描く図（mermaid）を OS 設定では
     ///                       なくテーマに追従させる。
     /// - `MD_RENDERABLE_EXT` レンダリング対象の拡張子。定義元は `request::RENDERABLE_EXT`。
-    /// - `MD_ROOT_DIR`       配信ルートの絶対パス。JS が root 相対の識別子と絶対パスを
-    ///                       行き来するために要る（root の外を指すリンクを、黙って root で
-    ///                       止めずに絶対パスとして開くため）。
-    pub fn page_globals(&self, appearance: crate::theme::Appearance) -> String {
+    /// - `MD_ROOT_DIR`       配信ルートの絶対パス。識別子（絶対パス）から画面に出す
+    ///                       名前を作るのと、本文の URL（root 相対）を識別子へ戻すのに
+    ///                       要る。`MdCommon.idToDisplay` / `urlToId` の基準。
+    /// - `MD_STDIN_PREFIX`   パイプ入力を実体化する一時ディレクトリの名前の頭。
+    ///                       定義元はこのモジュールの `STDIN_DIR_PREFIX`。タブが「同名なら親の名前を
+    ///                       添える」規則を、パイプの置き場所には当てないために要る。
+    /// - `MD_QUICK_ACCESS`   Quick Access の並び（#35）。`[{path, dir}]` で、並びが表示順。
+    ///
+    /// `quick` を引数で受けるのは、これが AppConfig（起動の入力）ではなく
+    /// **ユーザーの持ち物**だから。`~/.config` をここで読むと、`examples/serve.rs` で
+    /// 立てる UI テストが手元の登録内容に左右される。
+    pub fn page_globals(
+        &self,
+        appearance: crate::theme::Appearance,
+        quick: &[crate::quick_access::Entry],
+    ) -> String {
         let renderable = request::RENDERABLE_EXT
             .iter()
             .map(|e| json_string(e))
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {};",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_QUICK_ACCESS = [{}];",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
+            json_string(STDIN_DIR_PREFIX),
+            quick_json(quick),
         )
     }
 
     /// ツリー付きのページ。`initial_files` は起動時にタブとして開く識別子
-    /// （root 相対パス、または root の外なら絶対パス。先頭が最初に表示される）。
+    /// （絶対パス。先頭が最初に表示される）。
     fn folder(root: PathBuf, theme_css: &str, custom_css: &str, initial_files: &[String]) -> Self {
         let title = dir_name(&root);
         let html = build_folder_html(&title, theme_css, custom_css, initial_files);
@@ -88,9 +106,9 @@ impl AppConfig {
         current_dir: &Option<PathBuf>,
     ) -> Self {
         let root = stdin_root(&doc, current_dir);
-        let id = file_id(&root, &doc);
+        let id = file_id(&doc);
         let mut config = Self::folder(root, theme_css, custom_css, &[id]);
-        config.stdin_dir = stdin_dir_to_clean(&doc);
+        config.stdin_dir = owned_stdin_dir(&doc);
         config
     }
 
@@ -106,9 +124,25 @@ impl AppConfig {
     }
 }
 
+/// `MD_QUICK_ACCESS` に載せる形。**並びが表示順**なので、受け取った順のまま出す。
+/// `dir` を持たせるのは、消えたパスでも行を描けるようにするため（#35）。
+fn quick_json(quick: &[crate::quick_access::Entry]) -> String {
+    quick
+        .iter()
+        .map(|e| format!("{{\"path\":{},\"dir\":{}}}", json_string(&e.path), e.is_dir))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// ウィンドウのタイトルに使うディレクトリ名。
-fn dir_name(p: &Path) -> String {
-    p.file_name().and_then(|n| n.to_str()).unwrap_or(".").to_string()
+///
+/// `/` には `file_name` が無い。そこで `.` に落とすと、root を `/` まで上げた窓の
+/// タイトルが「.」になってどこを見ているか分からなくなるので、パスそのものを名前にする。
+pub fn dir_name(p: &Path) -> String {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
 /// 引数のパス群から「root」と「起動時にタブとして開く識別子」を決める。
@@ -127,7 +161,7 @@ pub fn plan_paths(args: &[String], current_dir: &Option<PathBuf>) -> (PathBuf, V
 
     let paths = resolve_file_args(args);
     let root = files_root(&paths, current_dir);
-    let ids = paths.iter().map(|p| file_id(&root, p)).collect();
+    let ids = paths.iter().map(|p| file_id(p)).collect();
     (root, ids)
 }
 
@@ -155,24 +189,24 @@ fn resolve_file_args(args: &[String]) -> Vec<PathBuf> {
 /// 全部が cwd 配下ならこれまでどおり cwd を root にし、そうでなければ指定された
 /// ファイルたちの共通の親まで広げる（1 つだけなら、そのファイルの親ディレクトリ）。
 fn files_root(paths: &[PathBuf], current_dir: &Option<PathBuf>) -> PathBuf {
-    let root = current_dir
+    // Why not: root が `/` まで広がっても止めない。ここには「`/` は重いから開かせない」
+    // という門があったが、**門として成立していなかった。** `plan_paths` がフォルダ単発を
+    // 手前で返すので `md /` には一度も効かず、効いていたのはファイル指定の 2 経路だけ
+    // だった——共通の親が `/` に広がる `md ~/a.md /tmp/b.md` と、cwd がそのまま
+    // root になる `cd / && md a.md`。「フォルダなら通るのにファイルなら止まる」という
+    // 一貫しない門だったので外した。
+    //
+    // 門が挙げていた重さ（`/` の再帰監視・⌘P の予算切れ）は**消えていない。**
+    // 再帰監視は `main.rs` の `spawn_watcher` がいまも張るし、⌘P の
+    // `FILE_LIST_MAX`（`request.rs`）もそのまま在る。`h` で天井を越えられるように
+    // なったぶん、到達しやすくもなっている。それでも外したのは、門が守れていた範囲が
+    // 上の 2 経路しか無く、`md /` を塞げていない以上「重さへの対策」として
+    // 機能していなかったため（判断はユーザー）。
+    current_dir
         .clone()
         .filter(|cwd| paths.iter().all(|p| p.starts_with(cwd)))
         .or_else(|| common_ancestor(paths))
-        .unwrap_or_else(|| PathBuf::from("/"));
-    // root がファイルシステムの根まで広がったら開かない。ツリーのドット判定は
-    // 予算付きになった（`request::md_presence`）ので、もう門の理由ではない。残る
-    // 理由は 2 つで、どちらも走査の予算では消せない。(1) root はまるごと再帰監視
-    // されるので、`/` ではボリューム全体の FSEvents を受ける（`main.rs` の watcher）。
-    // (2) ⌘P のファイル一覧が 20,000 件の予算を `/System` などの浅い階層で使い切り、
-    // 目的のファイルが載らない一覧になる（`request::FILE_LIST_MAX`）。幅優先なので
-    // `/Users` に届かないわけではないが、届いた先にはもう予算が残っていない。
-    if root.parent().is_none() {
-        eprintln!("md: root がファイルシステムの根（'/'）に広がるため開けません");
-        eprintln!("    同じフォルダのファイルを指定するか、フォルダごと開いてください");
-        std::process::exit(1);
-    }
-    root
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// 渡されたファイルを全部含む、いちばん深いディレクトリ。
@@ -199,24 +233,30 @@ fn resolve_arg_path(arg: &str) -> PathBuf {
     })
 }
 
-/// stdin を開くときの root。作業ディレクトリを使うが、そこが `/` のときだけは
-/// 一時ファイルの置き場所へ逃がす。`/` を root にするとボリューム全体が再帰監視の
-/// 対象になり、ファイル一覧も予算を使い切る（`files_root` の門と同じ理由）。
-/// ファイル指定と違ってユーザーは root を指定していないので、ここは終了させずに畳む。
+/// stdin を開くときの root。作業ディレクトリをそのまま使う。
+///
+/// 作業ディレクトリが取れないとき（cwd が消えている等）に `.` へ落とさないのは、
+/// root がそのまま `?dir=` の識別子になるため。識別子は絶対パスでなければ
+/// `request::id_to_path` が弾き、ツリーも初期タブも出ない真っ白になる。
+///
+/// Why not: cwd が `/` のときに一時ファイルの場所へ逃がす枝があったが、外した。
+/// `files_root` の門と同じ理由で書かれていたので、門と一緒に理由が消えている。
 fn stdin_root(doc: &Path, current_dir: &Option<PathBuf>) -> PathBuf {
-    let cwd = current_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-    if cwd.parent().is_none() {
-        return doc.parent().unwrap_or(&cwd).to_path_buf();
-    }
-    cwd
+    current_dir
+        .clone()
+        .unwrap_or_else(|| doc.parent().map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir))
 }
 
-/// ウィンドウを閉じるときに消してよい一時ディレクトリ。
+/// プロセスが終わるときに消してよい一時ディレクトリ。
 ///
 /// `STDIN_FILE_ENV` は環境変数なので、外から任意の場所を指せる。`doc` の親を
 /// 無条件に消すと `MD_STDIN_FILE=/etc/hosts` で `/etc` が飛ぶので、
 /// 自分が掘る形（`$TMPDIR/md-stdin-<pid>/`）に一致するものだけを対象にする。
-fn stdin_dir_to_clean(doc: &Path) -> Option<PathBuf> {
+///
+/// 転送（#31）で受け側が所有権を引き取るときも**この同じ門を通す**。ワイヤから来た
+/// 値を信用して消すと、同じ穴が env から socket へ移るだけになる。
+/// 送り側も、門を通らないものは `own=` に載せない（消し損ねる方が誤削除より安い）。
+pub fn owned_stdin_dir(doc: &Path) -> Option<PathBuf> {
     let dir = doc.parent()?;
     if !dir.file_name()?.to_str()?.starts_with(STDIN_DIR_PREFIX) {
         return None;
@@ -227,8 +267,11 @@ fn stdin_dir_to_clean(doc: &Path) -> Option<PathBuf> {
     Some(dir.to_path_buf())
 }
 
-/// stdin の markdown を実体のファイルにする。自己デタッチした場合は親が読んで
-/// 書き出しているので、そのパスをそのまま使う（子は標準入力を持たない）。
+/// stdin の markdown を実体のファイルにする。
+///
+/// 実体化は `main` の頭で 1 回だけ行い、`STDIN_FILE_ENV` に置いて全経路で持ち回る
+/// （転送・exec・spawn・前景）。なので**ここへ来るときは環境変数が必ず立っている**。
+/// `None` の枝は、この関数をライブラリとして単体で呼ぶ経路のための受け皿である。
 fn materialize_stdin() -> PathBuf {
     match std::env::var_os(STDIN_FILE_ENV) {
         Some(p) => canonical(PathBuf::from(p)),
@@ -321,8 +364,11 @@ mod tests {
             files_root(&paths(&["/work/docs/a.md", "/work/lib/b.md"]), &None),
             PathBuf::from("/work")
         );
-        // 共通の親が `/` まで広がるケースは値を返さずプロセスを終える（ボリューム
-        // 全体の再帰監視になるため）ので、ここでは呼ばない。
+        // 別のボリューム同士など、共通の親が `/` まで広がっても開ける。
+        assert_eq!(
+            files_root(&paths(&["/work/a.md", "/tmp/b.md"]), &None),
+            PathBuf::from("/")
+        );
     }
 
     /// `spool_stdin` が作るのと同じ形の（存在しない）パス。
@@ -355,31 +401,62 @@ mod tests {
         // 往復で確かめる。
         let doc = write_spool("# x\n");
         assert!(doc.is_file(), "書き出せていない: {}", doc.display());
-        let dir = stdin_dir_to_clean(&doc);
+        let dir = owned_stdin_dir(&doc);
         assert_eq!(dir.as_deref(), doc.parent(), "自分が掘った場所を片付け対象にできていない");
         let _ = std::fs::remove_dir_all(dir.unwrap());
     }
 
     #[test]
-    fn stdin_root_never_becomes_the_filesystem_root() {
-        // cwd が `/` のときに root を `/` にすると、ボリューム全体が再帰監視される。
-        // ユーザーは root を指定していないので、終了させずに一時ファイルの場所へ逃がす。
+    fn stdin_root_is_the_working_directory_and_falls_back_to_the_spool() {
         let doc = spooled("slash");
-        assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/"))), doc.parent().unwrap());
-        // 普通の cwd はそのまま root。
+        // cwd はそのまま root。`/` も例外ではない。
         assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/work"))), PathBuf::from("/work"));
+        assert_eq!(stdin_root(&doc, &Some(PathBuf::from("/"))), PathBuf::from("/"));
+        // cwd が取れないときだけ、一時ファイルの置き場所へ逃がす（相対パスにしない）。
+        assert_eq!(stdin_root(&doc, &None), doc.parent().unwrap());
     }
 
     #[test]
     fn only_our_own_spool_dir_is_ever_deleted() {
         // MD_STDIN_FILE は環境変数なので外から任意の場所を指せる。自分が掘る形
         // （$TMPDIR/md-stdin-*/）以外を片付け対象にすると、その親ごと消してしまう。
-        assert!(stdin_dir_to_clean(&spooled("42")).is_some());
+        assert!(owned_stdin_dir(&spooled("42")).is_some());
         // $TMPDIR 直下のファイル → $TMPDIR そのものを消してはいけない。
-        assert_eq!(stdin_dir_to_clean(&canonical(std::env::temp_dir()).join("stdin.md")), None);
+        assert_eq!(owned_stdin_dir(&canonical(std::env::temp_dir()).join("stdin.md")), None);
         // 名前が違う / 場所が $TMPDIR の下でない。
-        assert_eq!(stdin_dir_to_clean(&canonical(std::env::temp_dir()).join("other/stdin.md")), None);
-        assert_eq!(stdin_dir_to_clean(Path::new("/etc/hosts")), None);
+        assert_eq!(owned_stdin_dir(&canonical(std::env::temp_dir()).join("other/stdin.md")), None);
+        assert_eq!(owned_stdin_dir(Path::new("/etc/hosts")), None);
+    }
+
+    #[test]
+    fn the_gate_takes_the_file_not_the_directory() {
+        // 転送（#31）は送り側と受け側が**同じ値を同じ門に通す**ことで成り立つ。
+        // ワイヤに載せるのはファイルで、消してよい親は門が返す。
+        let doc = spooled("42");
+        let dir = owned_stdin_dir(&doc).expect("ファイルなら通る");
+
+        // その返り値（ディレクトリ）をもう一度門へ入れると必ず弾かれる。門は親を
+        // 見るので $TMPDIR にぶつかるため。ここを取り違えると、受け側が引き取れず
+        // 転送したぶんの一時ファイルが黙って漏れる（実際に一度漏らした）。
+        assert_eq!(owned_stdin_dir(&dir), None, "ディレクトリを載せてはいけない");
+    }
+
+    #[test]
+    fn quick_access_reaches_the_page_in_order_with_its_kind() {
+        use crate::quick_access::Entry;
+        let list = vec![
+            Entry { path: "/a/proj".into(), is_dir: true },
+            Entry { path: "/a/n\"1.md".into(), is_dir: false },
+        ];
+        assert_eq!(
+            quick_json(&list),
+            r#"{"path":"/a/proj","dir":true},{"path":"/a/n\"1.md","dir":false}"#
+        );
+    }
+
+    #[test]
+    fn nothing_pinned_is_an_empty_array_not_a_hole() {
+        assert_eq!(quick_json(&[]), "");
     }
 
     #[test]
@@ -400,7 +477,7 @@ mod tests {
     #[test]
     fn plan_paths_makes_an_out_of_cwd_file_a_folder_rooted_at_its_parent() {
         // 単一ファイルモードを畳んだ結果、cwd の外のファイルも「親フォルダを root に
-        // したツリー付きの表示」で開く（識別子はその root 相対＝ファイル名）。
+        // したツリー付きの表示」で開く（識別子は canonicalize 済みの絶対パス）。
         let dir = std::env::temp_dir().join(format!("md-plan-file-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -410,7 +487,7 @@ mod tests {
         let cwd = Some(PathBuf::from("/definitely/not/here"));
         let (root, ids) = plan_paths(&[file.to_string_lossy().into_owned()], &cwd);
         assert_eq!(root, dir.canonicalize().unwrap());
-        assert_eq!(ids, vec!["note.md".to_string()]);
+        assert_eq!(ids, vec![file.canonicalize().unwrap().to_string_lossy().into_owned()]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

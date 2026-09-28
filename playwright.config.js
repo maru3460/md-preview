@@ -5,8 +5,13 @@
 // キーイベントの扱いや CSS Custom Highlight API の有無を一番忠実に再現できる。
 //
 // 起動モードはフォルダ 1 本だが、「起動時に何が開いているか」で通る道が違うので
-// サーバは 3 つ立てる。`md <dir>`（タブ 0 枚）・`md <cwd 外の 1 ファイル>`（タブ 1 枚。
+// サーバを分けて立てる。`md <dir>`（タブ 0 枚）・`md <cwd 外の 1 ファイル>`（タブ 1 枚。
 // root はそのファイルの親フォルダ）・`md a.md b.md`（タブ 2 枚）の 3 つ。
+//
+// 4 つ目は root の移動（#34）専用。あれは**サーバの root を書き換える**ので、
+// 共有のサーバでやると後続の spec が別の木を見ることになる（`MD_ROOT_DIR` は
+// 起動時に焼き込まれるので、ページとサーバで root が食い違って木が 404 になる）。
+// spec 側でも毎回戻すが、漏れたときの被害を構造的に断つためポートごと分ける。
 //
 // ── このスイートが守れないもの ──────────────────────────────────
 // Playwright の WebKit は本番の WKWebView とは別のビルドで、macOS には WKWebView
@@ -29,6 +34,10 @@
 //     逆に「エンジンが支えている位置を、こちらが壊していないか」を見るときは切らない
 //     （comment.spec.js のジャンプの項）——切ると原因が混ざって見分けられない。
 //   ・ウィンドウ・メニュー・ホットリロードの監視（IPC は serve.rs でスタブ）
+//   ・単一インスタンス化（#31）のソケット・ロックの取り合い・受け側 pid の受け渡し・
+//     前面化・Rust 側の待ち行列・stdin の一時ディレクトリの所有権
+//     forward.spec.js が叩けるのは `window.MdOpenFiles` から先だけ。その手前は
+//     tests/single_instance.rs（窓を作らない層）と手動確認が持つ。
 // ──────────────────────────────────────────────────────────────
 const path = require('path');
 const os = require('os');
@@ -37,6 +46,7 @@ const { defineConfig, devices } = require('@playwright/test');
 const FOLDER_PORT = 7878;
 const ONE_FILE_PORT = 7879;
 const MULTI_PORT = 7880;
+const ROOT_PORT = 7881;
 
 const ROOT = __dirname;
 // ファイルを渡す 2 つのサーバは cwd を一時ディレクトリにして起動する。cwd 配下の
@@ -82,9 +92,17 @@ module.exports = defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 180000,
     },
+    {
+      // root の移動（#34）専用。フォルダ起動と同じ形だが、こちらは root が動く。
+      command: `cargo run -q --example serve -- --port ${ROOT_PORT} tests/ui-fixtures`,
+      url: `http://127.0.0.1:${ROOT_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180000,
+    },
   ],
 });
 
 module.exports.FOLDER_PORT = FOLDER_PORT;
 module.exports.ONE_FILE_PORT = ONE_FILE_PORT;
 module.exports.MULTI_PORT = MULTI_PORT;
+module.exports.ROOT_PORT = ROOT_PORT;

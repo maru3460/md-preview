@@ -17,7 +17,7 @@
     { id: 'diff', label: 'Diff', title: 'Toggle git diff (Cmd/Ctrl+D)', global: 'MdDiff', badge: true }
   ];
 
-  var opts = null;      // { getContainer, getScroller, url(id), getStatUrl, reloadNormal }
+  var opts = null;      // { getContainer, getScroller, url(mode), getStatUrl, reloadNormal }
   var activeId = null;  // 同時に active になれるのは 1 つだけ
   var wired = false;
 
@@ -122,7 +122,12 @@
           // 錨れなかった（差分表示・巨大ソース）ならピクセルで妥協する。
           if (!MdCommon.restoreAnchor(anchor, sc) && sc) sc.scrollTop = savedScroll;
         })
-        .catch(function() { if (myReq === reqSeq) fail(); });
+        // then と同じ 2 つを見る。いまは世代だけでも足りる（モードを外す deactivate が
+        // その場で世代を進めるので、外れていれば世代も必ず違う）が、片方だけを見る形が
+        // 残っていると、次に「モードを付けるが世代は進めない」経路が増えたときに
+        // こちらだけ取り残される。fail() は通常表示へ戻す副作用を持つので、
+        // 取り残された時に出るのは「見ていたモードが黙って畳まれる」形になる。
+        .catch(function() { if (myReq === reqSeq && isActive()) fail(); });
     }
 
     function toggle() {
@@ -209,7 +214,9 @@
   }
 
   window.MdViewModes = {
-    // o: { getContainer(), getScroller(), url(id), getStatUrl(), reloadNormal() }
+    // o: { getContainer(), getScroller(), url(mode), getStatUrl(), reloadNormal() }
+    // url の引数は raw / diff というモードのキー（クエリのキーになる）。
+    // 開いているファイルの識別子を知っているのは呼ぶ側（folder.js）。
     // 2 回目以降の呼び出しは入出力の差し替えだけ（ボタンとリスナは作り直さない）。
     initAll: function(o) {
       opts = o;

@@ -136,6 +136,147 @@ pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_appearance(_window: &tao::window::Window, _dark: bool) {}
 
+/// 窓がネイティブ全画面に入っているか。**「閉じる前に抜けるのを待つ必要があるか」の
+/// 判定だけに使う**（#59）。
+///
+/// ⚠️ **抜け終わったかの判定には使えない。** このビットは抜け*始め*で落ちる
+/// （`set_fullscreen(None)` の 17ms 後には false、実測 2026-09-23）。アニメーションは
+/// そこから 1 秒近く続くので、これを完了の合図に使うと結局「全画面のまま終了」になる。
+/// 完了は [`watch_exit_fullscreen`] の通知で受けること。
+///
+/// **tao の `Window::fullscreen()` も使えない。** あちらが返すのは tao 自前の状態で、
+/// `set_fullscreen(None)` は `toggleFullScreen:` を main queue へ積む**前**にその状態を
+/// 書き換える（tao 0.35 `platform_impl/macos/window.rs`）。頼んだ瞬間に `None` になる。
+///
+/// 緑ボタン・⌃⌘F（`setup_menu` の `toggleFullScreen:`）・`set_fullscreen` のどれで
+/// 入っても同じビットが立つ。入り口を問わないのが AppKit の実体を読む利点。
+#[cfg(target_os = "macos")]
+pub fn is_window_fullscreen(window: &tao::window::Window) -> bool {
+    use objc2_app_kit::{NSWindow, NSWindowStyleMask};
+    use tao::platform::macos::WindowExtMacOS;
+
+    let ptr = window.ns_window() as *mut NSWindow;
+    // 引き受けている不変条件は [`set_window_appearance`] と同じ 2 つだが、生存の根拠は
+    // 違う。こちらは閉じる経路から呼ぶので「窓を作った直後だから生きている」とは言えない。
+    // 代わりに、借りている `window` が生きている間はこのポインタも有効（tao の契約）で、
+    // 呼び出し側はイベントループのクロージャが所有する `window` を渡している、を根拠にする。
+    let Some(ns_window) = (unsafe { ptr.as_ref() }) else {
+        return false;
+    };
+    ns_window.styleMask().contains(NSWindowStyleMask::FullScreen)
+}
+
+/// #59 は「全画面の窓を閉じると別の Space が出てくる」という macOS 固有の症状で、
+/// 他の OS には全画面 Space に相当するものが無い。待つ必要が無いので常に false。
+#[cfg(not(target_os = "macos"))]
+pub fn is_window_fullscreen(_window: &tao::window::Window) -> bool {
+    false
+}
+
+/// 通知の購読が返す札。**購読を解除する手段は持たない。**
+///
+/// 解除に要るのは `removeObserver:` で、札を落とすだけでは切れない（通知センターが
+/// 自分でも保持している）。それでも `Drop` を書かないのは、**走らないから**——
+/// `EventLoop::run` は終了時に `process::exit` するので、この札も含めて `Drop` は
+/// 一度も呼ばれない（`instance::Handle` が同じ理由で `Drop` を持たないのと揃える）。
+/// 窓も購読もプロセスと寿命を揃えるものなので、解除する場面がそもそも無い。
+#[cfg(target_os = "macos")]
+pub struct NotificationWatch(
+    #[allow(dead_code)]
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>,
+);
+
+#[cfg(not(target_os = "macos"))]
+pub struct NotificationWatch;
+
+/// 窓が全画面から**抜け終わった**ら `on_exit` を呼ぶ（#59）。
+///
+/// tao はこの遷移を外へ出さない。delegate は 4 つとも実装しているのに、利用者へ届くのは
+/// `Resized` / `Moved` だけで、アニメーション中に何度も来る同じイベントと区別が付かない
+/// （tao 0.35 `macos/window_delegate.rs`）。そこで AppKit の通知を直接購読する。
+/// 通知は delegate の呼び出しとは独立に出るので、**tao の delegate を奪わずに済む**
+/// （奪うと `CloseRequested` も `Resized` も死ぬ）。
+///
+/// `queue` に `None` を渡すので、ブロックは通知を出したスレッド＝メインスレッドで
+/// 同期に走る。イベントループのクロージャへ渡す手段（`EventLoopProxy`）はスレッド跨ぎで
+/// 安全なので、`on_exit` の中でそれを撃てばよい。
+#[cfg(target_os = "macos")]
+pub fn watch_exit_fullscreen<F: Fn() + 'static>(
+    window: &tao::window::Window,
+    on_exit: F,
+) -> Option<NotificationWatch> {
+    use objc2_app_kit::{NSWindow, NSWindowDidExitFullScreenNotification};
+    use objc2_foundation::NSNotificationCenter;
+    use tao::platform::macos::WindowExtMacOS;
+
+    let ptr = window.ns_window() as *mut NSWindow;
+    // 不変条件は [`is_window_fullscreen`] と同じ。借りている `window` が生きている間は
+    // このポインタも有効（tao の契約）で、メインスレッドから呼ばれる。
+    let ns_window = unsafe { ptr.as_ref() }?;
+
+    let block = block2::RcBlock::new(move |_notification: std::ptr::NonNull<_>| {
+        on_exit();
+    });
+    // 監視対象をこの窓に絞る（`object:` に窓を渡す）。絞らないと、将来窓が増えたときに
+    // 他の窓の遷移でも起こされる。
+    let token = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSWindowDidExitFullScreenNotification),
+            Some(ns_window),
+            None,
+            &block,
+        )
+    };
+    Some(NotificationWatch(token))
+}
+
+/// 購読しない。[`is_window_fullscreen`] が常に false を返すので、そもそも待ちに入らない。
+#[cfg(not(target_os = "macos"))]
+pub fn watch_exit_fullscreen<F: Fn() + 'static>(
+    _window: &tao::window::Window,
+    _on_exit: F,
+) -> Option<NotificationWatch> {
+    None
+}
+
+/// アプリが前面に出たら `on_active` を呼ぶ（#49）。
+///
+/// 隠した窓へ戻る道。窓を閉じてもプロセスが生き残るようになったので、Dock アイコンを
+/// クリックしたときに窓が戻らないと、**窓を失ったように見える**。
+///
+/// 本来の口は `applicationShouldHandleReopen:hasVisibleWindows:` だが、あれは
+/// `NSApplicationDelegate` のメソッドで、delegate は tao が持っている（奪うと
+/// `CloseRequested` も `Resized` も死ぬ）。通知は delegate と独立に出るので、
+/// [`watch_exit_fullscreen`] と同じ形でこちらを購読する。
+///
+/// 前面に出る理由は Dock クリックだけではない（⌘Tab、転送してきた md が撃つ
+/// `activate`）。**窓が既に出ているかは呼ばれた側で見ること。**
+#[cfg(target_os = "macos")]
+pub fn watch_app_active<F: Fn() + 'static>(on_active: F) -> Option<NotificationWatch> {
+    use objc2_app_kit::NSApplicationDidBecomeActiveNotification;
+    use objc2_foundation::NSNotificationCenter;
+
+    let block = block2::RcBlock::new(move |_notification: std::ptr::NonNull<_>| {
+        on_active();
+    });
+    // `object:` は None。送り主は NSApp ただ 1 つなので絞る意味が無い。
+    let token = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSApplicationDidBecomeActiveNotification),
+            None,
+            None,
+            &block,
+        )
+    };
+    Some(NotificationWatch(token))
+}
+
+/// 購読しない。隠す経路が macOS 専用（Dock も ⌘Tab も無い）なので、戻す道も要らない。
+#[cfg(not(target_os = "macos"))]
+pub fn watch_app_active<F: Fn() + 'static>(_on_active: F) -> Option<NotificationWatch> {
+    None
+}
+
 #[cfg(target_os = "macos")]
 pub fn get_frontmost_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;
@@ -184,6 +325,35 @@ pub fn activate_pid(pid: i32) {
     target.activateFromApplication_options(&current, NSApplicationActivationOptions(0));
 }
 
+/// 転送（#31）の送り側から、既存の窓を持つ受け側を前面化する。
+///
+/// [`activate_pid`] の裏返しだが、2 つ違う。
+///
+/// 1. **自分がアクティブかを見ない。** 送り側は端末から起動された短命のプロセスで、
+///    アクティブになったことが一度も無い。`spike/activation` の実測では、それでも
+///    `activateFromApplication:` は通った（「持っていないものは譲れない」は外れ）。
+/// 2. **`yieldActivationToApplication:` を撃たない。** 有無で結果が変わらなかった。
+///
+/// `NSApplication::sharedApplication` を**呼ばないこと**。送り側は run loop を回さない
+/// ので、ここで AppKit を起こすとその初期化コストを転送のたびに払う。`NSApp` 越しの
+/// `activate()` は実測で 3 回とも不発だったので、呼ぶ利点も無い。
+///
+/// 前面化の責任はここ 1 箇所だけが持つ。受け側（`AppEvent::Open` の腕）は隠れた窓を
+/// 持ち上げるだけで、アプリを前へ出すことはしない。
+#[cfg(target_os = "macos")]
+pub fn activate_other(pid: i32) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+
+    let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
+        return;
+    };
+    let me = NSRunningApplication::currentApplication();
+    target.activateFromApplication_options(&me, NSApplicationActivationOptions(0));
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_other(_pid: i32) {}
+
 /// Dock と ⌘Tab に出るアイコンを差し込む。
 ///
 /// md は `.app` を作らない（bundle.rs 参照）ので `Info.plist` の `CFBundleIconFile`
@@ -210,30 +380,86 @@ pub fn set_dock_icon() {
     unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
 }
 
+/// [`MenuAction`] が抱えるもの。`Box<dyn Fn()>` を objc のオブジェクトに載せるための箱。
 #[cfg(target_os = "macos")]
-pub fn setup_menu() {
+struct MenuActionIvars {
+    on_action: Box<dyn Fn()>,
+}
+
+// `define_class!` の `#[thread_kind = MainThreadOnly]` が名前で解決するので、
+// モジュールの位置で入れておく必要がある（関数の中の use では届かない）。
+#[cfg(target_os = "macos")]
+use objc2::{DefinedClass, MainThreadOnly};
+
+#[cfg(target_os = "macos")]
+objc2::define_class!(
+    // SAFETY:
+    // - 親の NSObject はサブクラス化に条件を課さない。
+    // - Drop を実装しないので dealloc の生成も要らない。
+    #[unsafe(super(objc2::runtime::NSObject))]
+    // メニューの action はメインスレッドからしか来ない。
+    #[thread_kind = MainThreadOnly]
+    #[ivars = MenuActionIvars]
+    struct MenuAction;
+
+    impl MenuAction {
+        #[unsafe(method(mdInvoke:))]
+        fn invoke(&self, _sender: Option<&objc2::runtime::AnyObject>) {
+            (self.ivars().on_action)();
+        }
+    }
+);
+
+#[cfg(target_os = "macos")]
+impl MenuAction {
+    fn new(
+        mtm: objc2::MainThreadMarker,
+        on_action: Box<dyn Fn()>,
+    ) -> objc2::rc::Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(MenuActionIvars { on_action });
+        unsafe { objc2::msg_send![super(this), init] }
+    }
+}
+
+/// [`setup_menu`] が返す札。**メニュー項目は target を retain しない**ので、宛先は
+/// 呼び出し側が持ち続ける。落とすと ⌘Q が解放済みのオブジェクトへ飛ぶ。
+#[cfg(target_os = "macos")]
+pub struct MenuTargets(#[allow(dead_code)] Vec<objc2::rc::Retained<MenuAction>>);
+
+/// メニューバーを組む。`on_quit` はメニューの Quit（⌘Q）から呼ばれる。
+///
+/// **Quit は `terminate:` でも `performClose:` でもない。**
+/// - `terminate:` は tao の `CloseRequested` を経由せずプロセスを即終了するので、
+///   一時ファイルの後始末も、全画面から抜ける待ち（#59）も走らない
+/// - `performClose:` は × ボタンと同じ穴で、#49 でそこは「隠す」になった。
+///   ⌘Q まで隠す側へ行くと、**終了する手段がメニューから消える**
+///
+/// そこで呼び出し側のクロージャを持つ宛先を自前で立てて、イベントループへ流す。
+/// 終了の手順は閉じる要求と 1 本に合流するので、全画面の始末も後始末も共通になる。
+#[cfg(target_os = "macos")]
+pub fn setup_menu<F: Fn() + 'static>(on_quit: F) -> MenuTargets {
     use objc2::sel;
-    use objc2::{MainThreadMarker, MainThreadOnly};
+    use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
     use objc2_foundation::ns_string;
 
     let mtm = MainThreadMarker::new().expect("must be on main thread");
+    let quit_target = MenuAction::new(mtm, Box::new(on_quit));
 
     let menubar = NSMenu::new(mtm);
 
     let app_item = NSMenuItem::new(mtm);
     let app_menu = NSMenu::new(mtm);
     unsafe {
-        // terminate: は tao の CloseRequested を経由せずプロセスを即終了するため、
-        // 閉じたときのフォーカス戻し（activate_pid）が走らない。performClose: にすると
-        // ウィンドウ閉じ → windowShouldClose: → CloseRequested に乗り、×ボタンと同じ
-        // 経路を通る。単一ウィンドウなので「閉じる＝終了」で体験は変わらない。
         let quit = NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
             ns_string!("Quit"),
-            Some(sel!(performClose:)),
+            Some(sel!(mdInvoke:)),
             ns_string!("q"),
         );
+        // target を明示する。nil のままだとレスポンダチェーンを辿るが、`mdInvoke:` に
+        // 応えるのはこの宛先だけなので、誰も拾わず項目が灰色になる。
+        quit.setTarget(Some(&quit_target));
         app_menu.addItem(&quit);
         app_item.setSubmenu(Some(&app_menu));
         menubar.addItem(&app_item);
@@ -292,4 +518,6 @@ pub fn setup_menu() {
 
     let app = NSApplication::sharedApplication(mtm);
     app.setMainMenu(Some(&menubar));
+
+    MenuTargets(vec![quit_target])
 }

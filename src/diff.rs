@@ -123,9 +123,12 @@ pub fn diff_stat(file_path: &Path) -> (usize, usize) {
 /// （生成物を大量にコミットし直した時など）で git 出力の走査に時間を使わないよう打ち切る。
 const CHANGED_MAX: usize = 500;
 
-/// `root` 以下の「変更のあるファイル」を、追加/削除行数つきで root 相対パスで列挙する。
+/// `root` 以下の「変更のあるファイル」を、追加/削除行数つきで列挙する。
 /// ファイル検索パレット（⌘P）が変更のあるファイルを先に出すために使う。
 /// リポジトリ外・git が無い場合は空。削除されたファイルは開けないので含めない。
+///
+/// パスは識別子（絶対パス）。⌘P は `?files=1` の一覧と突き合わせるので、形を
+/// 揃えないとバッジが付かず、並べ替えも効かない。
 ///
 /// セキュリティ: 他人のリポジトリを開く脅威モデルなので、`--no-ext-diff` / `--no-textconv`
 /// で .git/config・.gitattributes 由来の外部コマンド実行経路を封じる（diff_stat も同様）。
@@ -189,14 +192,18 @@ fn git_output(dir: &Path, args: &[&str]) -> Result<String, ()> {
 /// 一覧に 1 件足す。開けないもの（削除済み・ディレクトリ）と、C 形式でクオートされた
 /// パスは捨てる。クオートは制御文字を含む名前だけで起きる（quotepath=false 済み）ので、
 /// アンクオートを実装するより落とす方が安全。
+///
+/// git が返す root 相対パスが識別子になるのはここ。`root` は正規化済みなので
+/// `join` した時点で識別子の形（絶対パス）になっている。
 fn push_changed(out: &mut Vec<(String, usize, usize)>, root: &Path, path: &str, add: usize, del: usize) {
     if path.is_empty() || path.starts_with('"') {
         return;
     }
-    if !root.join(path).is_file() {
+    let full = root.join(path);
+    if !full.is_file() {
         return;
     }
-    out.push((path.to_string(), add, del));
+    out.push((crate::urlpath::file_id(&full), add, del));
 }
 
 /// 未追跡ファイルの追加行数。一覧では数百ファイルを数えうるので、巨大ファイルは
@@ -595,18 +602,20 @@ mod tests {
         std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
 
         let changed = changed_files(&dir);
+        // git は root 相対で返すが、一覧に載るのは識別子（絶対パス）。
+        let id = |rel: &str| dir.join(rel).to_string_lossy().into_owned();
         let paths: Vec<&str> = changed.iter().map(|(p, _, _)| p.as_str()).collect();
 
-        // サブディレクトリのパスは root 相対（--relative）で返る。
-        assert!(paths.contains(&"sub/mod.md"), "変更ファイルが無い: {paths:?}");
+        assert!(paths.contains(&id("sub/mod.md").as_str()), "変更ファイルが無い: {paths:?}");
         // 未追跡は全行が追加。
-        assert!(paths.contains(&"new.txt"), "未追跡ファイルが無い: {paths:?}");
+        assert!(paths.contains(&id("new.txt").as_str()), "未追跡ファイルが無い: {paths:?}");
         // 開けないものは出さない。無変更のファイルも当然出ない。
-        assert!(!paths.contains(&"gone.md"), "削除済みが混ざっている: {paths:?}");
-        assert!(!paths.contains(&"kept.md"), "無変更が混ざっている: {paths:?}");
+        assert!(!paths.contains(&id("gone.md").as_str()), "削除済みが混ざっている: {paths:?}");
+        assert!(!paths.contains(&id("kept.md").as_str()), "無変更が混ざっている: {paths:?}");
 
-        let stat = |name: &str| {
-            changed.iter().find(|(p, _, _)| p == name).map(|(_, a, d)| (*a, *d)).unwrap()
+        let stat = |rel: &str| {
+            let want = id(rel);
+            changed.iter().find(|(p, _, _)| *p == want).map(|(_, a, d)| (*a, *d)).unwrap()
         };
         assert_eq!(stat("sub/mod.md"), (1, 1));
         assert_eq!(stat("new.txt"), (2, 0));

@@ -4,40 +4,48 @@
 //  - タブ（.md-tab）を右クリック → そのタブを対象（開閉の項目が増える）。
 //  - サイドバーのツリー項目（.tree-item）を右クリック → その項目を対象（VS Code の
 //    Explorer 的な操作）。プレビューに何も開いていなくても効く。
+//  - サイドバーのヘッダ（#sidebar-header）→ いまの root が対象。ツリーに行が無い
+//    root 自身にも、パスのコピーと Finder 表示を効かせるため。
 //  - それ以外（プレビュー領域など）→ 現在プレビュー中のファイル。
 //
 // 安全性の考え方:
 //  - 相対パス / 選択テキストのコピーは MdCommon.copyText。navigator.clipboard が
 //    使えない時だけ Rust（NSPasteboard）へ回る。
 //  - 絶対パスのコピー・Finder表示・既定アプリで開く は常に Rust へ IPC する。
-//    Rust 側は root_dir から `?file=` と同じ規則でパスを解決し
-//    （root 相対は root 内に限定、絶対パスは root の外も可）、
+//    Rust 側は `?file=` と同じ関門（id_to_path）でパスを解決し、
 //    実行系拡張子（.app/.command 等）は弾く。
 //  - ページに CSP は張っていないので、本文に書かれた <script> もこの IPC を叩ける。
 //    止めているのは Rust 側のパス解決と拡張子ガードだけで、本文を信頼できない前提の
 //    防御ではない（`.html` の忠実描画と同じ信頼モデルに揃えた結果）。
 (function() {
-  // 現在プレビュー中ファイルの識別子（root 相対パス、または root の外なら絶対パス）。
+  // 現在プレビュー中ファイルの識別子（絶対パス）。
   // 何も開いていない（`md .` で起動した直後など）間は null。
-  var currentRel = null;
+  var currentId = null;
   var menuEl = null;
 
   // 右クリック位置から操作対象を決める。
-  //   rel   … IPC / コピーに使う識別子（何も開いていなければ ''）
+  //   id    … IPC / コピーに使う識別子（何も開いていなければ ''）
   //   relOk … 「相対パスをコピー」が意味を持つか
   //   has   … パス系の操作（絶対/Finder/開く）が可能か
+  //   dir   … フォルダか（「ここを root にする」が意味を持つか）
   function resolveContext(e) {
     // タブを右クリック → そのタブが対象（開閉の操作が増える）。
     var tab = e.target.closest && e.target.closest('.md-tab');
     if (tab && tab.dataset && tab.dataset.path) {
-      return { rel: tab.dataset.path, relOk: true, has: true, tab: tab.dataset.path };
+      return { id: tab.dataset.path, relOk: true, has: true, tab: tab.dataset.path };
+    }
+    // サイドバーのヘッダ（フォルダ名）→ いまの root が対象（#34）。パスのコピーや
+    // Finder 表示を、ツリーに行が無い root 自身に対しても効かせる。
+    if (e.target.closest && e.target.closest('#sidebar-header')) {
+      var root = (window.MdCommon && MdCommon.rootDir) ? MdCommon.rootDir() : '';
+      if (root) return { id: root, relOk: true, has: true, dir: true };
     }
     var ti = e.target.closest && e.target.closest('.tree-item');
     if (ti && ti.dataset && ti.dataset.path) {
-      return { rel: ti.dataset.path, relOk: true, has: true };
+      return { id: ti.dataset.path, relOk: true, has: true, dir: ti.dataset.kind === 'dir' };
     }
-    if (currentRel) return { rel: currentRel, relOk: true, has: true };
-    return { rel: '', relOk: false, has: false };
+    if (currentId) return { id: currentId, relOk: true, has: true };
+    return { id: '', relOk: false, has: false };
   }
 
   function close() {
@@ -71,16 +79,18 @@
         if (selection) MdCommon.copyText(selection);
         break;
       case 'copy-rel':
-        if (ctx.rel) MdCommon.copyText(ctx.rel);
+        // 識別子は絶対パスなので、ここで root を剥ぐ。剥がないと「絶対パスをコピー」
+        // と同じものが 2 行並ぶ。root の外のファイルは剥ぐものが無く絶対パスのまま。
+        if (ctx.id) MdCommon.copyText(MdCommon.idToDisplay(ctx.id));
         break;
       case 'copy-abs':
-        window.ipc.postMessage('menu:abs:' + ctx.rel);
+        window.ipc.postMessage('menu:abs:' + ctx.id);
         break;
       case 'reveal':
-        window.ipc.postMessage('menu:reveal:' + ctx.rel);
+        window.ipc.postMessage('menu:reveal:' + ctx.id);
         break;
       case 'open':
-        window.ipc.postMessage('menu:open:' + ctx.rel);
+        window.ipc.postMessage('menu:open:' + ctx.id);
         break;
       case 'tab-close':
         if (window.MdTabs) MdTabs.closeByPath(ctx.tab);
@@ -88,8 +98,14 @@
       case 'tab-close-others':
         if (window.MdTabs) MdTabs.closeOthers(ctx.tab);
         break;
-      case 'reload':
-        if (window.MdReload) window.MdReload();
+      case 'tab-close-all':
+        if (window.MdTabs) MdTabs.closeAll();
+        break;
+      case 'set-root':
+        if (window.MdRoot) window.MdRoot.set(ctx.id);
+        break;
+      case 'quick-toggle':
+        if (window.MdQuick) window.MdQuick.toggle(ctx.id, !!ctx.dir);
         break;
       case 'palette':
         if (window.MdPalette) window.MdPalette.open();
@@ -128,6 +144,30 @@
         label: '他のタブを閉じる', action: 'tab-close-others',
         enabled: !!(window.MdTabs && MdTabs.count() > 1)
       });
+      items.push({
+        label: 'すべてのタブを閉じる', action: 'tab-close-all',
+        enabled: !!(window.MdTabs && MdTabs.count() > 0)
+      });
+      items.push({ sep: true });
+    }
+    // フォルダが対象のときだけ。いま居る root には**出さない**——押しても何も
+    // 起きないので、灰色で 1 行取る意味が無い（`enabled: false` にすると
+    // `render` が disabled の行をそのまま並べる）。
+    if (ctx.dir) {
+      var root = (window.MdCommon && MdCommon.rootDir) ? MdCommon.rootDir() : '';
+      if (ctx.id !== root) {
+        items.push({ label: 'ここを root にする', action: 'set-root', enabled: true });
+        items.push({ sep: true });
+      }
+    }
+    // Quick Access（#35）。ツリーの行・ヘッダのフォルダ名・タブ・Quick Access の行、
+    // どこからでも同じ 1 行を出す。対象が無いときだけ出さない（登録するものが無い）。
+    if (ctx.has && window.MdQuick) {
+      items.push({
+        label: MdQuick.has(ctx.id) ? 'Quick Access から外す' : 'Quick Access に追加',
+        action: 'quick-toggle',
+        enabled: true
+      });
       items.push({ sep: true });
     }
     // パス系。対象が無いとき（何も開いていない本文の右クリック）は disabled で残す。
@@ -144,8 +184,6 @@
       action: 'sidebar-toggle',
       enabled: true
     });
-    items.push({ sep: true });
-    items.push({ label: '再読み込み', action: 'reload', enabled: true });
     items.push({ sep: true });
     items.push({ label: 'ショートカット一覧 (?)', action: 'help', enabled: true });
     return trimSeparators(items);
@@ -216,8 +254,8 @@
   });
 
   window.MdMenu = {
-    // folder.js が loadPreview 時に現在ファイルの相対パスを通知する。
-    setCurrentFile: function(rel) { currentRel = rel || null; },
+    // folder.js が loadPreview 時に現在ファイルの識別子を通知する。
+    setCurrentFile: function(id) { currentId = id || null; },
     // iframe(html-frame)内のクリック/スクロールは親 document のリスナーに届かない。
     // common.js の bindFrame がここを呼んで閉じる（未オープン時は no-op）。
     close: close

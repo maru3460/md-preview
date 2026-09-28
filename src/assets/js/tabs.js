@@ -5,12 +5,18 @@
 // 既存の構造をそのまま活かせるのが理由で、hljs / mermaid / drawio の再実行が
 // 体感で重くなるようなら「タブごとに DOM を保持して display 切替」へ寄せる。
 //
-// 入口は folder.js の loadPreview() 1 本。ツリークリック / [ ] 巡回 / ⌘P /
+// 画面からの入口は folder.js の loadPreview() 1 本。ツリークリック / [ ] 巡回 / ⌘P /
 // 本文リンク / iframe 内リンク / コメントのジャンプ は全部そこを通るので、
 // onOpen() のフックだけで「開いたものは必ずタブに乗る」が成り立つ。
 //
-// タブの識別子は loadPreview に渡るパスそのもの（root 相対、または root の外なら
-// 絶対パス）。stdin をパイプで渡したときの一時ファイルも、後者としてここに乗る。
+// もう 1 本、openMany() が外からの入口としてある（起動時の INITIAL_FILES と、#31 の
+// 転送）。こちらは先頭しかフェッチしないので、2 枚目以降は onOpen を通らず直接
+// tabs へ挿す。「開いたものは必ずタブに乗る」は成り立つが、逆（タブに乗ったものは
+// 必ず loadPreview を通った）は成り立たない。
+//
+// タブの識別子は loadPreview に渡るパスそのもの（常に絶対パス）。stdin をパイプで
+// 渡したときの一時ファイルも、root の外にあるだけで同じ形でここに乗る。
+// 同一判定は文字列一致なので、識別子の形を混ぜると同じファイルがタブ 2 枚になる。
 (function() {
   // { path, scroll, mode } の配列。並び順がそのままタブバーの並び。
   var tabs = [];
@@ -27,13 +33,30 @@
     return -1;
   }
 
+  // タブに出す名前は識別子ではなく表示名（root を剥いだ形）から作る。root 直下の
+  // ファイルに親ディレクトリ名（＝ root のフォルダ名）が付かないのは、それが
+  // どのタブにも同じように付いて区別の役に立たないため。
+  function displayOf(p) {
+    return (window.MdCommon && MdCommon.idToDisplay) ? MdCommon.idToDisplay(p) : String(p);
+  }
   function baseName(p) {
-    var segs = String(p).split('/');
+    var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
+  // 同名タブが並んだときに添える親ディレクトリ名。
+  //
+  // パイプ入力（`cat x.md | md`）の置き場所はここでは名前として使わない。実体化先は
+  // `$TMPDIR/md-stdin-<pid>/stdin.md` で、転送で 2 本受けると `stdin.md` が 2 枚に
+  // なり、この規則がそのまま `md-stdin-41234` を並べてしまう。数字の羅列は見分けの
+  // 役に立たないうえ、読んでいる人にとっては置き場所の都合でしかない。
+  // **見分けが付かないままにする**——パイプで渡したものは元の名前を持っていない。
   function parentName(p) {
-    var segs = String(p).split('/');
-    return segs.length >= 2 ? segs[segs.length - 2] : '';
+    var segs = displayOf(p).split('/');
+    if (segs.length < 2) return '';
+    var dir = segs[segs.length - 2];
+    var spool = window.MD_STDIN_PREFIX;
+    if (spool && dir.indexOf(spool) === 0) return '';
+    return dir;
   }
 
   // 現在出ているビューモード（raw / diff、無ければ null）。
@@ -91,15 +114,59 @@
     render();
   }
 
-  // 起動時（`md a.md b.md`）に複数のタブを並べる。フェッチするのは最初の 1 枚だけで、
-  // 残りはタブに載せるだけ（開いた時に取りに行く）。起動を N ファイルぶん遅らせない。
-  function openInitial(paths) {
+  // 複数のファイルをまとめてタブに並べる。起動時（`md a.md b.md`）と、既存の窓への
+  // 転送（#31）の共通の入口。フェッチするのは先頭の 1 枚だけで、残りはタブに載せる
+  // だけ（開いた時に取りに行く）。N ファイルぶん待たせない。
+  //
+  // 挿入位置は onOpen と同じ「現在タブの右隣」。起動時は tabs が空なので末尾追加と
+  // 同じ結果になり、2 つの規則を持つ理由が無い。
+  //
+  // `how.keepView` は「タブには載せるが、いま見ているものは動かさない」。手を止めて
+  // 画面の前に居る相手——コメントの入力中と ⌘P の検索中——に転送が来たときに使う
+  // （母集団は `folder.js` の `keepsView()` が持つ）。書いている対象や検索していた裏が
+  // 目の前で入れ替わると、何に書いていたのか・何を覆っていたのかが分からなくなる。
+  // 届いたファイルは失われず、タブバーに出るので着いたことも見える。
+  //
+  // 引数名を `opts` にしないのは、このモジュールが `{ openFile, clearFile }` を
+  // 同じ名前でモジュールスコープに持っているため。
+  function openMany(paths, how) {
     if (!paths || !paths.length) return;
-    paths.forEach(function(p) {
-      if (p && indexOf(p) === -1) tabs.push({ path: p, scroll: 0, mode: null });
-    });
-    if (!tabs.length) return;
-    activeIdx = 0;
+    var keepView = !!(how && how.keepView);
+    // 見ているタブはパスで覚える。添え字は下の splice でずれる——既存タブに当たると
+    // 挿し先が現在タブより左へ戻りうるので、「挿し先は現在タブより右」は成り立たない。
+    var stay = tabs[activeIdx] ? tabs[activeIdx].path : null;
+    var inherited = currentMode();
+    saveActiveState();
+    var first = null;
+    var at = activeIdx + 1;
+    for (var i = 0; i < paths.length; i++) {
+      var p = paths[i];
+      if (!p) continue;
+      if (!first) first = p;
+      var found = indexOf(p);
+      if (found !== -1) {
+        // 既に開いているタブは動かさない（並べ替えると読んでいたタブが勝手に動く）。
+        // ただし挿し先はそこまで進める。進めないと、渡した並びの後ろが既存タブより
+        // 左に取り残されて「[a, c, b] を渡したのに b を表示」のような形になる。
+        at = found + 1;
+        continue;
+      }
+      tabs.splice(at, 0, { path: p, scroll: 0, mode: inherited });
+      at++;
+    }
+    if (!first) return;
+    // タブが 1 枚も無いところで keepView を守るものは無い（守る「いま見ているもの」が
+    // 存在しない）。タブ帯にだけ並んで本文が空のまま、という見えない状態を作らない。
+    if (keepView && stay !== null) {
+      // 添え字はパスから引き直す。splice が現在タブより左で起きていると、そのままでは
+      // 別のタブを指したまま「本文は前のファイル」という分裂状態になり、次のタブ操作が
+      // 見ていないタブへ読み位置を書き込む。
+      activeIdx = indexOf(stay);
+      render();
+      return;
+    }
+    // 添え字は全部挿し終わってから引き直す。先に控えると、後ろの splice でずれる。
+    activeIdx = indexOf(first);
     show();
   }
 
@@ -121,6 +188,17 @@
     if (window.MdCommon && MdCommon.closeWindow) MdCommon.closeWindow();
   }
 
+  // 閉じたタブを Rust へ知らせる。パイプ入力を実体化した一時ファイルは、そのタブが
+  // 持ち主なので、閉じた時点で消してよい（#49。窓を閉じてもプロセスが生き続けるように
+  // なったので、終了まで持つと $TMPDIR へ積み上がる）。
+  // 一時ファイルでないパスも届くが、Rust 側が「自分が引き取ったもの」に絞って捨てる。
+  function reportClosed(closed) {
+    if (!window.ipc) return;
+    for (var i = 0; i < closed.length; i++) {
+      if (closed[i] && closed[i].path) ipc.postMessage('closed:' + closed[i].path);
+    }
+  }
+
   function closeAt(i) {
     // タブが 1 枚も無い（`md .` で起動してまだ何も開いていない）ときの ⌘W は
     // ウィンドウを閉じる。ここで抜けてしまうと、⌘W に割り当てられているのは
@@ -128,9 +206,20 @@
     if (!tabs.length) { closeWindow(); return; }
     if (i < 0 || i >= tabs.length) return;
     // 最後の 1 枚を閉じるのもウィンドウを閉じるのと同じ（⌘W の従来の意味）。
+    //
+    // Why not **タブも外す**: #49 で ⌘W はプロセスを終えずに窓を隠すだけになった
+    // ので、外すと次に窓を戻したとき空になっている。`echo x | md` で開いて ⌘W で
+    // 端末へ戻る、が一番多い使い方で、そこで読んでいたものが消えるのは困る。
+    //
+    // Why not **右クリックの「閉じる」だけ別扱いにする**: 1 枚のとき、この項目は
+    // タブを残して窓を消し、同じメニューの「すべてのタブを閉じる」はタブを消して
+    // 窓を残す——逆に見えるが、**項目名が `閉じる (⌘W)` で ⌘W を名乗っている**
+    // （contextmenu.js）。分けるとその案内が嘘になる。Safari も最後の 1 枚を
+    // 右クリックで閉じると窓が閉じるので、いまの形の方が揃っている。
+    // 分けるなら、ラベルから `(⌘W)` を外すのが先。
     if (tabs.length === 1) { closeWindow(); return; }
     var wasActive = (i === activeIdx);
-    tabs.splice(i, 1);
+    reportClosed(tabs.splice(i, 1));
     if (wasActive) {
       // 右隣へ移る（右端だったら左隣）。
       activeIdx = Math.min(i, tabs.length - 1);
@@ -145,10 +234,24 @@
     var keep = tabs[indexOf(path)];
     if (!keep) return;
     var wasActive = (tabs[activeIdx] === keep);
+    reportClosed(tabs.filter(function(t) { return t !== keep; }));
     tabs = [keep];
     activeIdx = 0;
     if (wasActive) render();
     else show();
+  }
+
+  // 溜まったタブをまとめて捨てて、何も開いていない状態（`md .` で起動した直後と
+  // 同じ）へ戻す。⌘W の「最後の 1 枚はウィンドウを閉じる」には倣わない。ここは
+  // 瓦礫になったタブ帯を片付ける操作なので、ツリーを残したまま空にならないと
+  // 「片付けたら道具ごと消えた」になる。
+  function closeAll() {
+    if (!tabs.length) return;
+    reportClosed(tabs);
+    tabs = [];
+    activeIdx = -1;
+    render();
+    if (opts && opts.clearFile) opts.clearFile();
   }
 
   // ⇧Tab : 次のタブへ。端まで行ったら先頭へ折り返す（1 方向だけなのは、逆回りを
@@ -189,7 +292,9 @@
       tab.className = 'md-tab' + (i === activeIdx ? ' active' : '');
       // 右クリックメニュー（contextmenu.js）が対象を引くために持たせる。
       tab.dataset.path = t.path;
-      tab.title = t.path;
+      // ツールチップも表示名。ここだけ識別子（絶対パス）にすると、同じタブの
+      // 名前・添え字・ツールチップで基準が違うことになる。
+      tab.title = displayOf(t.path);
 
       var name = document.createElement('span');
       name.className = 'md-tab-name';
@@ -241,7 +346,7 @@
   }
 
   window.MdTabs = {
-    // o: { openFile(path) } … タブ切替で本文を出し直すための入口（loadPreview）。
+    // o: { openFile(path), clearFile() } … 本文を出し直す / 本文を空にする入口。
     init: function(o) {
       opts = o;
       registerKeys();
@@ -256,10 +361,18 @@
       }
     },
     onOpen: onOpen,
-    openInitial: openInitial,
+    openMany: openMany,
     scrollFor: scrollFor,
     closeByPath: function(path) { closeAt(indexOf(path)); },
     closeOthers: closeOthers,
-    count: function() { return tabs.length; }
+    closeAll: closeAll,
+    count: function() { return tabs.length; },
+    // 開いているタブの識別子。root が動いたとき（#34）に「どれが root の外に
+    // なったか」をページ側で数えるために要る。
+    ids: function() { return tabs.map(function(t) { return t.path; }); },
+    // 名前を付け直す。タブの見出しは root を剥いだ表示名なので、root が動くと
+    // 同じタブの名前が変わる。render() は毎回 displayOf から組み直すので、
+    // これを呼ぶだけで済む。
+    relabel: render
   };
 })();

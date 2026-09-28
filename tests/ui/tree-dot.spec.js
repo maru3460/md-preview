@@ -7,7 +7,7 @@
 //
 // 1 本目だけは実サーバ相手にして、残りの stub がワイヤ契約から浮かないようにする。
 const { test, expect } = require('@playwright/test');
-const { FOLDER_URL, open, openFolder } = require('./helpers');
+const { FOLDER_URL, open, openFolder, treeItem } = require('./helpers');
 
 /// `?has_md=` だけを横取りする。glob ではなく述語で見るのは、クエリ無しの `/`
 /// （ページ本体）を巻き込まないため。
@@ -18,16 +18,21 @@ function routeHasMd(page, handler) {
   );
 }
 
-/// `?dir=` を捏造したツリーに差し替える。`names` は root 直下のフォルダ名。
+/// `?dir=` を捏造したツリーに差し替える。`tree` のキーは root 相対（root 自身は '')。
+/// ワイヤに載るのは識別子（絶対パス）なので、最初に来た `?dir=` を root と見なして
+/// そこから組み立てる（root はサーバの起動引数で決まるので、ここでは知らない）。
 function routeDirs(page, tree) {
+  let root = null;
   return page.route(
     (url) => url.searchParams.has('dir'),
     (route, request) => {
-      const rel = new URL(request.url()).searchParams.get('dir');
+      const dir = new URL(request.url()).searchParams.get('dir');
+      if (root === null) root = dir;
+      const rel = dir === root ? '' : dir.slice(root.length + 1);
       const names = tree[rel] || [];
       const items = names.map((name) => ({
         name,
-        path: rel ? rel + '/' + name : name,
+        path: dir + '/' + name,
         kind: 'dir',
       }));
       route.fulfill({ contentType: 'application/json', body: JSON.stringify(items) });
@@ -45,8 +50,8 @@ async function settled(page) {
 test('md を含むフォルダにだけ点が付く', async ({ page }) => {
   await openFolder(page);
 
-  const sub = page.locator('.tree-item[data-path="sub"]');
-  const noMd = page.locator('.tree-item[data-path="no-md"]');
+  const sub = treeItem(page, 'sub');
+  const noMd = treeItem(page, 'no-md');
 
   await expect(sub).toHaveAttribute('data-md-dot', 'yes');
   await expect(sub).toHaveClass(/has-md/);
@@ -102,18 +107,19 @@ test('フォルダを畳むと、まだ投げていない配下の判定は飛�
   await expect.poll(() => release.length).toBe(1);
   await release.shift()();
 
-  await page.locator('.tree-item[data-path="big"]').click();
+  await treeItem(page, 'big').click();
   await expect.poll(() => release.length).toBe(3);
 
   // 3 本が飛んだ状態で畳む。残り 9 本は投げられないまま捨てられる。
-  await page.locator('.tree-item[data-path="big"]').click();
+  await treeItem(page, 'big').click();
   while (release.length) {
     await release.shift()();
     await page.waitForTimeout(10);
   }
   await settled(page);
 
-  const askedUnderBig = asked.filter((p) => p.indexOf('big/') === 0);
+  // 聞かれるのは識別子（絶対パス）なので、root を知らずに済む形で絞る。
+  const askedUnderBig = asked.filter((p) => p.includes('/big/'));
   expect(askedUnderBig.length).toBeLessThanOrEqual(3);
 });
 
@@ -126,7 +132,7 @@ test('判定が不明のフォルダには点を出さない', async ({ page }) 
   await open(page, FOLDER_URL);
   await settled(page);
 
-  const huge = page.locator('.tree-item[data-path="huge"]');
+  const huge = treeItem(page, 'huge');
   await expect(huge).toHaveAttribute('data-md-dot', 'unknown');
   await expect(huge).not.toHaveClass(/has-md/);
 });
@@ -138,13 +144,13 @@ test('畳んで開き直すと、不明だったフォルダをもう一度判�
   await routeHasMd(page, (route, request) => {
     const rel = new URL(request.url()).searchParams.get('has_md');
     // x/y だけ、1 回目は予算切れ・2 回目は見つかった、と答える。
-    const md = rel === 'x/y' && answers++ === 0 ? 'unknown' : 'yes';
+    const md = rel.endsWith('/x/y') && answers++ === 0 ? 'unknown' : 'yes';
     route.fulfill({ contentType: 'application/json', body: '{"has_md":"' + md + '"}' });
   });
 
   await open(page, FOLDER_URL);
-  const x = page.locator('.tree-item[data-path="x"]');
-  const y = page.locator('.tree-item[data-path="x/y"]');
+  const x = treeItem(page, 'x');
+  const y = treeItem(page, 'x/y');
 
   await x.click();
   await expect(y).toHaveAttribute('data-md-dot', 'unknown');
@@ -174,16 +180,16 @@ test('祖父を畳むと、間のフォルダが開いたままでも配下の�
   await expect.poll(() => release.length).toBe(1); // a
   await release.shift()();
 
-  await page.locator('.tree-item[data-path="a"]').click();
+  await treeItem(page, 'a').click();
   await expect.poll(() => release.length).toBe(1); // a/b
   await release.shift()();
 
-  await page.locator('.tree-item[data-path="a/b"]').click();
+  await treeItem(page, 'a/b').click();
   await expect.poll(() => release.length).toBe(3);
 
   // b は開いたまま、祖父の a だけを畳む。b 配下の保留は捨てられる。
-  await page.locator('.tree-item[data-path="a"]').click();
-  await expect(page.locator('.tree-item[data-path="a/b"]')).toHaveClass(/dir-open/);
+  await treeItem(page, 'a').click();
+  await expect(treeItem(page, 'a/b')).toHaveClass(/dir-open/);
 
   while (release.length) {
     await release.shift()();
@@ -191,7 +197,7 @@ test('祖父を畳むと、間のフォルダが開いたままでも配下の�
   }
   await settled(page);
 
-  const askedUnderB = asked.filter((p) => p.indexOf('a/b/') === 0);
+  const askedUnderB = asked.filter((p) => p.includes('/a/b/'));
   expect(askedUnderB.length).toBeLessThanOrEqual(3);
 });
 

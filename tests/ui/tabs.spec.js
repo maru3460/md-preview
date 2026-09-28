@@ -5,19 +5,20 @@
 // 使い捨てのハーネスで見つかった 2 件（最初の 1 枚が作られない / タブ 0 枚の
 // ⌘W が無反応）も回帰として残してある。
 const { test, expect } = require('@playwright/test');
-const { MULTI_URL, open, openFolder } = require('./helpers');
+const { MULTI_URL, open, openFolder, treeItem, tab, display } = require('./helpers');
 
-/// ツリーからファイルを開く。data-path は root 相対なので、同名ファイル
-/// （a.md と sub/a.md）でも取り違えない。
+/// ツリーからファイルを開く。`relPath` は root 相対で書くが、data-path が持つのは
+/// 識別子（絶対パス）なので helpers 側で組む。同名ファイル（a.md と sub/a.md）でも
+/// 取り違えない。
 async function openFile(page, relPath) {
-  await page.locator(`.tree-item[data-path="${relPath}"]`).click();
-  await expect(page.locator(`.md-tab[data-path="${relPath}"]`)).toHaveClass(/active/);
+  await treeItem(page, relPath).click();
+  await expect(tab(page, relPath)).toHaveClass(/active/);
 }
 
 /// 折り畳まれているフォルダを開いて、子の行が出るまで待つ。
 async function expandDir(page, relPath) {
-  await page.locator(`.tree-item[data-path="${relPath}"]`).click();
-  await expect(page.locator(`.tree-item[data-path="${relPath}/a.md"]`)).toBeVisible();
+  await treeItem(page, relPath).click();
+  await expect(treeItem(page, relPath + '/a.md')).toBeVisible();
 }
 
 /// タブバーに並んでいるファイル名（左から順）。
@@ -25,9 +26,9 @@ function tabNames(page) {
   return page.locator('.md-tab .md-tab-name');
 }
 
-/// いま active なタブのパス。
-function activePath(page) {
-  return page.locator('.md-tab.active').getAttribute('data-path');
+/// いま active なタブのパス（root 相対）。data-path が持つのは識別子（絶対パス）。
+async function activePath(page) {
+  return display(page, await page.locator('.md-tab.active').getAttribute('data-path'));
 }
 
 const pane = (page) => page.evaluate(() => document.getElementById('preview-pane').scrollTop);
@@ -270,6 +271,88 @@ test('最後の 1 枚とタブ 0 枚の ⌘W はウィンドウを閉じる', as
   await expect(page.locator('.md-tab')).toHaveCount(1);
 });
 
+test('閉じたタブは Rust へ知らされる（一時ファイルの持ち主がタブだから）', async ({ page }) => {
+  // #49 で窓を閉じてもプロセスが死ななくなったので、パイプ入力を実体化した
+  // 一時ファイルを終了まで持つと $TMPDIR へ積み上がる。閉じた時点で知らせる。
+  await openFolder(page);
+  const closed = () => page.evaluate(() =>
+    window.__mdIpc.filter((m) => m.startsWith('closed:')).map((m) => m.slice('closed:'.length)));
+
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+  await openFile(page, 'long.md');
+
+  // 1 枚閉じる（⌘W）。
+  await page.keyboard.press('Meta+w');
+  await expect.poll(closed).toHaveLength(1);
+
+  // まとめて閉じる。残り 2 枚ぶんが届く。
+  await page.evaluate(() => window.MdTabs.closeAll());
+  await expect.poll(async () => (await closed()).length).toBe(3);
+  const all = await closed();
+  expect(all.every((p) => p.startsWith('/'))).toBe(true);
+  expect(new Set(all).size).toBe(3);
+});
+
+test('最後の 1 枚は閉じずに窓を閉じるので、知らせも飛ばない', async ({ page }) => {
+  // 閉じていないタブのぶんを消すと、窓を戻したときに死んだタブが残る。
+  // ⌘W の「最後の 1 枚はウィンドウを閉じる」と対で守る約束。
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await page.keyboard.press('Meta+w');
+  await expect.poll(() => page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length)).toBe(1);
+  expect(await page.evaluate(() => window.__mdIpc.filter((m) => m.startsWith('closed:')))).toEqual([]);
+});
+
+test('「すべてのタブを閉じる」は窓を残してタブ帯だけを空にする', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+
+  await tab(page, 'b.md').click({ button: 'right' });
+  await page.locator('.md-context-menu-item', { hasText: 'すべてのタブを閉じる' }).click();
+
+  await expect(page.locator('.md-tab')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/has-tabs/);
+  // 本文とツリーの選択も外れて、`md .` で起動した直後と同じ状態へ戻る。
+  await expect(page.locator('#preview-pane .markdown-body')).toBeEmpty();
+  await expect(page.locator('.tree-item.active')).toHaveCount(0);
+  // ⌘W（最後の 1 枚）と違って窓は閉じない。片付けたら道具ごと消える、にしない。
+  const closes = await page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length);
+  expect(closes).toBe(0);
+});
+
+test('同じファイルは、どの入口から開いてもタブ 1 枚', async ({ page }) => {
+  // #33 の核心。タブの同一判定は識別子の文字列一致なので、入口ごとに識別子の形が
+  // 違うと同じファイルがタブ 2 枚になり、コメントも 2 つの識別子に分裂する。
+  // ここでは入口を 3 つ（ツリー・iframe 内の相対リンク・⌘P）通して、a.md が
+  // 1 枚のままであることを見る。
+  await openFolder(page);
+  await expandDir(page, 'sub');
+
+  // (1) ツリーから。
+  await openFile(page, 'a.md');
+  await expect(page.locator('.md-tab')).toHaveCount(1);
+
+  // (2) iframe（sub/page.html）の中の `../a.md` から。サーバを通らず JS が
+  //     自前で解決する経路。
+  await openFile(page, 'sub/page.html');
+  await expect(page.locator('.md-tab')).toHaveCount(2);
+  await page.frameLocator('iframe.html-frame').locator('a', { hasText: '上の a.md へ' }).click();
+  await expect(tab(page, 'a.md')).toHaveClass(/active/);
+  await expect(page.locator('.md-tab')).toHaveCount(2);
+
+  // (3) ⌘P から。サーバの `?files=1` が返した識別子で開く経路。
+  // root 直下の a.md と sub/a.md は名前で区別できないので、ディレクトリの添え字が
+  // 無い行（＝ root 直下）を選ぶ。
+  await page.keyboard.press('Meta+p');
+  await page.locator('#md-pal-backdrop input').fill('a.md');
+  await page.locator('.md-pal-row:not(:has(.md-pal-dir))').first().click();
+  await expect(page.locator('#md-pal-backdrop')).toHaveCount(0);
+  await expect(tab(page, 'a.md')).toHaveClass(/active/);
+  await expect(page.locator('.md-tab')).toHaveCount(2);
+});
+
 test('同名ファイルが並んだときだけ親ディレクトリ名が出る', async ({ page }) => {
   await openFolder(page);
   await expandDir(page, 'sub');
@@ -284,7 +367,7 @@ test('同名ファイルが並んだときだけ親ディレクトリ名が出�
   await openFile(page, 'a.md');
   await expect(tabNames(page)).toHaveText(['a.md', 'a.md']);
   await expect(page.locator('.md-tab-dir')).toHaveText(['sub']);
-  await expect(page.locator('.md-tab[data-path="sub/a.md"] .md-tab-dir')).toHaveText('sub');
+  await expect(tab(page, 'sub/a.md').locator('.md-tab-dir')).toHaveText('sub');
 
   // 片方を閉じたら添え字も消える。
   await page.keyboard.press('Meta+w');

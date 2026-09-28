@@ -45,7 +45,7 @@ impl Removal {
 /// 置く唯一の場所なので、prefix がどこか（`/opt/homebrew` か `/usr/local` か、
 /// 独自の prefix か）を知らなくても見分けられる。
 ///
-/// 辿るので、バンドルの `~/.config/md-preview/app/md` から呼ばれても正しく出る。
+/// 辿るので、バンドルの `~/.config/md-preview/md/md` から呼ばれても正しく出る。
 pub fn detect(exe: &Path) -> Removal {
     let real = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
     if real.components().any(|c| c.as_os_str() == "Cellar") {
@@ -86,6 +86,14 @@ pub fn plan(home: &Path, exe_name: &str) -> Vec<Target> {
         }
     };
 
+    // 転送用のソケット（`instance.rs`）はここに入れない。あれは「残骸は異常ではなく
+    // 通常状態。次の起動の listen() が無条件に貼り直す」という設計で、置き場所も OS が
+    // 掃除する `$TMPDIR` だから、掃除対象に足すとその設計と食い違う。
+    // **足りていないのではなく、足さないと決めてある。**
+    //
+    // `$TMPDIR` が使えない環境では `config` の下（`run/`）へ落ちるが、macOS の
+    // `std::env::temp_dir()` は TMPDIR 未設定でも `confstr` を見るので実質到達しない。
+    // ラベルに書くと「消えるもの」として案内することになるので書かない。
     push(config, "テーマ設定・ユーザー CSS・IME 用のバンドル");
     if ours {
         push(webkit, "UI の状態（オンボーディング済みフラグなど）");

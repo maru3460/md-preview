@@ -24,11 +24,60 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     </div>
   </div>
 
+  <h2>フォルダを移動する</h2>
+  <p>
+    サイドバーの上端に、いま開いているフォルダの名前が出ます。
+    開いたきりではなく、ここから別のフォルダへ移れます。
+  </p>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">上へ</div>
+      <div class="fdesc">フォルダ名をクリックすると親フォルダへ上がります。ツリー内では <kbd>h</kbd> でも同じです（畳む先も親の行も無くなった 1 回で上がります）（押しっぱなしでは上がりません。指を離してから押し直してください）。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">潜る</div>
+      <div class="fdesc">ツリーのフォルダを右クリックして「ここを root にする」。ターミナルから <code>md ~/other</code> と叩いても、いま開いているウィンドウがそのフォルダへ移ります。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">戻る / 進む</div>
+      <div class="fdesc">ヘッダの <kbd>‹</kbd> <kbd>›</kbd>、または <kbd>⌘[</kbd> / <kbd>⌘]</kbd>。積まれるのはフォルダの移動だけです（ファイルの行き来はタブが覚えています）。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">ツリーを読み込み直す（↻）</div>
+      <div class="fdesc">フォルダの中身が外で増減したときに押します。開いていたフォルダとカーソルの位置は保たれます。ファイルの中身は編集した時点で自動で追いつくので、こちらは関係ありません。</div>
+    </div>
+  </div>
+  <p class="note">
+    フォルダを移してもタブは消えません。ツリーから外れたファイルもタブには残り、編集すれば自動リロードも効きます。
+  </p>
+
+  <h2>Quick Access</h2>
+  <p>
+    サイドバーの下端に、よく行く先を留めておけます。リポジトリをまたいで行ったり来たりするときの固定リンクです。
+  </p>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">留める</div>
+      <div class="fdesc">ヘッダの <kbd>☆</kbd> で、いま開いているフォルダをそのまま留めます。ツリーの行・タブ・本文を右クリックして「Quick Access に追加」でも同じです。ツリー内なら <kbd>m</kbd> でカーソル行を留められます。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">飛ぶ</div>
+      <div class="fdesc">行をクリックすると、フォルダならそこへ移り、ファイルならタブで開きます。ツリーから <kbd>j</kbd> で枠へ降りて <kbd>Enter</kbd> でも同じです。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">外す</div>
+      <div class="fdesc">留めたときと同じ操作（<kbd>★</kbd> / 右クリック / <kbd>m</kbd>）でそのまま外れます。並びは留めた順で、消えたファイルやフォルダは押したときに知らせます。</div>
+    </div>
+  </div>
+  <p class="note">
+    留めた先は <code>~/.config/md-preview/quick-access</code> に残るので、ウィンドウを閉じても次に開いたときに並んでいます。
+  </p>
+
   <h2>タブ</h2>
   <div class="flist">
     <div class="fitem">
       <div class="fname">開くたびに増える</div>
-      <div class="fdesc">ツリー・<kbd>⌘P</kbd>・本文のリンク、どの経路で開いても新しいタブになります。</div>
+      <div class="fdesc">ツリー・<kbd>⌘P</kbd>・本文のリンク、それにターミナルで <code>md</code> を叩いたとき。どの経路で開いても、いま見ているタブの右隣に新しいタブが挿さります。</div>
     </div>
     <div class="fitem">
       <div class="fname">状態を覚えている</div>
@@ -36,7 +85,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     </div>
     <div class="fitem">
       <div class="fname">移動と操作</div>
-      <div class="fdesc"><kbd>⇧Tab</kbd> で次へ、<kbd>⌘1</kbd> … <kbd>⌘9</kbd> で直接移動。中クリックか <code>×</code> で閉じます。右クリックで「他のタブを閉じる」「パスをコピー」が出ます。</div>
+      <div class="fdesc"><kbd>⇧Tab</kbd> で次へ、<kbd>⌘1</kbd> … <kbd>⌘9</kbd> で直接移動。中クリックか <code>×</code> で閉じます。右クリックで「他のタブを閉じる」「すべてのタブを閉じる」「パスをコピー」が出ます。</div>
     </div>
   </div>
 

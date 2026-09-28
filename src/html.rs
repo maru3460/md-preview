@@ -822,7 +822,7 @@ pub fn render_frontmatter_html(pairs: &[(String, String)], lines: usize) -> Stri
     format!(r#"<div class="frontmatter"{}>{}</div>"#, attrs, rows)
 }
 
-/// `initial_files` は起動時にタブとして開く root 相対パス（先頭が最初に表示される）。
+/// `initial_files` は起動時にタブとして開く識別子（絶対パス。先頭が最初に表示される）。
 /// 空なら何も開かずツリーだけを出す。
 pub fn build_folder_html(
     title: &str,
@@ -847,7 +847,20 @@ pub fn build_folder_html(
 </head>
 <body class="folder-mode">
 <div class="folder-layout">
-  <div id="sidebar" tabindex="-1"></div>
+  <div id="sidebar-col">
+    <div id="sidebar-header">
+      <button id="root-back" class="sb-icon" type="button" title="戻る" aria-label="戻る">‹</button>
+      <button id="root-forward" class="sb-icon" type="button" title="進む" aria-label="進む">›</button>
+      <button id="root-name" class="sb-name" type="button" title="親フォルダへ"></button>
+      <button id="tree-reload" class="sb-icon" type="button" title="ツリーを読み込み直す" aria-label="ツリーを読み込み直す">↻</button>
+      <button id="root-star" class="sb-icon" type="button" title="Quick Access に入れる" aria-label="Quick Access に入れる">☆</button>
+    </div>
+    <div id="sidebar" tabindex="-1"></div>
+    <div id="quick-access">
+      <div id="quick-access-title">Quick Access</div>
+      <div id="quick-access-list"></div>
+    </div>
+  </div>
   <div id="resizer"></div>
   <div id="main-col">
     <div id="tabbar"></div>
@@ -858,6 +871,42 @@ pub fn build_folder_html(
 </html>"#,
         head = head(title, theme_css, custom_css, &folder_head),
     )
+}
+
+/// 転送されてきたファイル（#31）をページへ渡すスクリプト。`ids` は識別子（絶対パス）で、
+/// 先頭が表示される。空なら空文字を返すので、呼び出し側は `evaluate_script` ごと省ける。
+///
+/// `main.rs` ではなくここに置くのは、バイナリ側は `cargo test` から叩けないため。
+/// パスに `"` や `\` が入っていても壊れないことは、ここのユニットテストが守る。
+pub fn open_files_script(ids: &[String]) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let list = ids.iter().map(|s| json_string(s)).collect::<Vec<_>>().join(",");
+    format!("window.MdOpenFiles && window.MdOpenFiles([{}]);", list)
+}
+
+/// ツリーの頂点が動いたことをページへ伝えるスクリプト（#34）。
+///
+/// `MD_ROOT_DIR` は起動スクリプトで 1 回きり入るので、実行中に root が動く経路は
+/// これしかない。`open_files_script` と同じく、パスのエスケープをここで済ませる。
+pub fn set_root_script(root: &std::path::Path) -> String {
+    format!(
+        "window.MdSetRoot && window.MdSetRoot({});",
+        json_string(&root.to_string_lossy())
+    )
+}
+
+/// root を動かせなかったことをページへ伝えるスクリプト（#35）。
+///
+/// **黙って終わらせないために要る。** Quick Access は消えた行を台帳に残す
+/// （起動のたびに存在確認をしないため）ので、押したときに理由を出せるのは
+/// ここだけである。#34 の「ここを root にする」も同じ口に乗る。
+///
+/// 渡すのは**ページが送ってきた識別子**。正規化できなかったものを知らせるので、
+/// こちらに正規化済みのパスは無い。
+pub fn root_failed_script(id: &str) -> String {
+    format!("window.MdRootFailed && window.MdRootFailed({});", json_string(id))
 }
 
 #[cfg(test)]
@@ -1172,5 +1221,28 @@ mod tests {
         let body = render_in_tempdir("https://example.com/f.txt\n", "bareurl");
         assert!(!body.contains("code-embed"), "{body}");
         assert_eq!(hrefs(&body), vec!["https://example.com/f.txt"], "{body}");
+    }
+
+    #[test]
+    fn open_files_script_escapes_quotes_and_backslashes() {
+        let s = open_files_script(&[r#"/tmp/a"b\c.md"#.to_string()]);
+        assert_eq!(s, r#"window.MdOpenFiles && window.MdOpenFiles(["/tmp/a\"b\\c.md"]);"#);
+    }
+
+    #[test]
+    fn open_files_script_keeps_the_given_order() {
+        let s = open_files_script(&["/a.md".to_string(), "/b.md".to_string()]);
+        assert!(s.contains(r#"["/a.md","/b.md"]"#), "{s}");
+    }
+
+    #[test]
+    fn root_failed_script_escapes_the_identifier() {
+        let s = root_failed_script(r#"/tmp/a"b\c"#);
+        assert_eq!(s, "window.MdRootFailed && window.MdRootFailed(\"/tmp/a\\\"b\\\\c\");");
+    }
+
+    #[test]
+    fn open_files_script_is_empty_for_no_files() {
+        assert_eq!(open_files_script(&[]), "");
     }
 }

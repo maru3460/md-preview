@@ -1168,6 +1168,7 @@ dependencies = [
 name = "md-preview"
 version = "0.1.20"
 dependencies = [
+ "block2",
  "notify-debouncer-mini",
  "objc2",
  "objc2-app-kit",
@@ -1414,6 +1415,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.11.0",
+ "block2",
  "objc2",
  "objc2-core-foundation",
 ]

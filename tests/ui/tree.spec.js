@@ -4,7 +4,7 @@
 // 起動時に何が開いていても同じ導線が揃っていること（issue #12 でモードを 1 本に
 // 畳んだので、cwd 外のファイルを 1 つ渡した起動でもツリーとタブが出る）もここ。
 const { test, expect } = require('@playwright/test');
-const { ONE_FILE_URL, open, openFolder } = require('./helpers');
+const { id, ONE_FILE_URL, open, openFolder, treeItem } = require('./helpers');
 
 test('⌘P でファイル検索が開く', async ({ page }) => {
   await openFolder(page);
@@ -22,10 +22,10 @@ test('cwd の外のファイルを 1 つ渡した起動でも、ツリー・タ�
   // root はそのファイルの親フォルダになり、渡したファイルがタブ 1 枚で開く。
   await open(page, ONE_FILE_URL);
 
-  await expect(page.locator('.md-tab.active')).toHaveAttribute('data-path', 'a.md');
+  await expect(page.locator('.md-tab.active')).toHaveAttribute('data-path', id(page, 'a.md'));
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
   // ツリーは親フォルダ（tests/ui-fixtures）の中身。渡したファイルが選択されている。
-  await expect(page.locator('.tree-item[data-path="b.md"]')).toBeVisible();
+  await expect(treeItem(page, 'b.md')).toBeVisible();
   await expect(page.locator('.tree-item.active')).toHaveText(/a\.md/);
 
   // 別ファイルへ移る入口もある（] で次のファイル、⌘P でファイル検索）。

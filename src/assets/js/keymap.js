@@ -150,6 +150,20 @@
     // ── ファイルツリー（folder.js） ──
     { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉',
       run: 'sidebar-toggle', match: letter('b'), when: cmdAnywhere },
+    // フォルダの履歴。素の [ / ] は上の file-cycle が持っているので ⌘ 側を取る。
+    // 積むのは root の移動だけ——ファイルの「戻る」はタブが担っている。
+    // 入力欄とオーバーレイ表示中は譲る。理由は下の ⌘1…⌘9 と同じで、こちらの方が
+    // 強い——root が動くとツリーも本文も ⌘P の一覧も入れ替わるので、パレットが
+    // 覆ったまま裏が総取り替えになる。
+    { cat: 'tree', keys: '⌘[ / ⌘]', desc: 'フォルダの履歴を戻る / 進む',
+      run: 'root-history', match: keys('[', ']'),
+      when: function(e) { return metaOnly(e) && !inField(e) && !overlayOpen(); } },
+    // Quick Access（#35）。ツリーのカーソル行を留める / 外す。★ と右クリックだけだと
+    // マウス専用になるので、キーからも同じことができるようにする。
+    // `m` は vim の mark から。素キーの空き（`b` は #32 のベルが取る）。
+    { cat: 'tree', keys: 'm', desc: 'カーソル行を Quick Access に留める / 外す',
+      run: 'quick-toggle', match: keys('m'),
+      when: function(e) { return bare(e) && inTree(); } },
     // 以下はツリーにフォーカスがある時だけ。
     { cat: 'tree', keys: 'ツリー内', desc: 'j/k 移動・g/G 端・Enter/l 開く&展開・h 畳む/親へ',
       run: 'tree', match: keys('j', 'k', 'g', 'G', 'l', 'h', 'Enter',

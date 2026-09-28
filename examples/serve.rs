@@ -44,17 +44,14 @@ fn main() {
     let boot = format!(
         "{}\n{}\n{}",
         IPC_STUB,
-        config.page_globals(appearance),
+        // Quick Access は空で始める。IPC が無いので登録も保存も効かないうえ、
+        // ここで `~/.config` を読むと UI テストが手元の登録内容に左右される。
+        config.page_globals(appearance, &[]),
         md_preview::html::FOLDER_JS
     );
     let index = inject_boot_script(&config.html_bytes, &boot);
 
-    let ctx = Arc::new(RequestContext {
-        root_dir: config.root_dir.clone(),
-        index_html: index,
-        theme_css,
-        custom_css,
-    });
+    let ctx = Arc::new(RequestContext::new(config.root_dir.clone(), index, theme_css, custom_css));
 
     let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {
         eprintln!("ポート {} を開けませんでした: {}", port, e);
@@ -94,8 +91,24 @@ fn parse_args(args: Vec<String>) -> (u16, Vec<String>) {
 /// `window.ipc` のスタブ。ウィンドウ側では Rust が受けるものを、ここでは記録だけする
 /// （テストから `window.__mdIpc` を見れば close などの発火を確認できる。初期描画の
 /// 完了は IPC ではなく `document.documentElement.dataset.mdReady` に出る）。
+///
+/// `root:` だけは記録では足りない。root が動くと**サーバの応答が変わる**（`?dir=` も
+/// `?files=` も new root から答える）ので、ページ側だけ切り替えても嘘のツリーになる。
+/// `/__setroot` へ回してから `MdSetRoot` を呼ぶ——ウィンドウ側で `main.rs` が
+/// 「root を差し替えてから evaluate_script」とやっているのと同じ順序。
+/// 解決できなかったときに `MdRootFailed` を呼ぶのも窓と同じ（#35。消えたフォルダを
+/// 押したときに知らせる経路で、これが無いと UI テストから触れない）。
 const IPC_STUB: &str = "window.__mdIpc = []; \
-window.ipc = { postMessage: function(m) { window.__mdIpc.push(m); } };";
+window.ipc = { postMessage: function(m) { \
+  window.__mdIpc.push(m); \
+  if (m.indexOf('root:') !== 0) return; \
+  fetch('/__setroot?p=' + encodeURIComponent(m.slice(5))).then(function(r) { \
+    return r.ok ? r.text() : null; \
+  }).then(function(resolved) { \
+    if (resolved && window.MdSetRoot) window.MdSetRoot(resolved); \
+    else if (!resolved && window.MdRootFailed) window.MdRootFailed(m.slice(5)); \
+  }); \
+} };";
 
 /// 起動スクリプトを `<head>` 直後へ差し込む。CSP を維持するため、ページが持っている
 /// nonce を読み出して同じものを付ける。
@@ -138,6 +151,34 @@ fn serve_one(mut stream: TcpStream, ctx: &RequestContext) {
     };
     // ウィンドウ側（main.rs）と同じく、パスだけデコードしてから渡す。
     let url_path = percent_decode(raw_path);
+
+    // 開発用の口（#34）。製品の `handle_request` には root を動かす経路が無い
+    // （持っているのは `main.rs` のイベントループ）ので、ここがその代役になる。
+    // 判定はウィンドウ側と揃える——canonicalize して、ディレクトリでなければ断る。
+    if url_path == "/__setroot" {
+        let arg = query.strip_prefix("p=").map(percent_decode).unwrap_or_default();
+        let resolved = std::path::PathBuf::from(arg).canonicalize().ok().filter(|p| p.is_dir());
+        // **正規化した値を返す。** ウィンドウ側は `change_root` が canonicalize した
+        // パスを `set_root_script` に載せるので、ここで生のままページへ返すと
+        // `MD_ROOT_DIR` の形がテストと実機で食い違う（$TMPDIR は
+        // `/var/folders/…` → `/private/var/…` のリンク）。
+        let body = match &resolved {
+            Some(p) => {
+                ctx.set_root(p.clone());
+                p.to_string_lossy().into_owned()
+            }
+            None => String::new(),
+        };
+        let head = format!(
+            "HTTP/1.1 {}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            if resolved.is_some() { "200 OK" } else { "404 Not Found" },
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes());
+        let _ = stream.write_all(body.as_bytes());
+        let _ = stream.flush();
+        return;
+    }
 
     let resp = handle_request(ctx, &url_path, query);
     let status = resp.status().as_u16();
