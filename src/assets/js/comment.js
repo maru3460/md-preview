@@ -14,6 +14,9 @@
   var nextId = 1;
   var mode = false;       // コメントモードの ON/OFF（全モード共通・ファイル切替で保持）
   var opts = null;        // { getContainer, getFile }
+  var host = null;        // いま DOM を触っている相手（下の 2 つのどちらか）。
+  var domHost = null;     // md のプレビュー・raw・非 md のソースビュー
+  var frameHost = null;   // html のレンダリング表示（本文が iframe の中）
 
   // ドラッグ選択の途中状態。
   var dragging = false;
@@ -23,8 +26,30 @@
   var handleUnit = null;  // 「+」ハンドルが今指しているユニット
 
   // ── 環境ヘルパ ────────────────────────────────────────────────
-  // 本文を含むホスト要素。単一=.markdown-body / フォルダ=#preview-pane。
-  function hostEl() { return opts && opts.getContainer ? opts.getContainer() : null; }
+  // ユニット走査の起点。どこを本文とみなすかは host（comment-host.js）が持つ。
+  function rootEl() { return host ? host.root() : null; }
+
+  // 本文が差し替わるたびに、DOM を触る相手を選び直す。html のレンダリング表示だけは
+  // 本文が iframe の中にあるので、同じ契約の別実装へ渡す。
+  function pickHost() {
+    var c = opts && opts.getContainer ? opts.getContainer() : null;
+    var next = (c && c.querySelector('iframe.html-frame')) ? frameHost : domHost;
+    if (next === host) return;
+    // 前の相手に描いたものを消してから渡す。FrameHost の枠もバッジも親のレイヤに
+    // 浮いていて、本文が md へ戻っても自分では消えない。この 2 行を渡す前に呼ぶ
+    // ——`redraw` も片付けるが、あちらが呼ぶのは**渡した後の相手**のものなので届かない。
+    if (host) {
+      host.clearPaint('marked', 'selecting', 'kbcursor', 'anchor', 'flash');
+      host.clearPlaced();
+    }
+    host = next;
+    // 相手が変わればユニットも別物。前の本文を指したままのカーソルは捨てる——
+    // iframe の中の要素は iframe が外れた後も `isConnected` を返すので、redraw の
+    // 「宙に浮いたカーソルを立て直す」分岐に引っかからない。
+    clearKb();
+    // モードは相手より長生きする。渡した先にもいまの状態を伝える。
+    host.setMode(mode);
+  }
   // 現在ファイルの識別子（絶対パス）。file:line の file 部の元になる。
   function currentFile() {
     var f = opts && opts.getFile ? opts.getFile() : null;
@@ -55,12 +80,11 @@
   // 兄弟挿入）も他のユニットと同じに動く。掴めない表示（行数が多すぎて包まれなかった
   // ソース）の案内はサイドバーの常設ヒント（renderSide）が持つ。
 
-  // 本文に錨れる行ユニットがあるか。表示の種類を名指しせず「ユニットの有無」で見る。
-  function hasAnchor(host) { return !!(host && host.querySelector('[data-src-line]')); }
-
-  // モード中かつ錨れるか。html の iframe 表示・git 差分・巨大ソースはユニットが
+  // モード中かつ錨れるか。git 差分・巨大ソース・行を刻めなかった html はユニットが
   // 1 個も無いのでここが false になり、keymap の j / k がスクロールへ戻る。
-  function canAnchor() { return mode && hasAnchor(hostEl()); }
+  // 「錨れるか」と「錨れない理由」を 2 つの関数に分けない——片方だけ直したときに
+  // 「付けられないのに案内が出ない」がまた起きる。host.reason() が唯一の判定。
+  function canAnchor() { return mode && !!host && host.reason() === null; }
 
   // ── ユニット/引用の抽出 ───────────────────────────────────────
   // ユニットの走査と行→ユニットの対応付けは common.js が持つ。読み位置の持ち回り
@@ -105,8 +129,8 @@
   function computeTarget(u1, u2) {
     var startLine = Math.min(unitStart(u1), unitStart(u2));
     var endLine = Math.max(unitEnd(u1), unitEnd(u2));
-    var host = hostEl();
-    var units = host ? unitsInRange(allUnits(host), startLine, endLine) : [];
+    var root = rootEl();
+    var units = root ? unitsInRange(allUnits(root), startLine, endLine) : [];
     if (!units.length) units = [u1];
     // 引用は 1 ユニット 1 行。中身が空になるユニットは落とすが、ソース表示の空行は
     // ソースの一部なので残す（詰めると引用と実際の行がずれる）。
@@ -172,8 +196,8 @@
   // ── ジャンプ（パネル項目 → 本文の file:line） ─────────────────
   function flashUnit(u) {
     if (!u) return;
-    u.classList.add('md-cmt-flash');
-    setTimeout(function() { u.classList.remove('md-cmt-flash'); }, 1400);
+    host.paint(u, 'flash', true);
+    setTimeout(function() { host.paint(u, 'flash', false); }, 1400);
   }
   // ユニットへ着地する（スクロール＆点滅）。モード中はキーボード・カーソルも
   // 着地点へ移す（e/x の対象＝視覚的な現在地を一致させる）。
@@ -189,7 +213,7 @@
     return u;
   }
   // 現在ファイル内の行までスクロール＆点滅。見つかった要素を返す。
-  function scrollToLine(line) { return landOn(unitAtLine(hostEl(), line)); }
+  function scrollToLine(line) { return landOn(unitAtLine(rootEl(), line)); }
 
   // 差分（⌘D）が出ているか。行の錨を持たないので、出たままでは着地できない。
   function diffShown() { return !!(window.MdDiff && MdDiff.isActive && MdDiff.isActive()); }
@@ -247,7 +271,7 @@
       st.switched = true;
       if (applyView(c)) { st.waitGen = bodyGen(); return next(); }
     }
-    var u = unitAtLine(hostEl(), c.startLine);
+    var u = unitAtLine(rootEl(), c.startLine);
     if (u && viewSettled(c, u)) { landOn(u); return; }
     next();
   }
@@ -308,7 +332,7 @@
   function editCurrent() {
     var c = currentComment();
     if (!c) { toast('編集するコメントがありません'); return; }
-    var anchor = (c.file === currentFile()) ? unitAtLine(hostEl(), c.startLine) : null;
+    var anchor = (c.file === currentFile()) ? unitAtLine(rootEl(), c.startLine) : null;
     if (anchor && viewSettled(c, anchor)) { openEditPopover(anchor, c); return; }
     // 同じファイル・同じ表示のまま錨が無い（行が消えた / 巨大ファイルで行ユニットを作らない）
     // なら、待っても出てこないのでその場で錨無しで開く。
@@ -321,7 +345,7 @@
     (function waitEdit() {
       if (myGen !== jumpGen) return;   // 追い越された
       if (c.file === currentFile()) {
-        var a = unitAtLine(hostEl(), c.startLine);
+        var a = unitAtLine(rootEl(), c.startLine);
         if (a && viewSettled(c, a)) { openEditPopover(a, c); return; }
       }
       if (tries-- > 0) { setTimeout(waitEdit, 60); return; }
@@ -358,17 +382,12 @@
   // （毎フレーム全ユニットを走査すると、行ユニットが数千ある raw 表示で重くなる）。
   var markEls = {};
 
-  function clearMarkers(host) {
-    host.querySelectorAll('.md-cmt-marked').forEach(function(u) { u.classList.remove('md-cmt-marked'); });
-    host.querySelectorAll('.md-cmt-badge').forEach(function(b) { b.remove(); });
-    host.querySelectorAll('.md-cmt-embed').forEach(function(b) { b.remove(); });
-    host.querySelectorAll('.md-cmt-badge-holder').forEach(function(b) { b.remove(); });
-  }
-
   function redraw() {
-    var host = hostEl();
-    if (host) {
-      clearMarkers(host);
+    pickHost();
+    var root = rootEl();
+    if (root) {
+      host.clearPaint('marked');
+      host.clearPlaced();
       markEls = {};
       // 錨の要素 -> { el, list }。行番号ではなく解決後の要素で束ねる——raw の別々の行に
       // 付けたコメントが、プレビューでは同じ段落へ落ちることがあるため（💬 が 2 個並ぶ）。
@@ -377,16 +396,16 @@
       var fileComments = comments.filter(function(c) { return c.file === file && inCurrentView(c); });
       // 素の閲覧（モード外・このファイルにコメント 0 件）ではユニットの全走査をしない。
       // ソースビューは常時 1 行 1 要素なので、1 万行なら 1 万ユニットの走査になるため。
-      var all = (mode || fileComments.length) ? allUnits(host) : [];
+      var all = (mode || fileComments.length) ? allUnits(root) : [];
       // インライン埋め込みはモード中だけ。錨の要素 -> そこに出すコメント配列。
       var embedSlots = mode ? new Map() : null;
       fileComments.forEach(function(c) {
         var units = unitsInRange(all, c.startLine, c.endLine);
         if (!units.length) {
-          var one = unitAtLine(host, c.startLine, all);
+          var one = unitAtLine(root, c.startLine, all);
           if (one) units = [one];
         }
-        units.forEach(function(u) { u.classList.add('md-cmt-marked'); });
+        units.forEach(function(u) { host.paint(u, 'marked', true); });
         markEls[c.id] = units;
         var anchor = units[0];
         if (anchor) {
@@ -405,15 +424,28 @@
           }
         }
       });
-      // 💬 バッジはモード外だけ。モード中はインライン埋め込みが同じ場所に出るので
-      // 二重になる（バッジの役割は「モード外の目印とクリック入口」に絞る）。
-      if (!mode) slots.forEach(function(slot) {
+      // 埋め込みを先に置く。置けたかどうかでバッジを出すかが決まるため。
+      var embedsShown = false;
+      if (embedSlots) {
+        embedSlots.forEach(function(list, tail) {
+          var card = buildEmbed(list.slice().sort(byFileLine));
+          host.place(tail, card, 'embed');
+          // 本当に本文へ入ったか。html の iframe は他人のレイアウトに兄弟を挿せないので
+          // 置かずに捨てる（`place` が no-op）。契約に「埋め込みを出せるか」を足すより、
+          // 置いた結果を見るほうが実態と食い違わない。
+          if (card.isConnected) embedsShown = true;
+        });
+      }
+      // 💬 バッジは、同じ情報が埋め込みで本文に出ているなら要らない（二重になる）。
+      // 埋め込みを出せない相手（html の iframe）では、モード中もバッジが唯一の目印
+      // ——本文はサイドバー一覧で読む、という html 側の約束がこれで成り立つ。
+      if (!mode || !embedsShown) slots.forEach(function(slot) {
         var badge = document.createElement('span');
         badge.className = 'md-cmt-badge';
         badge.setAttribute('contenteditable', 'false');
         badge.textContent = slot.list.length > 1 ? ('💬' + slot.list.length) : '💬';
-        // 載せ先がユニットの外（ソースのガター）になることがあるので、指している行を
-        // バッジ自身に持たせる。ホバープレビューが closest で辿れないため。
+        // 載せ先がユニットの外（ソースのガター・親のオーバーレイ）になることがあるので、
+        // 指している行をバッジ自身に持たせる。ホバープレビューが closest で辿れないため。
         badge.__mdUnit = slot.el;
         badge.addEventListener('click', function(e) {
           e.stopPropagation();
@@ -422,42 +454,27 @@
           if (!mode) setMode(true);
           openEditPopover(slot.el, slot.list[0]);
         });
-        // mermaid はユニットの textContent がそのまま図のソースで、ホットリロード時は
-        // バッジ貼り(reanchor・同期)の後に mermaid.run(非同期)が走るため、中に置くと
-        // 「💬」が混ざって構文エラーになる。0 高さのホルダーを直前に挟んでそこへ載せる。
-        // ソースの行は、番号のセル（横スクローラの外のガター）へ載せる。行の中に
-        // 置くとコードの先頭文字に重なる——番号が外へ出たぶん、行頭 = コードの頭。
-        var cell = slot.el.classList.contains('md-src-row')
-          && MdCommon.srcGutterCell(slot.el);
-        if (cell) {
-          cell.appendChild(badge);
-        } else if (slot.el.classList.contains('mermaid')) {
-          var holder = document.createElement('div');
-          holder.className = 'md-cmt-badge-holder';
-          holder.setAttribute('contenteditable', 'false');
-          holder.appendChild(badge);
-          slot.el.parentNode.insertBefore(holder, slot.el);
-        } else {
-          slot.el.appendChild(badge);
-        }
+        host.place(slot.el, badge, 'badge');
       });
-      if (embedSlots) {
-        embedSlots.forEach(function(list, tail) {
-          var embed = buildEmbed(list.slice().sort(byFileLine));
-          tail.parentNode.insertBefore(embed, tail.nextSibling);
-        });
-      }
-      // ソース表示では、挟まったカードのぶん行番号のガターに隙間を空け直す。
-      // 挿さった直後のカードはまだ高さを持たないので、1 フレーム待ってから測る。
-      requestAnimationFrame(function() { MdCommon.syncSrcGutter(host); });
 
       // 本文が入れ替わった可能性があるのでユニット配列キャッシュを捨てる。
       invalidateKbUnits();
       // モード中は、リロード/ファイル切替で宙に浮いたキーボード・カーソルを立て直す。
       // 同一 DOM の add/delete では kbCursor は生きているので触らない。
+      //
+      // `isConnected` では見分けられない。あれは「自分の文書に繋がっているか」なので、
+      // iframe ごと本文から外れても true を返し続ける（html → html の切替で、前のページの
+      // 要素を指したまま枠が残り、Enter がその行番号で新しいファイルに付いてしまう）。
+      // いま本文になっている木に居るか、で見る。
       if (mode) {
-        if (kbCursor && !kbCursor.isConnected) {
-          var reU = host.querySelector('[data-src-line="' + kbCursor.dataset.srcLine + '"]');
+        // 錨れない表示になったらカーソルを畳む。**ユニットの有無では見ない**——iframe が
+        // リンク先へ移った後は、行は刻まれているのに錨ってはいけない（付けると遷移先の
+        // 行番号を元のファイルの識別子で保存してしまう）。掴めないのに枠だけ出ている
+        // 状態を作らない。
+        if (!canAnchor()) {
+          clearKb();
+        } else if (kbCursor && !root.contains(kbCursor)) {
+          var reU = root.querySelector('[data-src-line="' + kbCursor.dataset.srcLine + '"]');
           if (reU) { kbCursor = null; landKbCursor(reU); }
           else { clearKb(); initKbCursor(); }
         } else if (!kbCursor) {
@@ -490,7 +507,7 @@
     if (away) return;
     // 同じファイルに居る。本文は作り直されているので、同じ行のユニットへ錨を張り直す。
     var u = popoverTarget && popoverTarget.startLine
-      ? unitAtLine(hostEl(), popoverTarget.startLine) : null;
+      ? unitAtLine(rootEl(), popoverTarget.startLine) : null;
     // 見つからないなら位置を触らない。外れた要素の矩形は全部 0 なので、測り直すと
     // 入力欄が左上へ飛ぶ（退避中に対象の行が消えた・巨大ソースで行ユニットが無い）。
     if (!u) return;
@@ -529,7 +546,7 @@
         // 錨が宙に浮いてスクロール追従が壊れる。範囲の最後のユニット（＝埋め込みの
         // 直前）なら位置はほぼ同じままで、バッジ/一覧の編集と同じ耐久性になる。
         var units = markEls[c.id];
-        var anchor = (units && units[units.length - 1]) || unitAtLine(hostEl(), c.startLine);
+        var anchor = (units && units[units.length - 1]) || unitAtLine(rootEl(), c.startLine);
         openEditPopover(anchor, c);
       });
       var del = document.createElement('button');
@@ -673,7 +690,7 @@
     // 本文が差し替わると錨は DOM から外れる（転送・⌘P で入力欄だけが残る）。
     // 外れた要素の矩形は全部 0 なので、測り直すと入力欄が左上へ飛ぶ。置いたままにする。
     if (anchorEl && !anchorEl.isConnected && pop.style.left) return;
-    var rect = anchorEl ? anchorEl.getBoundingClientRect() : { left: 40, top: 40, right: 40, bottom: 60 };
+    var rect = host.rectOf(anchorEl) || { left: 40, top: 40, right: 40, bottom: 60 };
     var pw = pop.offsetWidth, ph = pop.offsetHeight;
     var x = rect.left;
     var y = rect.bottom + 6;
@@ -705,7 +722,7 @@
       box.appendChild(row);
     });
     document.body.appendChild(box);
-    var rect = anchorEl.getBoundingClientRect();
+    var rect = host.rectOf(anchorEl);
     var x = Math.min(rect.left, window.innerWidth - box.offsetWidth - 8);
     var y = rect.bottom + 4;
     if (y + box.offsetHeight > window.innerHeight - 8) y = Math.max(8, rect.top - box.offsetHeight - 4);
@@ -773,23 +790,6 @@
     return sideEl;
   }
 
-  // 行ユニットが 1 個も無い表示のとき、その理由を返す（無ければ null）。
-  // トーストではなく居座るヒントで出す——「なぜ付けられないか」はモードに居る間ずっと
-  // 効いている事情なので、1.5 秒で消えるものより常設の方が合う。
-  function noAnchorHint() {
-    var host = hostEl();
-    if (!host || hasAnchor(host)) return null;
-    if (host.querySelector('iframe.html-frame')) {
-      return 'HTML にコメントはできません（j / k はスクロール。n / p の巡回と全部コピーは使えます）';
-    }
-    if (host.querySelector('.diff-source')) return 'git 差分にコメントはできません';
-    if (host.querySelector('.source-main')) return '大きなファイルなので行コメントはできません';
-    // バイナリの案内・読み込み失敗・空の差分・中身の無い md など、上の 3 つに当たらない
-    // 錨無しの本文がまだある。表示の種類を数え上げ切るのは無理なので、最後はここへ
-    // 落として総称で言う——件数ベースの案内を出すと、また嘘になる。
-    return 'この表示にはコメントできません';
-  }
-
   function renderSide() {
     var side = ensureSide();
     if (!side) return;
@@ -801,7 +801,7 @@
     // 表示なら件数より先に「ここには付けられない」を出す——嘘のキー案内を残さない。
     var hint = document.createElement('div');
     hint.className = 'md-cmt-hint';
-    hint.textContent = noAnchorHint() || ((n === 0)
+    hint.textContent = (host && host.reason()) || ((n === 0)
       ? 'j / k で移動、Enter でコメント（Shift+j/k で複数行）。クリック・ドラッグでも可'
       : 'n / p 巡回 · e 編集 · x 削除 · X 全消去 · y 全部コピー · ? 全キー');
     side.appendChild(hint);
@@ -848,8 +848,7 @@
       edit.textContent = '編集';
       edit.addEventListener('click', function(e) {
         e.stopPropagation();  // 項目クリック（ジャンプ）を発火させない
-        var host = hostEl();
-        var anchor = unitAtLine(host, c.startLine);
+        var anchor = unitAtLine(rootEl(), c.startLine);
         if (c.file === currentFile() && anchor) {
           anchor.scrollIntoView({ block: 'center' });
           openEditPopover(anchor, c);
@@ -869,13 +868,11 @@
       // 一覧項目にホバー → 本文の該当ユニットをハイライト。
       item.addEventListener('mouseenter', function() {
         if (c.file !== currentFile() || !inCurrentView(c)) return;
-        var host = hostEl();
-        var u = unitAtLine(host, c.startLine);
-        if (u) u.classList.add('md-cmt-flash');
+        var u = unitAtLine(rootEl(), c.startLine);
+        if (u) host.paint(u, 'flash', true);
       });
       item.addEventListener('mouseleave', function() {
-        var host = hostEl();
-        if (host) host.querySelectorAll('.md-cmt-flash').forEach(function(x) { x.classList.remove('md-cmt-flash'); });
+        if (host) host.clearPaint('flash');
       });
 
       listEl.appendChild(item);
@@ -910,18 +907,18 @@
   // 後者は n/p と一覧クリックでだけ動く（「再生中の曲」と「見えてる曲」の関係）。
   function updateSideHighlights() {
     if (!sideItems.length) return;
-    var host = hostEl();
+    var root = rootEl();
     var file = currentFile();
     var vh = window.innerHeight;
     sideItems.forEach(function(it) {
       var c = it.c;
       var vis = false;
-      if (host && c.file === file && c.startLine) {
+      if (root && c.file === file && c.startLine) {
         // 錨の解決は redraw で済んでいる。ここはスクロールのたびに走るので、
         // ユニットの走査（raw では数千件）をやり直さない。
         var units = markEls[c.id] || [];
         for (var i = 0; i < units.length && !vis; i++) {
-          var r = units[i].getBoundingClientRect();
+          var r = host.rectOf(units[i]);
           vis = r.bottom > 0 && r.top < vh;
         }
       }
@@ -1015,7 +1012,7 @@
     handleUnit = u;
     if (!u) { if (handle) handle.style.display = 'none'; return; }
     var h = ensureHandle();
-    var rect = u.getBoundingClientRect();
+    var rect = host.rectOf(u);
     h.style.display = 'flex';
     h.style.top = (rect.top + 2) + 'px';
     h.style.left = Math.max(2, rect.left - 26) + 'px';
@@ -1024,19 +1021,14 @@
 
   // ── レンジ選択のハイライト ────────────────────────────────────
   function clearSelecting() {
-    var host = hostEl();
-    if (!host) return;
-    host.querySelectorAll('.md-cmt-selecting, .md-cmt-anchor').forEach(function(u) {
-      u.classList.remove('md-cmt-selecting');
-      u.classList.remove('md-cmt-anchor');
-    });
+    if (host) host.clearPaint('selecting', 'anchor');
   }
   // 範囲全体を塗り、掴んだ側の端（anchor）に印を付ける。動かしている端（moving）には
   // 別途カーソル枠が付くので、両端が同じユニットの時は印を出さない（同じ要素に
   // .md-cmt-anchor と .md-cmt-kbcursor が乗ると後勝ちで枠が破線に化ける）。
   function paintRange(units, anchor, moving, s, e) {
-    unitsInRange(units, s, e).forEach(function(u) { u.classList.add('md-cmt-selecting'); });
-    if (anchor && anchor !== moving) anchor.classList.add('md-cmt-anchor');
+    unitsInRange(units, s, e).forEach(function(u) { host.paint(u, 'selecting', true); });
+    if (anchor && anchor !== moving) host.paint(anchor, 'anchor', true);
   }
   function setSelecting(u1, u2) {
     // ドラッグでも「動かしている端」に枠を出し、キーボードのレンジと同じ見え方にする。
@@ -1047,7 +1039,7 @@
     var s = Math.min(unitStart(u1), unitStart(u2));
     var e = Math.max(unitEnd(u1), unitEnd(u2));
     // ドラッグ中は開始時スナップショット(dragUnits)を使い、mousemove ごとの全走査を避ける。
-    var units = dragUnits || allUnits(hostEl());
+    var units = dragUnits || allUnits(rootEl());
     paintRange(units, u1, u2, s, e);
   }
 
@@ -1061,14 +1053,13 @@
   // 本文が入れ替わる（redraw / reanchor / mode 切替）ときに null にして作り直す。
   var kbUnitsCache = null;
   function kbUnits() {
-    if (!kbUnitsCache) kbUnitsCache = allUnits(hostEl());
+    if (!kbUnitsCache) kbUnitsCache = allUnits(rootEl());
     return kbUnitsCache;
   }
   function invalidateKbUnits() { kbUnitsCache = null; }
 
   function clearKb() {
-    var host = hostEl();
-    if (host) host.querySelectorAll('.md-cmt-kbcursor').forEach(function(u) { u.classList.remove('md-cmt-kbcursor'); });
+    if (host) host.clearPaint('kbcursor');
     kbCursor = null;
     kbAnchor = null;
     invalidateKbUnits();
@@ -1077,11 +1068,11 @@
 
   function setKbCursor(u, extend) {
     if (!u) return;
-    if (kbCursor) kbCursor.classList.remove('md-cmt-kbcursor');
+    if (kbCursor) host.paint(kbCursor, 'kbcursor', false);
     if (!extend) { kbAnchor = u; clearSelecting(); }
     else if (!kbAnchor) { kbAnchor = kbCursor || u; }
     kbCursor = u;
-    u.classList.add('md-cmt-kbcursor');
+    host.paint(u, 'kbcursor', true);
     u.scrollIntoView({ block: 'nearest' });
     if (extend) {
       var s = Math.min(unitStart(kbAnchor), unitStart(u));
@@ -1095,11 +1086,11 @@
   // 追加スクロールはしない（scrollToLine 側で済んでいる）。
   function landKbCursor(u) {
     if (!u) return;
-    if (kbCursor) kbCursor.classList.remove('md-cmt-kbcursor');
+    if (kbCursor) host.paint(kbCursor, 'kbcursor', false);
     kbCursor = u;
     kbAnchor = u;
     clearSelecting();
-    u.classList.add('md-cmt-kbcursor');
+    host.paint(u, 'kbcursor', true);
   }
 
   // モードに入った時、最初に見えているユニットへカーソルを置く（即フィードバック）。
@@ -1109,7 +1100,7 @@
     // ビューポート上端より下にある最初のユニットを選ぶ（見えている所から始める）。
     var pick = units[0];
     for (var i = 0; i < units.length; i++) {
-      if (units[i].getBoundingClientRect().bottom > 0) { pick = units[i]; break; }
+      if (host.rectOf(units[i]).bottom > 0) { pick = units[i]; break; }
     }
     setKbCursor(pick, false);
   }
@@ -1139,32 +1130,21 @@
   // 埋め込みの挿入/除去で本文の高さが変わる。基準ユニット（キーボード・カーソル、
   // 無ければ画面内の最初のユニット）の画面上の位置を DOM 変更の前後で合わせて、
   // 見ていた場所が飛ばないようにする。
-  // スクロールの主体は単一=window、folder=#preview-pane なので、host から
-  // いちばん近いスクロール可能な祖先を探す（host 自身も含む）。
-  function scrollerOf(host) {
-    var el = host;
-    while (el && el !== document.body && el !== document.documentElement) {
-      var st = getComputedStyle(el);
-      if ((st.overflowY === 'auto' || st.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
-      el = el.parentElement;
-    }
-    return window;
-  }
   function anchorScroll(fn) {
-    var host = hostEl();
-    var ref = (kbCursor && kbCursor.isConnected) ? kbCursor : null;
-    if (!ref && host) {
-      var units = allUnits(host);
+    var root = rootEl();
+    // `isConnected` ではなく contains（redraw の立て直しと同じ理由）。
+    var ref = (root && kbCursor && root.contains(kbCursor)) ? kbCursor : null;
+    if (!ref && root) {
+      var units = allUnits(root);
       for (var i = 0; i < units.length; i++) {
-        if (units[i].getBoundingClientRect().bottom > 0) { ref = units[i]; break; }
+        if (host.rectOf(units[i]).bottom > 0) { ref = units[i]; break; }
       }
     }
     if (!ref) { fn(); return; }
-    var before = ref.getBoundingClientRect().top;
+    var before = host.rectOf(ref).top;
     fn();
-    if (!ref.isConnected) return;
-    var delta = ref.getBoundingClientRect().top - before;
-    if (delta) scrollerOf(host).scrollBy(0, delta);
+    if (!root.contains(ref)) return;
+    host.scrollBy(host.rectOf(ref).top - before);
   }
 
   // ── モード切替 ────────────────────────────────────────────────
@@ -1173,6 +1153,9 @@
     if (mode === on) return;
     mode = on;
     document.body.classList.toggle('md-cmt-mode', mode);
+    // 本文側の合図（カーソル・選択の抑止）は相手ごとに出し方が違う。body の class は
+    // ここに残す——あれは親のシェル全体の見た目で、host に属さない。
+    if (host) host.setMode(mode);
     if (!mode) {
       hideHandle();
       clearSelecting();
@@ -1213,118 +1196,124 @@
     if (wired) return;
     wired = true;
 
-    // モード中の選択（クリック=1 ユニット / ドラッグ=レンジ）。
-    document.addEventListener('mousedown', function(e) {
-      if (!mode) return;
-      if (e.button !== 0) return;   // 右/中クリックは選択に使わない（右クリックはメニューへ）
-      if (hits(e.target, CMT_UI_SEL) || hits(e.target, BODY_UI_SEL)) return;
-      var host = hostEl();
-      if (!host || !host.contains(e.target)) return;
-      var u = e.target.closest('[data-src-line]');
-      if (!u) return;
-      e.preventDefault();
-      dragging = true;
-      dragStartUnit = u;
-      dragEndUnit = u;
-      dragUnits = allUnits(host);   // 以降の mousemove はこのスナップショットで範囲判定
-      setSelecting(u, u);
-    });
+    // ポインタ操作は host 経由で受ける。ev は親ビューポート座標に均してあり、最寄りの
+    // 行ユニット（ev.unit）と本文の上か（ev.inBody）も host が引く。
+    //
+    // 両方の相手に張る。本文がどちらかは pickHost が選ぶが、リスナは張り直さない
+    // ——iframe の中のイベントは親の document に届かず、その逆も無いので、鳴るのは
+    // いま本文になっている側だけになる。
+    var pointer = {
+      // モード中の選択（クリック=1 ユニット / ドラッグ=レンジ）。
+      down: function(ev) {
+        if (!mode) return;
+        if (ev.button !== 0) return;   // 右/中クリックは選択に使わない（右クリックはメニューへ）
+        if (hits(ev.target, CMT_UI_SEL) || hits(ev.target, BODY_UI_SEL)) return;
+        if (!ev.inBody || !ev.unit) return;
+        ev.preventDefault();
+        dragging = true;
+        dragStartUnit = ev.unit;
+        dragEndUnit = ev.unit;
+        dragUnits = allUnits(rootEl());   // 以降の mousemove はこのスナップショットで範囲判定
+        setSelecting(ev.unit, ev.unit);
+      },
 
-    // モード中は本文クリックのデフォルト遷移（リンク/アンカー）を止め、コメント付与と
-    // ナビゲーションの二重発火を防ぐ。バッジ/パネル/ポップオーバーのクリックは通す。
-    // capture で止めるのでボタン自身の click リスナーにも届かない——Copy ボタンや
-    // 埋め込みの折りたたみは BODY_UI_SEL で先に抜けて、本来の動作を残す。
-    document.addEventListener('click', function(e) {
-      if (!mode) return;
-      if (hits(e.target, CMT_UI_SEL) || hits(e.target, BODY_UI_SEL)) return;
-      var host = hostEl();
-      if (host && host.contains(e.target)) { e.preventDefault(); e.stopPropagation(); }
-    }, true);
+      // モード中は本文クリックのデフォルト遷移（リンク/アンカー）を止め、コメント付与と
+      // ナビゲーションの二重発火を防ぐ。バッジ/パネル/ポップオーバーのクリックは通す。
+      // host が capture で受けるのでボタン自身の click リスナーにも届かない——Copy ボタンや
+      // 埋め込みの折りたたみは BODY_UI_SEL で先に抜けて、本来の動作を残す。
+      click: function(ev) {
+        if (!mode) return;
+        if (hits(ev.target, CMT_UI_SEL) || hits(ev.target, BODY_UI_SEL)) return;
+        if (ev.inBody) { ev.preventDefault(); ev.stopPropagation(); }
+      },
 
-    document.addEventListener('mousemove', function(e) {
-      // 座標の記録はモード外・ドラッグ中も続ける（モードに入った直後の 1 発を
-      // 「動いていない」と誤判定しないため）。
-      var moved = (e.clientX !== lastMouseX || e.clientY !== lastMouseY);
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
-      if (!mode) return;
-      if (dragging) {
-        var u = e.target.closest && e.target.closest('[data-src-line]');
-        if (u) { dragEndUnit = u; setSelecting(dragStartUnit, u); }
-        return;
+      move: function(ev) {
+        // 座標の記録はモード外・ドラッグ中も続ける（モードに入った直後の 1 発を
+        // 「動いていない」と誤判定しないため）。
+        var moved = (ev.x !== lastMouseX || ev.y !== lastMouseY);
+        lastMouseX = ev.x;
+        lastMouseY = ev.y;
+        if (!mode) return;
+        if (dragging) {
+          if (ev.unit) { dragEndUnit = ev.unit; setSelecting(dragStartUnit, ev.unit); }
+          return;
+        }
+        // マウスが止まっていても mousemove は飛んでくる——本文がスクロールしたときや、
+        // 「+」の出現などでカーソルの下の要素が変わったときに、同じ座標で 1 発届く。
+        // これを「マウスに持ち替えた」と見なすと巡回対象（reviewId）とカーソルを奪われ、
+        // n/p のあと少し待ってから押すと巡回位置が飛ぶ。座標が前回と同じなら本当には
+        // 動いていないので、下の「持ち替え」だけを飛ばす（moved で分岐）。
+        //
+        // ここで「+」を消してはいけない: 消す → カーソル下の要素が変わる → また同じ座標の
+        // mousemove が来る → 出す…… を繰り返してハンドルがちらつく。位置の付け直しは
+        // 座標が同じなら結果も同じなので、そのまま通してよい。その結果、本文がスクロール
+        // した直後だけ「+」とカーソルが別の行を指すことがあるが、次に本当にマウスを
+        // 動かせば揃う——ちらつきと引き換えに許容する。
+        // ハンドル自体の上ではそのまま維持（消すとクリックできなくなる）。
+        if (handle && handle.contains(ev.target)) return;
+        // ハンドル追従（ポップオーバー/パネル上では出さない）。
+        if (hits(ev.target, '.md-cmt-popover, .md-cmt-panel, .md-cmt-embed')) { hideHandle(); return; }
+        // Shift+j/k で掴んでいるレンジは、マウスの微動で消さない。この間は代わりに「+」を
+        // 出さないことで、指し示すものをレンジの枠だけに保つ。
+        if (kbCursor && kbAnchor && kbAnchor !== kbCursor) { hideHandle(); return; }
+        var hu = ev.inBody ? ev.unit : null;
+        // マウスに持ち替えたらキーボード・カーソルもホバー先へ寄せ、「+」と枠が別の行を
+        // 指したまま並ぶのを防ぐ（j/k を再開する時もそこから続く）。setKbCursor ではなく
+        // landKbCursor を使うのは、scrollIntoView でマウス移動中にビューが揺れないため。
+        // reviewId を落とすのは kbMove と同じ理由（カーソルを手で動かしたら e/x の対象は
+        // n/p の巡回対象ではなくカーソル位置にする）。landKbCursor 側では落とせない
+        // ——n/p 自身が reviewId を立てた直後に scrollToLine 経由で呼ぶため。
+        if (moved && hu && hu !== kbCursor) { reviewId = null; scheduleHl(); landKbCursor(hu); }
+        moveHandle(hu);
+      },
+
+      up: function(ev) {
+        if (!dragging) return;
+        dragging = false;
+        // 埋め込みの上で離すとユニットは見つからない（入れ子なら外側のユニットに化ける）。
+        // その場合はドラッグ中に最後に塗った端（dragEndUnit）へ倒し、画面で見えていた
+        // 選択範囲のままコメントを開く。
+        var u = (!hits(ev.target, '.md-cmt-embed') && ev.unit) || dragEndUnit || dragStartUnit;
+        clearSelecting();
+        var target = computeTarget(dragStartUnit, u);
+        dragStartUnit = null;
+        dragEndUnit = null;
+        dragUnits = null;
+        openNewPopover(target);
+      },
+
+      // ホバープレビュー（モード内外どちらでも）。コメントが載っている行の上で表示。
+      // 「塗られている class」ではなく「その行に載っているコメント」で判定する
+      // ——FrameHost は他人の DOM に class を付けないので、class を見ていると
+      // html 表示でだけ出なくなる。結果は同じ（塗りはコメントの派生物）。
+      over: function(ev) {
+        if (mode || dragging) return;
+        if (hits(ev.target, '.md-cmt-panel, .md-cmt-preview')) return;
+        // 💬 バッジは本文の中とは限らない——ソース表示では行番号のセル（行の外）、
+        // html では親のオーバーレイに載る。指している行を自分で持っているので、
+        // 「本文の上か」を問う前に見る（後ろに置くと html でだけプレビューが出ない）。
+        var badge = ev.target.closest && ev.target.closest('.md-cmt-badge');
+        var u = (badge && badge.__mdUnit) || (ev.inBody ? ev.unit : null);
+        if (!u) return;
+        // レンジコメントは 2 行目以降のユニットにも色帯が付くので、ホバー行を範囲に
+        // 含む全コメントを出す（バッジの束ね先＝先頭行のユニットだけを見ると 2 行目以降で出ない）。
+        var list = commentsCoveringUnit(u);
+        // コメントの無いユニットへ移ったら閉じる。`out` は「ユニットの外へ出たか」しか
+        // 見ないので、ここで閉じないと隙間なく並ぶ行（raw ビュー・リスト）を渡り歩く間
+        // 前のプレビューが残り続ける。
+        if (list.length) showPreview(u, list);
+        else hidePreview();
+      },
+
+      out: function(ev) {
+        if (!preview) return;
+        var to = ev.relatedTarget;
+        if (to && (to.closest && (to.closest('.md-cmt-preview') || to.closest('[data-src-line]')))) return;
+        hidePreview();
       }
-      // マウスが止まっていても mousemove は飛んでくる——本文がスクロールしたときや、
-      // 「+」の出現などでカーソルの下の要素が変わったときに、同じ座標で 1 発届く。
-      // これを「マウスに持ち替えた」と見なすと巡回対象（reviewId）とカーソルを奪われ、
-      // n/p のあと少し待ってから押すと巡回位置が飛ぶ。座標が前回と同じなら本当には
-      // 動いていないので、下の「持ち替え」だけを飛ばす（moved で分岐）。
-      //
-      // ここで「+」を消してはいけない: 消す → カーソル下の要素が変わる → また同じ座標の
-      // mousemove が来る → 出す…… を繰り返してハンドルがちらつく。位置の付け直しは
-      // 座標が同じなら結果も同じなので、そのまま通してよい。その結果、本文がスクロール
-      // した直後だけ「+」とカーソルが別の行を指すことがあるが、次に本当にマウスを
-      // 動かせば揃う——ちらつきと引き換えに許容する。
-      // ハンドル自体の上ではそのまま維持（消すとクリックできなくなる）。
-      if (handle && handle.contains(e.target)) return;
-      // ハンドル追従（ポップオーバー/パネル上では出さない）。
-      if (e.target.closest('.md-cmt-popover') || e.target.closest('.md-cmt-panel') ||
-          e.target.closest('.md-cmt-embed')) { hideHandle(); return; }
-      // Shift+j/k で掴んでいるレンジは、マウスの微動で消さない。この間は代わりに「+」を
-      // 出さないことで、指し示すものをレンジの枠だけに保つ。
-      if (kbCursor && kbAnchor && kbAnchor !== kbCursor) { hideHandle(); return; }
-      var host = hostEl();
-      var hu = (host && host.contains(e.target)) ? e.target.closest('[data-src-line]') : null;
-      // マウスに持ち替えたらキーボード・カーソルもホバー先へ寄せ、「+」と枠が別の行を
-      // 指したまま並ぶのを防ぐ（j/k を再開する時もそこから続く）。setKbCursor ではなく
-      // landKbCursor を使うのは、scrollIntoView でマウス移動中にビューが揺れないため。
-      // reviewId を落とすのは kbMove と同じ理由（カーソルを手で動かしたら e/x の対象は
-      // n/p の巡回対象ではなくカーソル位置にする）。landKbCursor 側では落とせない
-      // ——n/p 自身が reviewId を立てた直後に scrollToLine 経由で呼ぶため。
-      if (moved && hu && hu !== kbCursor) { reviewId = null; scheduleHl(); landKbCursor(hu); }
-      moveHandle(hu);
-    });
-
-    document.addEventListener('mouseup', function(e) {
-      if (!dragging) return;
-      dragging = false;
-      // 埋め込みの上で離すと closest はユニットを見つけられない（入れ子なら外側の
-      // ユニットに化ける）。その場合はドラッグ中に最後に塗った端（dragEndUnit）へ
-      // 倒し、画面で見えていた選択範囲のままコメントを開く。
-      var u = (e.target.closest && !e.target.closest('.md-cmt-embed') && e.target.closest('[data-src-line]'))
-        || dragEndUnit || dragStartUnit;
-      clearSelecting();
-      var target = computeTarget(dragStartUnit, u);
-      dragStartUnit = null;
-      dragEndUnit = null;
-      dragUnits = null;
-      openNewPopover(target);
-    });
-
-    // ホバープレビュー（モード内外どちらでも）。マーカー済みユニット上で表示。
-    document.addEventListener('mouseover', function(e) {
-      if (mode || dragging) return;
-      if (e.target.closest('.md-cmt-panel') || e.target.closest('.md-cmt-preview')) return;
-      var host = hostEl();
-      if (!host || !host.contains(e.target)) { return; }
-      var u = e.target.closest('.md-cmt-marked');
-      // ソースの 💬 バッジは行番号のセル（行の外）に載るので、closest では行に届かない。
-      // バッジが指している行から引き直す。
-      if (!u) {
-        var badge = e.target.closest('.md-cmt-badge');
-        u = badge && badge.__mdUnit;
-      }
-      if (!u) return;
-      // レンジコメントは 2 行目以降のユニットにも色帯が付くので、ホバー行を範囲に
-      // 含む全コメントを出す（バッジの束ね先＝先頭行のユニットだけを見ると 2 行目以降で出ない）。
-      var list = commentsCoveringUnit(u);
-      if (list.length) showPreview(u, list);
-    });
-    document.addEventListener('mouseout', function(e) {
-      if (!preview) return;
-      var to = e.relatedTarget;
-      if (to && (to.closest && (to.closest('.md-cmt-preview') || to.closest('.md-cmt-marked')))) return;
-      hidePreview();
-    });
+    };
+    domHost.onPointer(pointer);
+    frameHost.onPointer(pointer);
 
     // Esc の受け手は MdCommon が一括で持つ。ポップオーバー（入力中）はいちばん前面、
     // コメントモード自体はいちばん後ろ——この優先順位のおかげで「入力を取消 → もう一度
@@ -1392,14 +1381,24 @@
       // スクロール/リサイズで in-view ハイライトを追従させる（rAF スロットル）。
       if (mode) scheduleHl();
     }
-    window.addEventListener('resize', onViewportChange);
-    document.addEventListener('scroll', onViewportChange, true);
+    // スクロール・リサイズも host 経由。iframe の中のスクロールは親の document には
+    // 届かないので、直に張ると html 表示でポップオーバーが本文に付いてこない。
+    domHost.onViewportChange(onViewportChange);
+    frameHost.onViewportChange(onViewportChange);
   }
 
   // ── 公開 API ──────────────────────────────────────────────────
   // opts: { getContainer:()=>el, getFile:()=>id }
   function init(o) {
     opts = o;
+    domHost = MdCommentHost.dom({ getContainer: o.getContainer });
+    frameHost = MdCommentHost.frame({
+      getContainer: o.getContainer,
+      // iframe の中身は本文より遅れて届く。届いてから塗り直さないと、錨はあるのに
+      // 「付けられない」案内が出たままになる。
+      onReady: function() { reanchor(); }
+    });
+    host = domHost;
     wireOnce();
     redraw();
   }

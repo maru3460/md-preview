@@ -1030,8 +1030,10 @@
     updateRootHeader();
 
     // 別の木なので展開状態は引き継がない（↻ と違うのはここ）。
+    // Why not updateActiveItem: 展開していない木には開いているファイルの行がまだ
+    // 無い。`h` で親へ上がると必ず 1 段深くなるので、帯がほぼ毎回消えていた。
     refreshTree(function() {
-      if (currentFilePath) updateActiveItem(currentFilePath);
+      if (currentFilePath) revealFile(currentFilePath);
     });
 
     // root の内外が入れ替わる。前は root の再帰監視に載っていたタブが外へ出るし、

@@ -189,13 +189,30 @@ pub struct Message {
     /// 送り側は run loop を回さないので `frontmostApplication` は起動時点の値を
     /// 握ったままだが、**欲しいのがまさにその値**なのでこれでよい。
     pub launcher_pid: Option<i32>,
-    /// 受け側を前面に出すか。#38 の 4 値設定の受け皿で、いまは常に true。
+    /// 受け側を前面に出すか。#38 の 4 値設定の受け皿で、`--notify` だけが false。
     pub activate: bool,
+    /// 開かずにベルへ積め、という要求（#36）。受け側は窓を出さず、タブも増やさず、
+    /// `files` を通知の台帳へ積むだけにする。
+    ///
+    /// `activate` を false にするのとは別に要る。あちらが言うのは「前に出すな」
+    /// だけで、隠れていない窓にタブが増えるのは止められない。**対で立てるのは
+    /// [`Message::notification`] の仕事**で、呼び出し側でばらさないこと。
+    pub notify: bool,
 }
 
 impl Message {
     pub fn new(files: Vec<String>) -> Self {
         Message { files, activate: true, ..Default::default() }
+    }
+
+    /// 開かずにベルへ積む 1 通（#36）。
+    ///
+    /// `notify` と `activate` を**ここで対にする**。呼び出し側で 2 行に分けて立てると、
+    /// 片方だけ立った通（＝前に出ないがタブは増える／タブは増えないが前に出る）が
+    /// 組めてしまう。どちらも「積むだけ」の契約から外れた状態で、ワイヤを見ても
+    /// 気づけない。
+    pub fn notification(files: Vec<String>) -> Self {
+        Message { files, notify: true, activate: false, ..Default::default() }
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -215,6 +232,12 @@ impl Message {
             push_token(&mut out, &format!("launcher={}", pid));
         }
         push_token(&mut out, if self.activate { "activate=1" } else { "activate=0" });
+        // 既定（開く）のときは載せない。**古い受け側は未知のキーを捨てる**ので、
+        // 載せても載せなくても解釈は変わらないが、ワイヤを読んだときに
+        // 「普通の転送」と「通知」が目で分かる方がよい。
+        if self.notify {
+            push_token(&mut out, "notify=1");
+        }
         for f in &self.files {
             push_token(&mut out, &format!("file={}", f));
         }
@@ -246,6 +269,7 @@ impl Message {
                 "pid" => msg.sender_pid = value.parse().ok(),
                 "launcher" => msg.launcher_pid = value.parse().ok(),
                 "activate" => msg.activate = value != "0",
+                "notify" => msg.notify = value != "0",
                 // 未知のキーは無視する。前方互換の約束そのものなので、ここで
                 // エラーにしてはいけない。
                 _ => {}

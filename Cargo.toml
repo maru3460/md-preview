@@ -1,6 +1,6 @@
 [package]
 name = "md-preview"
-version = "0.1.20"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 # 単一インスタンス化（#31）が std の File::try_lock（= flock）を使う。安定したのが

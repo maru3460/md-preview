@@ -37,8 +37,8 @@
   function inTree() { return !!(window.MdCommon && MdCommon.isSidebarFocused()); }
   function interactive() { return !!(window.MdCommon && MdCommon.isInteractiveFocus()); }
   function inCommentMode() { return !!(window.MdComment && MdComment.isMode && MdComment.isMode()); }
-  // 「モード中」だけでは j / k の行き先を決められない。html の iframe 表示・git 差分・
-  // 巨大ソースは錨る行ユニットが無く、コメント側が取ってもキーが黙って消えるので、
+  // 「モード中」だけでは j / k の行き先を決められない。git 差分・巨大ソース・行を
+  // 刻めなかった html は錨る行ユニットが無く、コメント側が取ってもキーが黙って消えるので、
   // 錨れるかどうかで分ける（錨れないならスクロールへ戻す）。
   function canAnchor() { return !!(window.MdComment && MdComment.canAnchor && MdComment.canAnchor()); }
 
@@ -116,13 +116,13 @@
       run: 'view-raw', match: letter('r'), when: cmd },
 
     // ── コメント（comment.js） ──
-    { cat: 'comment', keys: 'c', desc: 'コメントモード開始/終了（HTML 表示・git 差分・巨大ソースは行に付けられない）',
+    { cat: 'comment', keys: 'c', desc: 'コメントモード開始/終了（git 差分・巨大ソースは行に付けられない）',
       run: 'comment-toggle', match: keys('c'),
       when: function(e) { return body(e) && !inTree(); } },
     { cat: 'comment', keys: 'j / k / Enter', desc: 'コメント中: 移動（Shift+j/k でレンジ）/ Enter で付与',
       run: 'comment-mode', match: keys('j', 'J', 'k', 'K', 'Enter', 'ArrowDown', 'ArrowUp'),
       when: function(e) { return body(e) && !inTree() && canAnchor(); } },
-    // 一覧は他ファイルのコメントも並ぶ横断インデックスなので、錨れない表示（html 等）でも
+    // 一覧は他ファイルのコメントも並ぶ横断インデックスなので、錨れない表示（git 差分等）でも
     // 巡回・全部コピーは使わせる（n / p はフォルダモードなら md 側へ切り替えて着地する）。
     { cat: 'comment', keys: 'n / p / e / x / X / y', desc: 'コメント中: 巡回 / 編集 / 削除(Delete可) / 全消去 / 全部コピー',
       run: 'comment-mode', match: keys('n', 'p', 'e', 'x', 'X', 'y', 'Delete'),
