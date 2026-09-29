@@ -11,6 +11,7 @@ pub mod diff;
 pub mod embed;
 pub mod html;
 pub mod instance;
+pub mod notifications;
 pub mod quick_access;
 pub mod request;
 pub mod store;

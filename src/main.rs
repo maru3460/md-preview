@@ -94,6 +94,7 @@ const SEAT_POLL: Duration = Duration::from_millis(20);
 /// `split_open_flags` を通るので、`-n` は子まで届く必要がある）。`targets` はそこから
 /// フラグを剥がしたパスで、検証に使う。
 fn detach_self(
+    flags: &cli::OpenFlags,
     stdin_mode: bool,
     argv: &[String],
     current_dir: &Option<PathBuf>,
@@ -111,7 +112,14 @@ fn detach_self(
     // 持たないので、ここを素通りさせると「窓も出ずエラーも出ず終了コード 0」になる。
     // 本体の from_paths と同じ関門（開けないパス・フォルダ混在）を通す。
     if !targets.is_empty() {
-        let _ = app_config::plan_paths(targets, current_dir);
+        // `--notify` は関門が違う（フォルダを 1 つ渡されただけでも弾く）ので、
+        // 本体と同じ方を通す。`plan_paths` に通すとフォルダが root として受かり、
+        // 子の中で初めて落ちる＝誰にも見えないエラーになる。
+        if flags.notify {
+            let _ = app_config::notify_ids(targets);
+        } else {
+            let _ = app_config::plan_paths(targets, current_dir);
+        }
     }
 
     // 子の口は 3 つとも /dev/null にする。端末へ繋ぐと、窓を持つプロセスが吐く
@@ -169,26 +177,32 @@ fn may_forward(flags: &cli::OpenFlags) -> bool {
 /// パスの検証（開けないパス・フォルダ混在）は `plan_paths` に任せる。
 /// ここは stderr を持っている経路なので、落ちるなら人に見える形で落ちてよい。
 fn message_to_forward(
+    flags: &cli::OpenFlags,
     stdin_mode: bool,
     targets: &[String],
     current_dir: &Option<PathBuf>,
 ) -> Option<md_preview::instance::Message> {
     use md_preview::instance::Message;
 
-    // フォルダ指定は「ツリーの頂点を張り替えろ」という要求として転送する（#34）。
-    // タブは 1 枚も増えないので `files` は空のまま。
+    // ⚠️ **後から足したキーには、古い受け側へ届いたときの穴がある**（引き受けた）。
+    // 踏むのは「古い窓が生きたまま `cargo install` で入れ替えた」ときだけで、
+    // 落ち方はキーごとに違う。
     //
-    // ⚠️ **引き受けた穴。** `root=` を知らない古い受け側（＝入れ替える前のバイナリが
-    // 持っている窓）へ届くと、未知キーとして捨てられて `files` が空になり、
-    // **窓が前に出るだけでフォルダが変わらない。** 変更前はフォルダ指定を転送せず
-    // 新しい窓を開いていたので、その場面だけ悪くなっている。
+    // - `root=`（#34）— 未知キーとして捨てられて `files` が空になり、**窓が前に出る
+    //   だけでフォルダが変わらない**
+    // - `notify=`（#36）— 同じく捨てられて**普通の転送になる**。タブが開き、窓が
+    //   前に出る。積むだけのはずが作業を中断させる側に化けるので体感はこちらが悪い
     //
-    // Why not 挨拶に「root を解せる」印を足して、無ければ転送しない: 踏むのは
-    // 「古い窓が生きたまま入れ替えた」ときだけで、⌘Q すれば消える。#31 が決めた
+    // Why not 挨拶に「このキーを解せる」印を足して、無ければ転送しない: #31 が決めた
     // 「未知のキーは無視。キーを足してもバージョンは上げない」に手を入れる対価の方が
-    // 大きいと見た。`plan.md` 4.5 に「入れ替えの前に ⌘Q」を書いてある。
+    // 大きいと見た。⌘Q すれば消えるので、`plan.md` 4.5 の「入れ替えの前に ⌘Q」で
+    // 引き受けている。
     let mut root = None;
-    let ids = if stdin_mode {
+    let ids = if flags.notify {
+        // `--notify` はファイルを並べるだけのフラグ。フォルダは積む対象ではないので
+        // ここで弾かれ、パイプ入力は main の入口で落としてあるのでここへ来ない。
+        app_config::notify_ids(targets)
+    } else if stdin_mode {
         // パイプ入力も `md file.md` と同じ経路に乗せる。実体化は main の頭で済んで
         // いるので、ここはそのパスを識別子にするだけ。
         let doc = PathBuf::from(std::env::var_os(app_config::STDIN_FILE_ENV)?)
@@ -196,6 +210,8 @@ fn message_to_forward(
             .ok()?;
         vec![request::file_id(&doc)]
     } else if let Some(dir) = single_dir_arg(targets) {
+        // フォルダ指定は「ツリーの頂点を張り替えろ」という要求として転送する（#34）。
+        // タブは 1 枚も増えないので `files` は空のまま。
         root = Some(request::file_id(&dir));
         Vec::new()
     } else {
@@ -205,7 +221,9 @@ fn message_to_forward(
         return None;
     }
 
-    let mut msg = Message::new(ids);
+    // 「積むだけ」の 2 つ（タブを増やすな・前に出すな）を対で立てるのは
+    // `Message::notification` の仕事。ここでばらさない。
+    let mut msg = if flags.notify { Message::notification(ids) } else { Message::new(ids) };
     msg.root = root;
     msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     msg.sender_pid = Some(std::process::id() as i32);
@@ -225,8 +243,11 @@ fn message_to_forward(
     //
     // 誰も居ないとき（冷スタート）は 0.8ms を捨てることになるが、その経路は
     // 元から 259ms 掛かっているので、避けるために組み替える価値は無いと見た。
+    //
+    // 通知では取らない。窓を前に出さないので「閉じたら戻る先」も動かす理由が無く、
+    // ここで付け替えると、裏で積んだだけのエージェントの端末が ⌘W の戻り先になる。
     #[cfg(target_os = "macos")]
-    {
+    if !flags.notify {
         msg.launcher_pid = platform::get_frontmost_pid();
     }
     // stdin の一時ディレクトリは受け側が引き取る。**送り側は消さない**——消すと
@@ -278,7 +299,7 @@ fn forward_to_running_instance(
         return false;
     }
     let Some(ep) = Endpoint::user_default() else { return false };
-    let Some(msg) = message_to_forward(stdin_mode, targets, current_dir) else { return false };
+    let Some(msg) = message_to_forward(flags, stdin_mode, targets, current_dir) else { return false };
     matches!(deliver(&ep, &msg), Delivery::Done)
 }
 
@@ -363,7 +384,7 @@ fn take_the_seat(
         // かもしれないので、層1 と違ってここは待つ。
         let msg = match &msg {
             Some(m) => m,
-            None => msg.insert(message_to_forward(stdin_mode, targets, current_dir)?),
+            None => msg.insert(message_to_forward(flags, stdin_mode, targets, current_dir)?),
         };
         match deliver(&ep, msg) {
             Delivery::Done => std::process::exit(0),
@@ -455,6 +476,14 @@ fn main() {
         std::process::exit(1);
     }
 
+    // `--notify` にパイプ入力は積めない（#36）。実体化した一時ファイルはタブと同じ
+    // 寿命（#49）なので、積んだ行は**閉じた時点で死んだパスを指す**。押して初めて
+    // 「開けません」と言う行を台帳に残すより、ここで断る方が筋が通る。
+    if open_flags.notify && stdin_mode {
+        eprintln!("md: --notify にはファイルを指定してください（パイプ入力は積めません）");
+        std::process::exit(2);
+    }
+
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
     // 標準入力は一度しか読めない。転送に回すのか、子へ渡すのか、前景で開くのかを
@@ -490,7 +519,7 @@ fn main() {
     // 終わり」でプロンプトが返る方が自然なので、stdout が端末かどうかで挙動を分けない。
     if std::env::var_os(DETACHED_ENV).is_none()
         && std::env::var_os(NO_DETACH_ENV).is_none()
-        && detach_self(stdin_mode, &args[1..], &current_dir, &targets)
+        && detach_self(&open_flags, stdin_mode, &args[1..], &current_dir, &targets)
     {
         return;
     }
@@ -506,6 +535,9 @@ fn main() {
 
     let config = if stdin_mode {
         AppConfig::from_stdin(&theme_css, &custom_css, &current_dir)
+    } else if open_flags.notify {
+        // 受け取る md が居なかった `--notify`。積む先が無いので普通に開く（#36）。
+        AppConfig::from_notify(&targets, &theme_css, &custom_css, &current_dir)
     } else {
         AppConfig::from_paths(&targets, &theme_css, &custom_css, &current_dir)
     };
@@ -891,6 +923,17 @@ fn main() {
                 }
             }
             Event::UserEvent(AppEvent::Open(msg)) => {
+                // `--notify` は開かずに積むだけ（#36）。窓は前に出ないし、隠して
+                // あるなら隠れたまま、閉じかけているなら閉じ切る。下の作法（隠すのを
+                // やめる・戻り先の付け替え・窓を持ち上げる・タブを開く）は全部
+                // 「人が md を叩いて窓を見に来た」ための手順なので、1 つも通らない。
+                //
+                // ここで台帳へ積む（見せるのは #32）。ページに持たせないのは、窓が
+                // `AppEvent::Ready` より前に届いたぶんを取りこぼすため。
+                if msg.notify {
+                    md_preview::notifications::add(&msg.files);
+                    return;
+                }
                 // 隠すと決めた後でも、全画面から抜けるのを待っている間（最大 2.5 秒）に
                 // 転送が届いたら隠すのをやめる。隠す経路は座を手放さないので受け口は
                 // 生きていて、ここへ来られる。終了の待ちは座を手放してから始めるので、
