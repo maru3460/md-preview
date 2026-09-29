@@ -35,15 +35,14 @@ const pane = (page) => page.evaluate(() => document.getElementById('preview-pane
 
 test('開くたびにタブが増え、現在タブの右隣に挿さる', async ({ page }) => {
   await openFolder(page);
-  // まだ何も開いていない間はタブバーごと出ない。
+  // まだ何も開いていなくても帯は出ている（歯車とベルの居場所なので畳まない）。
   await expect(page.locator('.md-tab')).toHaveCount(0);
-  await expect(page.locator('body')).not.toHaveClass(/has-tabs/);
+  await expect(page.locator('#tabbar')).toBeVisible();
 
   // 最初の 1 枚。indexOf の -1 と初期 activeIdx の -1 が一致してしまうと、
   // ここで永久にタブが作られない。
   await openFile(page, 'a.md');
   await expect(page.locator('.md-tab')).toHaveCount(1);
-  await expect(page.locator('body')).toHaveClass(/has-tabs/);
 
   await openFile(page, 'b.md');
   await openFile(page, 'long.md');
@@ -304,6 +303,30 @@ test('最後の 1 枚は閉じずに窓を閉じるので、知らせも飛ば�
   expect(await page.evaluate(() => window.__mdIpc.filter((m) => m.startsWith('closed:')))).toEqual([]);
 });
 
+test('タブが溢れてもアイコン帯は右端に残る', async ({ page }) => {
+  await openFolder(page);
+  // タブ帯が溢れる幅まで窓を狭める（サイドバーが 250px、タブは 1 枚 60px 前後）。
+  await page.setViewportSize({ width: 520, height: 600 });
+  for (const f of ['a.md', 'b.md', 'notes.txt', 'zz-code.md', 'zz-frontmatter.md', 'long.md']) {
+    await openFile(page, f);
+  }
+
+  const m = await page.evaluate(() => {
+    const bar = document.getElementById('tabbar');
+    const strip = document.getElementById('tabbar-tabs');
+    const icons = document.getElementById('tabbar-icons');
+    return {
+      stripOverflows: strip.scrollWidth > strip.clientWidth,
+      barOverflows: bar.scrollWidth > bar.clientWidth,
+      gap: bar.getBoundingClientRect().right - icons.getBoundingClientRect().right,
+    };
+  });
+  // 溢れるのはタブ帯だけ。外枠ごと溢れると、中のアイコンも一緒に画面外へ流れる。
+  expect(m.stripOverflows).toBe(true);
+  expect(m.barOverflows).toBe(false);
+  expect(m.gap).toBe(0);
+});
+
 test('「すべてのタブを閉じる」は窓を残してタブ帯だけを空にする', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');
@@ -313,7 +336,7 @@ test('「すべてのタブを閉じる」は窓を残してタブ帯だけを�
   await page.locator('.md-context-menu-item', { hasText: 'すべてのタブを閉じる' }).click();
 
   await expect(page.locator('.md-tab')).toHaveCount(0);
-  await expect(page.locator('body')).not.toHaveClass(/has-tabs/);
+  await expect(page.locator('#tabbar')).toBeVisible();
   // 本文とツリーの選択も外れて、`md .` で起動した直後と同じ状態へ戻る。
   await expect(page.locator('#preview-pane .markdown-body')).toBeEmpty();
   await expect(page.locator('.tree-item.active')).toHaveCount(0);

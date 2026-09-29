@@ -10,10 +10,12 @@
     /* 見出しナビ(TOC)サイドバーの幅。開いている間は右ガターをこの幅ぶん空ける。 */
     --md-toc-w: 300px;
     /* タブバーの高さ。ビューポート高から本文の高さを引く計算（.html-frame）が
-       参照するので、タブが出ていない時は 0 でなければならない。 */
+       参照するので、#tabbar を持たないページ（1 枚もの表示 = md の直開き /
+       --html ダンプ）では 0 でなければならない。シェルは body.folder-mode で
+       上書きする——あちらはタブが 0 枚でも帯を畳まない。 */
     --md-tabbar-h: 0px;
-    /* スクロールバーの太さ。タブの高さもこの値から引くので、太さを変えるときは
-       ここだけ動かす（2 箇所に 2px を散らさない）。 */
+    /* スクロールバーの太さ。タブとアイコン帯の高さもこの値から引くので、太さを
+       変えるときはここだけ動かす（2 箇所に 2px を散らさない）。 */
     --md-sb-w: 2px;
     /* 本文の外周（額縁）。1 枚もの表示は body、シェルは #preview-pane が持ち、
        .html-frame の高さもここから引く。値を散らすと iframe の高さだけ置き去りに
@@ -51,7 +53,7 @@
 #preview-pane::-webkit-scrollbar,
 #sidebar::-webkit-scrollbar,
 #quick-access::-webkit-scrollbar,
-#tabbar::-webkit-scrollbar,
+#tabbar-tabs::-webkit-scrollbar,
 pre::-webkit-scrollbar,
 .table-wrap::-webkit-scrollbar,
 .source-main pre code[data-src-wrapped]::-webkit-scrollbar,
@@ -68,7 +70,7 @@ pre::-webkit-scrollbar,
 #preview-pane::-webkit-scrollbar-track,
 #sidebar::-webkit-scrollbar-track,
 #quick-access::-webkit-scrollbar-track,
-#tabbar::-webkit-scrollbar-track,
+#tabbar-tabs::-webkit-scrollbar-track,
 pre::-webkit-scrollbar-track,
 .table-wrap::-webkit-scrollbar-track,
 .source-main pre code[data-src-wrapped]::-webkit-scrollbar-track,
@@ -86,7 +88,7 @@ pre::-webkit-scrollbar-corner {
 #preview-pane::-webkit-scrollbar-thumb,
 #sidebar::-webkit-scrollbar-thumb,
 #quick-access::-webkit-scrollbar-thumb,
-#tabbar::-webkit-scrollbar-thumb,
+#tabbar-tabs::-webkit-scrollbar-thumb,
 pre::-webkit-scrollbar-thumb,
 .table-wrap::-webkit-scrollbar-thumb,
 .source-main pre code[data-src-wrapped]::-webkit-scrollbar-thumb,
@@ -829,30 +831,45 @@ body.sidebar-closed #resizer::before {
 /* ── Folder mode: タブバー ──────────────────────────────────
    色はテーマ側に増やさず、本文の文字色(currentColor)と --md-accent の混色で組む
    （テーマを 1 つ足すたびにタブの配色まで書かせない、というのがここの方針）。
-   非アクティブは opacity で沈めるので、地色が明るくても暗くても破綻しない。
-   横スクロールバーは以前ここで消していたが、2px なら邪魔にならず「まだ右にタブがある」
-   合図になるので出す。消すには scrollbar-width:none と ::-webkit-scrollbar{display:none}
-   の両方が必要だった（前者も WebKit で効く）。 */
+   非アクティブは opacity で沈めるので、地色が明るくても暗くても破綻しない。 */
+
+/* 左がタブ帯、右がアイコン帯。外枠自身はスクロールしない——1 層のままここへ
+   アイコンを置くと、タブが増えたときに一緒に流れて画面外へ出る。 */
 #tabbar {
-    display: none;
+    display: flex;
     flex-shrink: 0;
     height: var(--md-tabbar-h);
-    align-items: stretch;
-    overflow-x: auto;
-    overflow-y: hidden;
     box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 14%, transparent);
 }
 
-/* タブが 1 枚も無い間（起動直後にファイル未指定）はバーごと畳む。 */
-body.has-tabs #tabbar {
-    display: flex;
-}
-
-body.has-tabs {
+/* タブが 0 枚でも畳まない。歯車とベルの居場所なので、ファイル未指定で開いた直後
+   （タブ帯が空）にも出ていなければならない。 */
+body.folder-mode {
     --md-tabbar-h: 34px;
 }
 
-/* タブの高さはバーの高さから横スクロールバーぶんを引いて固定する。stretch に任せると、
+/* 溢れてスクロールするのはこちらだけ。
+   横スクロールバーは以前消していたが、2px なら邪魔にならず「まだ右にタブがある」
+   合図になるので出す。消すには scrollbar-width:none と ::-webkit-scrollbar{display:none}
+   の両方が必要だった（前者も WebKit で効く）。 */
+#tabbar-tabs {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+/* 高さはタブと同じに刻む。34px を全部使うと、下 2px を横スクロールバーへ譲って
+   いるタブとの中心が 1px ずれる。 */
+#tabbar-icons {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    height: calc(var(--md-tabbar-h) - var(--md-sb-w));
+}
+
+/* タブの高さはタブ帯の高さから横スクロールバーぶんを引いて固定する。stretch に任せると、
    overflow-x:auto が「溢れた時だけ」バーを出すせいで、タブが増えた瞬間に高さが
    34px → 32px へ跳ねる。固定すれば溢れの有無で動かない（align-items:stretch は
    高さが決まった子には効かないので、タブは上端に揃う——溢れていない時に下へ空く
@@ -1161,10 +1178,12 @@ body.folder-mode.md-toc-open #preview-pane {
     margin-right: calc(var(--md-toc-w) + 8px);
 }
 
-/* タブバーも TOC パネルの下に潜らせない。横スクロールするので padding ではなく
-   margin で幅そのものを詰める（padding だと右端のタブがパネルの裏に隠れる）。
-   詰める量はペインと同じ +8px。揃えないとタブバーの箱だけ 8px 右へ突き出て段差になり、
-   タブバー自身の横スクロールバーがパネルの左枠線に密着する。 */
+/* タブバーも TOC パネルの下に潜らせない。ここも padding ではなく margin。
+   #tabbar がスクロールコンテナだった頃の理由（末尾の padding はスクロール量に
+   含まれず、右端のタブが裏へ潜る）は 2 層化で消えたが、padding だと箱そのものが
+   パネルの裏まで伸びるので、下端の罫がペインの右端で切れずに食い込む。
+   詰める量はペインと同じ +8px。揃えないとタブバーの箱だけ 8px 右へ突き出て段差に
+   なり、タブ帯の横スクロールバーがパネルの左枠線に密着する。 */
 body.folder-mode.md-toc-open #tabbar {
     margin-right: calc(var(--md-toc-w) + 8px);
 }

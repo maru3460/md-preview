@@ -864,7 +864,10 @@ pub fn build_folder_html(
   </div>
   <div id="resizer"></div>
   <div id="main-col">
-    <div id="tabbar"></div>
+    <div id="tabbar">
+      <div id="tabbar-tabs"></div>
+      <div id="tabbar-icons"></div>
+    </div>
     <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
   </div>
 </div>
