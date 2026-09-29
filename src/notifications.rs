@@ -35,7 +35,12 @@ pub fn load() -> Vec<Entry> {
     parse(crate::store::read(&dir, FILE))
 }
 
-/// 届いたぶんを積む。`ids` の並びはそのまま先頭の並びになる。
+/// 届いたぶんを積んで、**積んだ後の全件**を返す。`ids` の並びはそのまま先頭の並びになる。
+///
+/// 戻り値を返すのは、呼び出し側（`main.rs`）がそのままページへ渡すため（#32）。
+/// ここで返さないと、書いた直後にもう一度ディスクから読み直すことになる。
+/// 積むものが 1 つも無かったときも、いま持っている全件を返す——ページへ渡すのは
+/// 「変わったぶん」ではなく「いまの全部」なので、呼び出し側が場合分けしなくてよい。
 ///
 /// 絶対パスでないものは捨てる。ここはワイヤから来た値の入口なので、**受け取った側でも
 /// 形を見る**（送り側が `canonicalize` を通している前提に乗らない）。
@@ -48,13 +53,43 @@ pub fn load() -> Vec<Entry> {
 /// ⚠️ read-modify-write をロック無しでやっている。いま `add` を呼ぶのは**座を持つ
 /// 1 プロセスのイベントループスレッドだけ**なので直列だが、#32 が別プロセスから
 /// 書けるようにすると last-writer-wins で行が消える。
-pub fn add(ids: &[String]) {
-    let Some(dir) = crate::config_dir() else { return };
+pub fn add(ids: &[String]) -> Vec<Entry> {
+    let Some(dir) = crate::config_dir() else { return Vec::new() };
     let mut list = parse(crate::store::read(&dir, FILE));
-    if !push_front(&mut list, ids, now()) {
-        return;
+    if push_front(&mut list, ids, now()) {
+        save(&dir, &list);
     }
-    save(&dir, &list);
+    list
+}
+
+/// 既読にして、**書き換えた後の全件**を返す（#32）。`id` が `None` なら全部。
+///
+/// 消えたパスも既読にできるよう、識別子は文字列のまま引き当てる。実体への解決
+/// （`id_to_path`）を挟むと、**ファイルが消えた通知だけ既読にできなくなる**——
+/// それは押して「開けません」と言われた直後の通知そのものである。
+///
+/// ⚠️ 読んで・変えて・書き戻す の 3 手なので、[`add`] と同時に走ってはいけない。
+/// 呼ぶのはどちらもイベントループのスレッドだけ、という約束で守っている（#32 の決め）。
+pub fn mark_read(id: Option<&str>) -> Vec<Entry> {
+    let Some(dir) = crate::config_dir() else { return Vec::new() };
+    let mut list = parse(crate::store::read(&dir, FILE));
+    if set_read(&mut list, id) {
+        save(&dir, &list);
+    }
+    list
+}
+
+/// 既読の印を立てる。何も変わらなければ false（書き込みごと省く）。
+fn set_read(list: &mut [Entry], id: Option<&str>) -> bool {
+    let mut changed = false;
+    for e in list.iter_mut() {
+        if e.read || id.is_some_and(|want| e.path != want) {
+            continue;
+        }
+        e.read = true;
+        changed = true;
+    }
+    changed
 }
 
 /// 先頭へ積む。積むものが 1 つも無ければ false（書き込みごと省く）。
@@ -199,6 +234,37 @@ mod tests {
         // （`quick_access` は登録順なので同じ「先頭を残す」でも意味が違う）。
         let got = parse(records(&[&["/a.md", "9", "unread"], &["/a.md", "1", "read"]]));
         assert_eq!(got, vec![entry("/a.md", 9, false)]);
+    }
+
+    #[test]
+    fn marking_one_path_read_leaves_the_others_alone() {
+        let mut list = vec![entry("/a.md", 9, false), entry("/b.md", 8, false)];
+        assert!(set_read(&mut list, Some("/a.md")));
+        assert_eq!(list, vec![entry("/a.md", 9, true), entry("/b.md", 8, false)]);
+    }
+
+    #[test]
+    fn marking_everything_read_touches_every_unread_entry() {
+        let mut list = vec![entry("/a.md", 9, false), entry("/b.md", 8, true), entry("/c.md", 7, false)];
+        assert!(set_read(&mut list, None));
+        assert!(list.iter().all(|e| e.read));
+    }
+
+    /// 何も変わらないときに false を返せないと、押すたびにディスクへ書く。
+    #[test]
+    fn marking_what_is_already_read_changes_nothing() {
+        let mut list = vec![entry("/a.md", 9, true)];
+        assert!(!set_read(&mut list, Some("/a.md")));
+        assert!(!set_read(&mut list, None));
+    }
+
+    /// 消えたファイルの通知こそ既読にしたい（押して「開けません」と言われた直後）。
+    /// 実体の有無を見ないので、居ないパスを指したときは黙って何もしない。
+    #[test]
+    fn marking_a_path_that_is_not_in_the_list_changes_nothing() {
+        let mut list = vec![entry("/a.md", 9, false)];
+        assert!(!set_read(&mut list, Some("/gone.md")));
+        assert_eq!(list, vec![entry("/a.md", 9, false)]);
     }
 
     #[test]

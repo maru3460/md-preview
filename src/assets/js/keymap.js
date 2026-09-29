@@ -147,6 +147,14 @@
       run: 'tab-goto', match: digit19,
       when: function(e) { return cmd(e) && !overlayOpen(); } },
 
+    // ── 通知ベル（notify.js） ──
+    // `md --notify` で届いたファイルの一覧。開いている間の j/k/Enter はこの表に
+    // 載せない——ベルは素キーを止めるオーバーレイなので、`when` に使う `bare` が
+    // 偽になる。⌘P のパレットと同じく、中の移動キーはモジュール側が持つ。
+    // ⌘B（サイドバー）の隣なので押し間違いは起きるが、素キーの空きは限られている。
+    { cat: 'files', keys: 'b', desc: '通知（届いたファイル）を開閉（開いている間 j/k で移動・Enter で開く）',
+      run: 'notify-toggle', match: keys('b'), when: bare },
+
     // ── ファイルツリー（folder.js） ──
     { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉',
       run: 'sidebar-toggle', match: letter('b'), when: cmdAnywhere },
@@ -160,7 +168,7 @@
       when: function(e) { return metaOnly(e) && !inField(e) && !overlayOpen(); } },
     // Quick Access（#35）。ツリーのカーソル行を留める / 外す。★ と右クリックだけだと
     // マウス専用になるので、キーからも同じことができるようにする。
-    // `m` は vim の mark から。素キーの空き（`b` は #32 のベルが取る）。
+    // `m` は vim の mark から。素キーの空き（`b` はこの下のベルが取った）。
     { cat: 'tree', keys: 'm', desc: 'カーソル行を Quick Access に留める / 外す',
       run: 'quick-toggle', match: keys('m'),
       when: function(e) { return bare(e) && inTree(); } },

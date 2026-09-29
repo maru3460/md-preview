@@ -150,6 +150,10 @@ pub const FOLDER_JS: &str = include_str!("assets/js/folder.js");
 /// 1 枚もの（md の直開き・`--html` ダンプ）には置き場所が無い。
 const TABS_JS: &str = include_str!("assets/js/tabs.js");
 
+/// 通知ベル（#32）。`TABS_JS` と同じ理由でシェル専用——ベルはタブバーの
+/// アイコン帯（`#tabbar-icons`）に住むので、1 枚もの表示には置き場所が無い。
+const NOTIFY_JS: &str = include_str!("assets/js/notify.js");
+
 const ICON_NOTE: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
 const ICON_TIP: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/></svg>"##;
 const ICON_IMPORTANT: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>"##;
@@ -837,8 +841,8 @@ pub fn build_folder_html(
         .collect::<Vec<_>>()
         .join(",");
     let folder_head = format!(
-        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>",
-        initial_files_json, TABS_JS
+        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>\n<script>{}</script>",
+        initial_files_json, TABS_JS, NOTIFY_JS
     );
     format!(
         r#"<!DOCTYPE html>
@@ -890,6 +894,26 @@ pub fn open_files_script(ids: &[String]) -> String {
     format!("window.MdOpenFiles && window.MdOpenFiles([{}]);", list)
 }
 
+/// 届いた通知の全件をページへ渡すスクリプト（#32）。
+///
+/// **渡すのはいつも全件。** 増えたぶんだけを送ると「どこまで送ったか」を Rust 側と
+/// ページの両方が覚えることになり、ずれたときに気づく手段が無い。上限は 100 件なので
+/// 全件でも短い。
+///
+/// Why not 空なら空文字を返す（`open_files_script` と同じ形にする）: あちらは
+/// 「開け」という命令なので 0 件なら何もしなくてよいが、こちらは**状態の写し**である。
+/// 空を渡せないと、最後の 1 件が消えたときにページが古い一覧を出したままになる。
+pub fn notifications_script(list: &[crate::notifications::Entry]) -> String {
+    let items = list
+        .iter()
+        .map(|e| {
+            format!("{{path:{},at:{},read:{}}}", json_string(&e.path), e.at, e.read)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("window.MdNotify && window.MdNotify.push([{}]);", items)
+}
+
 /// ツリーの頂点が動いたことをページへ伝えるスクリプト（#34）。
 ///
 /// `MD_ROOT_DIR` は起動スクリプトで 1 回きり入るので、実行中に root が動く経路は
@@ -916,6 +940,27 @@ pub fn root_failed_script(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0 件でも呼び出しを作ること。作らないと、最後の 1 件が消えたときに
+    /// ページが古い一覧を出したままになる。
+    #[test]
+    fn an_empty_list_still_produces_a_call() {
+        assert_eq!(notifications_script(&[]), "window.MdNotify && window.MdNotify.push([]);");
+    }
+
+    /// パスに `"` や `\` が入っていても、ページ側の JSON が壊れないこと。
+    #[test]
+    fn a_path_with_quotes_survives_the_trip_to_the_page() {
+        let list = vec![crate::notifications::Entry {
+            path: "/a/\"odd\"\\name.md".to_string(),
+            at: 1_700_000_000,
+            read: true,
+        }];
+        let script = notifications_script(&list);
+        assert!(script.contains("at:1700000000"), "{script}");
+        assert!(script.contains("read:true"), "{script}");
+        assert!(!script.contains("\"odd\""), "生の引用符が漏れている: {script}");
+    }
 
     #[test]
     fn drawio_block_becomes_mxgraph_div() {

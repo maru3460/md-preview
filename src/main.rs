@@ -57,6 +57,15 @@ enum AppEvent {
     /// ツリーの頂点を張り替える（#34）。ページの `root:` と、別プロセスから
     /// 転送されてきた `md <dir>` の両方がここへ集まる。
     SetRoot(PathBuf),
+    /// 通知を既読にする（#32）。`None` は「すべて既読」。
+    ///
+    /// ページの `notify:` を**その場で処理せずここまで運ぶ**のは、保存ファイルを
+    /// 書く場所を 1 か所に寄せるため。受信（`Open` の腕の `notifications::add`）と
+    /// 既読はどちらも「読んで・変えて・書き戻す」なので、別々の場所から呼ぶと
+    /// 割り込まないことがコードを追わないと分からなくなる。Quick Access
+    /// （`quick:`）が IPC ハンドラで直に書いているのと形が揃わないのは承知の上で、
+    /// あちらは**並びの持ち主がページ**で Rust は写しているだけ、という違いがある。
+    NotifyRead(Option<String>),
     /// root を動かせなかった（消えたフォルダ）。中身はページが送ってきた識別子で、
     /// 名前を出すためだけに運ぶ。**黙って終わらせないために要る**——Quick Access は
     /// 消えた行を残す設計（#35）なので、押した結果が何も起きないと故障に見える。
@@ -727,6 +736,21 @@ fn main() {
                             "remove" => quick_access::remove(id),
                             _ => {}
                         }
+                    } else if let Some(rest) = body.strip_prefix("notify:") {
+                        // 既読（#32）。`quick:remove` と同じく素の識別子で引く——
+                        // `id_to_path` は canonicalize なので、通すと**消えたファイルの
+                        // 通知だけ既読にできなくなる**。それは押して「開けません」と
+                        // 言われた直後の通知そのものである。
+                        match rest.split_once(':') {
+                            Some(("read", id)) => {
+                                let target = Some(id.to_string());
+                                let _ = proxy.send_event(AppEvent::NotifyRead(target));
+                            }
+                            None if rest == "read-all" => {
+                                let _ = proxy.send_event(AppEvent::NotifyRead(None));
+                            }
+                            _ => {}
+                        }
                     } else if let Some(id) = body.strip_prefix("closed:") {
                         let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
                     } else if let Some(text) = body.strip_prefix("copy:") {
@@ -907,6 +931,13 @@ fn main() {
             Event::UserEvent(AppEvent::RootFailed(id)) => {
                 let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
             }
+            Event::UserEvent(AppEvent::NotifyRead(id)) => {
+                // 書き換えた結果をページへ渡し直す。ページに先に自分の写しを直させない
+                // のは、**一覧の持ち主を 1 つに保つ**ため（#32）。往復はローカルなので
+                // 押した感触は落ちない。
+                let list = md_preview::notifications::mark_read(id.as_deref());
+                let _ = webview.evaluate_script(&md_preview::html::notifications_script(&list));
+            }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
                 let _ = webview.evaluate_script(&script);
@@ -921,6 +952,10 @@ fn main() {
                 if !script.is_empty() {
                     let _ = webview.evaluate_script(&script);
                 }
+                // 前回までに届いていたぶんと、この合図より前に届いたぶん（#32）。
+                // ページは自分では一覧を持たないので、ここで渡すまでベルは空のまま。
+                let list = md_preview::notifications::load();
+                let _ = webview.evaluate_script(&md_preview::html::notifications_script(&list));
             }
             Event::UserEvent(AppEvent::Open(msg)) => {
                 // `--notify` は開かずに積むだけ（#36）。窓は前に出ないし、隠して
@@ -931,7 +966,13 @@ fn main() {
                 // ここで台帳へ積む（見せるのは #32）。ページに持たせないのは、窓が
                 // `AppEvent::Ready` より前に届いたぶんを取りこぼすため。
                 if msg.notify {
-                    md_preview::notifications::add(&msg.files);
+                    let list = md_preview::notifications::add(&msg.files);
+                    // ページがまだ描けていないなら渡さない。`AppEvent::Ready` の腕が
+                    // 同じものを渡し直すので、取りこぼしにはならない。
+                    if page_ready {
+                        let script = md_preview::html::notifications_script(&list);
+                        let _ = webview.evaluate_script(&script);
+                    }
                     return;
                 }
                 // 隠すと決めた後でも、全画面から抜けるのを待っている間（最大 2.5 秒）に

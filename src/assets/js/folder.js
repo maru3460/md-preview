@@ -1190,6 +1190,11 @@
         clearFile: clearPreview
       });
     }
+    if (window.MdNotify) {
+      // 通知ベル（#32）。押したら通常のファイル切替と同じ経路で開く。
+      // 一覧は Rust 側が `MdNotify.push` で渡してくる（起動スクリプトには焼かない）。
+      window.MdNotify.init({ openFile: function(id) { loadPreview(id); } });
+    }
     if (window.MdPalette) {
       // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。
       window.MdPalette.init({ openFile: function(id) { loadPreview(id); } });
