@@ -132,6 +132,7 @@ const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("viewmode.js", include_str!("assets/js/viewmode.js")),
     ("help.js", include_str!("assets/js/help.js")),
     ("keyscroll.js", include_str!("assets/js/keyscroll.js")),
+    ("comment-host.js", include_str!("assets/js/comment-host.js")),
     ("comment.js", include_str!("assets/js/comment.js")),
 ];
 

@@ -599,11 +599,39 @@
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
 
+      // コメント（#23）。html のレンダリング表示は本文が iframe なので、読んでいる間は
+      // フォーカスが中にあるのが普通で、転送しないとコメントのキーが丸ごと死ぬ。
+      //
+      // 素キーの英字を転送する以上、上の `/` と同じ罠は残る——ページ側が同じキーを
+      // 自前のショートカットに使っていると二重に発火する（MkDocs Material の n / p =
+      // 前後ページ移動など）。`/` と違って**モード中だけ**なので、暴発しても「コメントを
+      // 巡回しながらページも動く」で済み、キーを取り返す手段（Esc）も同時に持たせてある。
+      // `c` だけはモードの外から押すキーなので、モードを見ずに渡す。
+      //
+      // キーの集合は keymap.js の comment-mode の 2 行と手で揃えている。`MdKeymap` から
+      // 引かないのは、あちらの `match` が KeyboardEvent を受ける述語で、キーの一覧を
+      // 名前で取り出す口を持っていないため（表に足したらここも直すこと）。
+      var cmt = window.MdComment;
+      var inMode = bare && !overlay && !!(cmt && cmt.isMode && cmt.isMode());
+      // 行を掴めるときだけカーソル移動へ渡す。掴めない html（大きすぎて刻めなかった等）は
+      // 下のスクロールのままにする。
+      var isCmtCursor = inMode && !!(cmt.canAnchor && cmt.canAnchor()) &&
+        ['j', 'J', 'k', 'K', 'Enter', 'ArrowDown', 'ArrowUp'].indexOf(e.key) >= 0;
+      // 一覧は他ファイルのコメントも並ぶ横断インデックスなので、掴めない表示でも
+      // 巡回・編集・削除・全部コピーは使わせる（#18）。
+      var isCmtList = inMode && ['n', 'p', 'e', 'x', 'X', 'y', 'Delete'].indexOf(e.key) >= 0;
+      var isCmtToggle = bare && !overlay && e.key === 'c';
+
       // 縦スクロール素キー(j/k/d/u/Space/g/G)は「親へ転送」では効かない。スクロールするのは
       // iframe 内の文書で、親は html-frame が丁度 1 画面ぶんなので動かないからである。
       // ここで中身の scroller を直接動かして、md 表示と同じ操作感にする。
       // Space/矢印はネイティブでも動くが、j/k 等はネイティブに無いので自前で賄う。
-      if (bare && !overlay && applyScrollKey(e, doc.scrollingElement || doc.documentElement)) return;
+      //
+      // コメント中に行を掴めているときだけ j / k を譲る。ここでスクロールしてしまうと
+      // カーソルの枠だけ置いて動かせなくなる。d / u / Space / g / G は譲らない
+      // ——モードは本文の素キーを止めない方針（comment.js の blocksKeys:false）と揃える。
+      if (!isCmtCursor && bare && !overlay &&
+          applyScrollKey(e, doc.scrollingElement || doc.documentElement)) return;
 
       // ファイル移動([/])・ペインフォーカス(Tab)・ヘルプ(?)はアプリ全体の操作なので、iframe に
       // フォーカスがある時でも親へ委譲する（html 表示中でも移動とヘルプが死なない）。ただし:
@@ -613,11 +641,13 @@
       //    止められないので、転送すると「ページの検索 UI と親の検索バーが両方開く」二重
       //    状態になる。iframe 内から検索を開くのは ⌘F（ページ側と衝突しにくい）に絞る。
       var isNav = bare && (k === '[' || k === ']' || e.key === 'Tab' || k === '?');
-      // Escape は親のオーバーレイ（? で開いたヘルプ等）が開いている時だけ転送する。
-      // ? は iframe にフォーカスを残したまま開くので、これが無いと Esc で閉じられない。
-      // 開いていない時は転送せず、iframe 内のページ自身の Esc 処理を邪魔しない。
-      var isEsc = e.key === 'Escape' && overlay;
-      if (!isCmd && !isNav && !isEsc) return;
+      // Escape は親のオーバーレイ（? で開いたヘルプ等）が開いている時と、コメントモード中
+      // だけ転送する。? は iframe にフォーカスを残したまま開くので、これが無いと Esc で
+      // 閉じられない。モードは画面を覆わないので `isOverlayOpen()` には数えられない
+      // （`blocksKeys:false`）が、`c` を中から渡す以上、出口も渡さないと入ったきり出られない。
+      // どちらでもない時は転送せず、iframe 内のページ自身の Esc 処理を邪魔しない。
+      var isEsc = e.key === 'Escape' && (overlay || inMode);
+      if (!isCmd && !isNav && !isEsc && !isCmtToggle && !isCmtCursor && !isCmtList) return;
       var ev = new KeyboardEvent('keydown', {
         key: e.key, code: e.code,
         metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,

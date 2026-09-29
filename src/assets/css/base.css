@@ -1845,6 +1845,48 @@ body.md-cmt-mode .source-main .copy-btn {
     border-radius: 2px;
 }
 
+
+/* iframe（html のレンダリング表示）の中のユニットを指す点物。他人の DOM には触れない
+   ので、枠だけを親のレイヤへ重ねて表す。塗り（コメント済み・選択中）は iframe の中の
+   ::highlight() が持つ——Highlight API は色しか指定できず、枠を描けないため。
+   位置は comment-host.js の FrameHost が内部座標から測って置く。祖先の overflow で
+   切ってあるので、内部スクロールの外へ出た枠がタブバーの上まで漏れることはない。 */
+.md-cmt-frame-overlay {
+    position: fixed;
+    inset: 0;
+    /* シェルの浮きもの（サイドバー 999・検索バー / 右下スタック 1000）より下に置く。
+       html 表示では iframe の上端(42px)と検索バーの下端(46px)が 4px 重なるので、上に
+       置くと最上部のユニットを指した枠が検索バーに被る。本文より上にあればよく、
+       fixed なのは変わらないので見え方は落ちない。 */
+    z-index: 990;
+    pointer-events: none;
+}
+
+.md-cmt-frame-mark {
+    position: absolute;
+    border-radius: 2px;
+}
+
+/* 本文へ挿せない 💬 バッジも、枠と同じレイヤへ置く。位置は FrameHost がユニットの
+   矩形から実測して入れる（本文の中なら right:2px で足りるが、こちらはページの外から
+   重ねているので座標で置くしかない）。オーバーレイはクリックを透かすので、押せる
+   必要のあるバッジだけが受け取る。 */
+.md-cmt-frame-overlay .md-cmt-badge {
+    pointer-events: auto;
+}
+
+/* 意味と見た目は本文側（.md-cmt-kbcursor / -anchor / -flash）と揃える。 */
+.md-cmt-frame-mark[data-state="kbcursor"],
+.md-cmt-frame-mark[data-state="flash"] {
+    outline: 2px solid var(--md-accent, Highlight);
+    outline-offset: 2px;
+}
+
+.md-cmt-frame-mark[data-state="anchor"] {
+    outline: 2px dashed var(--md-accent, Highlight);
+    outline-offset: 2px;
+}
+
 /* 💬 バッジ。ユニット右上に浮かせる。box-shadow の帯と同様、ボックス内側（right:2px）に
    置いてクリップされないようにする。 */
 .md-cmt-badge {

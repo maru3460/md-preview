@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { id, openFolder, nextFrames } = require('./helpers');
+const { id, openFolder, nextFrames, treeItem } = require('./helpers');
 
 /// 追跡済みのフィクスチャは常にクリーンで差分が空になり、行数も閾値に遠い。
 /// 錨れない表示（git 差分 / 巨大ソース）を作るには、その場でファイルを置くしかない。
@@ -415,7 +415,7 @@ test('別ファイルの raw コメントへ飛ぶと、raw のまま着地す�
   await expect(page.locator('.md-src-row[data-src-line="1"]')).toHaveClass(/md-cmt-kbcursor/);
 });
 
-test('html 表示ではコメントモード中でも j / k がスクロールし、付けられない旨が出る', async ({ page }) => {
+test('html 表示（iframe）の中の行にコメントを付けられる', async ({ page }) => {
   await openFolder(page);
   await page.locator('.tree-item', { hasText: 'page.html' }).click();
   const frame = page.frameLocator('iframe.html-frame');
@@ -425,27 +425,349 @@ test('html 表示ではコメントモード中でも j / k がスクロール�
 
   await page.keyboard.press('c');
   await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
-  // 錨る行ユニットが無い表示なので、件数ベースのキー案内ではなく理由を出す。
-  await expect(page.locator('.md-cmt-hint')).toContainText('HTML にコメントはできません');
-  // 掴む行が無いのでカーソルも置かれない。
-  await expect(page.locator('.md-cmt-kbcursor')).toHaveCount(0);
+  // 配信時にブロック要素へ行が刻まれている（request.rs の inject_src_lines）ので、
+  // 「付けられない」案内ではなく件数ベースのキー案内が出る。
+  await expect(page.locator('.md-cmt-hint')).toContainText('j / k で移動');
 
-  // j はコメント側に取られず、iframe 内の文書をスクロールする。フィクスチャは
-  // 1 画面に収まっていて動かないので、確実にスクロールできる高さを足しておく。
-  await frame.locator('body').evaluate((b) => {
-    const pad = b.ownerDocument.createElement('div');
-    pad.style.height = '3000px';
-    b.appendChild(pad);
-  });
+  // 枠は親のレイヤに浮く。他人のページなので DOM には触らず、位置だけを重ねる。
+  const cursor = page.locator('.md-cmt-frame-mark[data-state="kbcursor"]');
+  await expect(cursor).toBeVisible();
+  // 本文側の class は付かない（付けたら他人の DOM を書き換えたことになる）。
+  await expect(frame.locator('.md-cmt-kbcursor')).toHaveCount(0);
+
+  // 枠は iframe の中の見出しに重なっている（親座標へ換算できている）。
+  const h1Box = await frame.locator('h1').boundingBox();
+  const cursorBox = await cursor.boundingBox();
+  expect(Math.abs(cursorBox.y - h1Box.y)).toBeLessThan(8);
+
+  // j で次のユニット（2 つめの段落）へ。iframe の中をスクロールするのではなく、
+  // カーソルが動く。
+  await page.keyboard.press('j');
+  const pBox = await frame.locator('p').first().boundingBox();
+  await expect.poll(async () => {
+    const b = await cursor.boundingBox();
+    return Math.abs(b.y - pBox.y);
+  }).toBeLessThan(8);
+
+  // Enter でその行にコメント。錨は html ファイルの 6 行目（フィクスチャの最初の <p>）。
+  await page.keyboard.press('Enter');
+  await page.locator('.md-cmt-textarea').fill('iframe の中の段落へ');
+  await page.keyboard.press('Meta+Enter');
+  await expect(page.locator('.md-cmt-loc').first()).toContainText('page.html:6');
+
+  // コメント済みの塗りは iframe の中の ::highlight() に入る（DOM は変えない）。
+  await expect.poll(() => page.evaluate(() => {
+    const w = document.querySelector('iframe.html-frame').contentWindow;
+    return !!(w.CSS && w.CSS.highlights && w.CSS.highlights.has('md-cmt-marked'));
+  })).toBe(true);
+  await expect(frame.locator('.md-cmt-marked')).toHaveCount(0);
+
+  // モードを抜ければ枠は消える。
+  await page.keyboard.press('Escape');
+  await expect(cursor).toBeHidden();
+});
+
+test('html 表示から md へ戻ると、iframe 用の枠が残らない', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).click();
+  await expect(page.frameLocator('iframe.html-frame').locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  const cursor = page.locator('.md-cmt-frame-mark[data-state="kbcursor"]');
+  await expect(cursor).toBeVisible();
+
+  // md へ移ると本文の相手が変わる。枠は親のレイヤに浮いているので、渡す前に消さないと
+  // md の上へ取り残される。
+  await page.locator('.tree-item', { hasText: 'a.md' }).first().click();
+  await expect(page.locator('#preview-pane .markdown-body')).toBeVisible();
+  await expect(cursor).toBeHidden();
+  // md 側は今までどおり本文の class で指す。
+  await expect(page.locator('.md-cmt-kbcursor')).toHaveCount(1);
+});
+
+test('iframe にフォーカスがあってもコメントのキーが効く', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+
+  // html を読んでいる間はフォーカスが iframe の中にあるのが普通。ここから始める。
+  await frame.locator('h1').click();
+
+  await page.keyboard.press('c');
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+  const cursor = page.locator('.md-cmt-frame-mark[data-state="kbcursor"]');
+  await expect(cursor).toBeVisible();
+
+  // j はカーソル移動として親へ渡る。iframe の中をスクロールしてしまうと、枠だけ置いて
+  // 動かせなくなる。
   const top = () => page.evaluate(() => {
     const d = document.querySelector('iframe.html-frame').contentDocument;
     return (d.scrollingElement || d.documentElement).scrollTop;
   });
-  expect(await top()).toBe(0);
+  const before = (await cursor.boundingBox()).y;
   await page.keyboard.press('j');
+  await expect.poll(async () => (await cursor.boundingBox()).y).toBeGreaterThan(before);
+  expect(await top()).toBe(0);
+
+  // d（ページ送り）は譲らない。モードは本文の素キーを止めない。
+  await page.keyboard.press('d');
   await expect.poll(top).toBeGreaterThan(0);
-  await page.keyboard.press('k');
-  await expect.poll(top).toBe(0);
+
+  // 入口（c）だけ渡して出口を渡さないと、中から入ったきり出られない。モードは画面を
+  // 覆わないので、親の「オーバーレイが開いているか」には数えられない。
+  await page.keyboard.press('Escape');
+  await expect(page.locator('body')).not.toHaveClass(/md-cmt-mode/);
+});
+
+test('iframe の中をクリック / ドラッグしてコメントを付けられる', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.keyboard.press('c');
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+
+  // クリック 1 発で、その行に付く。
+  await frame.locator('p').first().click();
+  await page.locator('.md-cmt-textarea').fill('クリックで付けた');
+  await page.keyboard.press('Meta+Enter');
+  await expect(page.locator('.md-cmt-loc').first()).toContainText('page.html:6');
+
+  // ドラッグで見出しから段落までのレンジ。iframe の中の座標も親の座標系で拾える。
+  const h1 = await frame.locator('h1').boundingBox();
+  const p1 = await frame.locator('p').first().boundingBox();
+  await page.mouse.move(h1.x + 5, h1.y + h1.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(p1.x + 5, p1.y + p1.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await page.locator('.md-cmt-textarea').fill('見出しから段落まで');
+  await page.keyboard.press('Meta+Enter');
+  await expect(page.locator('.md-cmt-loc').first()).toContainText('page.html:5-6');
+});
+
+test('モード中は iframe の中のリンクで遷移しない', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await frame.locator('p').first().evaluate((p) => {
+    const a = p.ownerDocument.createElement('a');
+    a.href = '#anchor';
+    a.textContent = 'リンク';
+    p.appendChild(a);
+  });
+  const url = () => page.evaluate(() =>
+    document.querySelector('iframe.html-frame').contentDocument.URL);
+  const before = await url();
+
+  await page.keyboard.press('c');
+  await frame.locator('p a').click();
+  // 遷移せず、代わりにその行のコメント入力が開く。
+  await expect(page.locator('.md-cmt-textarea')).toBeVisible();
+  expect(await url()).toBe(before);
+});
+
+test('html から別の html へ移ると、カーソルが前のページを指したままにならない', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  const cursor = page.locator('.md-cmt-frame-mark[data-state="kbcursor"]');
+  await expect(cursor).toBeVisible();
+  await page.keyboard.press('j');
+  const onFirstPage = (await cursor.boundingBox()).y;
+
+  // 別の html へ。iframe の中の要素は iframe ごと外れても isConnected を返し続けるので、
+  // それで「宙に浮いたか」を見ていると、前のページの位置に枠が残ったままになる。
+  await treeItem(page, 'sub').click();
+  await treeItem(page, 'sub/page.html').click();
+  await expect(frame.locator('body')).toContainText('サブフォルダ');
+
+  // 新しいページの先頭ユニットへ置き直される（前の位置ではない）。
+  await expect(cursor).toBeVisible();
+  await expect.poll(async () => (await cursor.boundingBox()).y).not.toBe(onFirstPage);
+  const h1 = await frame.locator('h1').boundingBox();
+  expect(Math.abs((await cursor.boundingBox()).y - h1.y)).toBeLessThan(8);
+});
+
+test('html 表示でも、入力欄は iframe の中のスクロールに付いてくる', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  await frame.locator('p').first().click();
+  const pop = page.locator('#md-cmt-popover');
+  await expect(pop).toBeVisible();
+  const before = (await pop.boundingBox()).y;
+
+  // iframe の中のスクロールは親の document には届かない。host 経由で伝えないと、
+  // 本文だけ動いて入力欄が画面に貼り付く。
+  await page.evaluate(() => {
+    const d = document.querySelector('iframe.html-frame').contentDocument;
+    (d.scrollingElement || d.documentElement).scrollTop = 300;
+  });
+  await expect.poll(async () => (await pop.boundingBox()).y).toBeLessThan(before - 200);
+});
+
+test('コメントの無いユニットへホバーを移すとプレビューが閉じる', async ({ page }) => {
+  await openFolder(page);
+  await page.keyboard.press(']');
+  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
+
+  await page.keyboard.press('c');
+  await page.keyboard.press('Enter');
+  await page.locator('.md-cmt-textarea').fill('見出しに一言');
+  await page.keyboard.press('Meta+Enter');
+  await page.keyboard.press('Escape');
+
+  const marked = page.locator('#preview-pane .md-cmt-marked').first();
+  await marked.hover();
+  await expect(page.locator('.md-cmt-preview')).toBeVisible();
+
+  // 隙間なく並ぶユニットを渡り歩くとき、mouseout は「ユニットの外へ出たか」しか
+  // 見ていない。コメントの無いユニットへ入った側で閉じないと出たままになる。
+  const bare = page.locator('#preview-pane [data-src-line]:not(.md-cmt-marked)').first();
+  await bare.hover();
+  await expect(page.locator('.md-cmt-preview')).toHaveCount(0);
+});
+
+test('html 表示の 💬 バッジは本文ではなく枠と同じレイヤに出る', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  await page.keyboard.press('Enter');
+  await page.locator('.md-cmt-textarea').fill('見出しへ');
+  await page.keyboard.press('Meta+Enter');
+
+  // 埋め込みカードを出せない相手なので、モード中もバッジが唯一の目印として残る。
+  const badge = page.locator('.md-cmt-frame-overlay .md-cmt-badge');
+  await expect(badge).toHaveCount(1);
+  // 他人の DOM には挿さない。
+  await expect(frame.locator('.md-cmt-badge')).toHaveCount(0);
+  await expect(frame.locator('.md-cmt-embed')).toHaveCount(0);
+
+  // 錨の右上に乗る。
+  const h1 = await frame.locator('h1').boundingBox();
+  const b = await badge.boundingBox();
+  expect(Math.abs(b.y - h1.y)).toBeLessThan(12);
+  expect(b.x).toBeGreaterThan(h1.x + h1.width / 2);
+
+  // オーバーレイはクリックを透かすが、バッジだけは受け取る。
+  await badge.click();
+  await expect(page.locator('.md-cmt-textarea')).toHaveValue('見出しへ');
+});
+
+test('html のコメントは raw とレンダリングを行き来して着地する', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  // ① レンダリング表示で見出し（5 行目）へ。
+  await page.keyboard.press('c');
+  await page.keyboard.press('Enter');
+  await page.locator('.md-cmt-textarea').fill('レンダリング側');
+  await page.keyboard.press('Meta+Enter');
+  await expect(page.locator('.md-cmt-side')).toContainText('page.html:5');
+
+  // ② ⌘R で raw。html も raw トグルを持つので、同じファイルの第 2 の表示になる。
+  await page.keyboard.press('Meta+r');
+  await expect(page.locator('.source-view')).toBeVisible();
+  await page.locator('.md-src-row[data-src-line="9"]').click();
+  await page.locator('.md-cmt-textarea').fill('raw 側');
+  await page.keyboard.press('Meta+Enter');
+  await expect(page.locator('.md-cmt-side')).toContainText('page.html:9');
+  // raw で付けた印は raw の行に付く。
+  await expect(page.locator('.md-src-row[data-src-line="9"]')).toHaveClass(/md-cmt-marked/);
+
+  // ③ n で巡回すると、付けた表示へ戻してから着地する。5 行目はレンダリング側なので
+  //    iframe が戻り、枠がその見出しに乗る。
+  await page.keyboard.press('n');
+  await expect(page.locator('iframe.html-frame')).toBeVisible();
+  const cursor = page.locator('.md-cmt-frame-mark[data-state="kbcursor"]');
+  await expect(cursor).toBeVisible();
+  const h1 = await frame.locator('h1').boundingBox();
+  await expect.poll(async () => {
+    const b = await cursor.boundingBox();
+    return Math.abs(b.y - h1.y);
+  }).toBeLessThan(12);
+
+  // ④ もう一度 n で raw 側のコメントへ。raw に切り替わって行に着地する。
+  await page.keyboard.press('n');
+  await expect(page.locator('.source-view')).toBeVisible();
+  await expect(page.locator('.md-src-row[data-src-line="9"]')).toHaveClass(/md-cmt-kbcursor/);
+});
+
+test('html から md へ戻ると、iframe 用の 💬 バッジも残らない', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  await expect(page.frameLocator('iframe.html-frame').locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  await page.keyboard.press('Enter');
+  await page.locator('.md-cmt-textarea').fill('置き去りにされないこと');
+  await page.keyboard.press('Meta+Enter');
+  const badge = page.locator('.md-cmt-frame-overlay .md-cmt-badge');
+  await expect(badge).toHaveCount(1);
+
+  // バッジも枠と同じで親のレイヤに浮いている。渡す前に剥がさないと md の上に残り、
+  // 押すと外れた文書の要素を錨に編集欄が開く（矩形が全部 0 なので左上へ飛ぶ）。
+  await page.locator('.tree-item', { hasText: 'a.md' }).first().click();
+  await expect(page.locator('#preview-pane .markdown-body')).toBeVisible();
+  await expect(badge).toHaveCount(0);
+});
+
+test('html 表示でも 💬 バッジのホバーでコメントが読める', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  await expect(page.frameLocator('iframe.html-frame').locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  await page.keyboard.press('c');
+  await page.keyboard.press('Enter');
+  await page.locator('.md-cmt-textarea').fill('バッジから読める');
+  await page.keyboard.press('Meta+Enter');
+  await page.keyboard.press('Escape');
+
+  // バッジは親のオーバーレイに居るので「本文の上か」では拾えない。指している行を
+  // 自分で持っているので、そちらから引く。
+  await page.locator('.md-cmt-frame-overlay .md-cmt-badge').hover();
+  await expect(page.locator('.md-cmt-preview')).toContainText('バッジから読める');
+});
+
+test('iframe の中で履歴だけ書き換えたページには、今までどおり付けられる', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  // pushState は Document を作り直さない。刻んだ行はそのまま生きているので、
+  // これを「リンク先へ移った」と数えると SPA で錨れなくなる。
+  await page.evaluate(() => {
+    document.querySelector('iframe.html-frame').contentWindow.history.replaceState(null, '', '?tab=2');
+  });
+
+  await page.keyboard.press('c');
+  await expect(page.locator('.md-cmt-hint')).toContainText('j / k で移動');
+  await expect(page.locator('.md-cmt-frame-mark[data-state="kbcursor"]')).toBeVisible();
 });
 
 test('git 差分ではコメントモード中でも j / k がスクロールし、付けられない旨が出る', async ({ page }) => {
@@ -558,4 +880,48 @@ test('表示を切り替えて飛ぶコメントジャンプが、読み位置�
   const paneH = await page.evaluate(() => document.getElementById('preview-pane').clientHeight);
   expect(Math.abs(after - landed),
     `着地 ${landed}px → ${after}px（ペイン高 ${paneH}px）`).toBeLessThan(paneH / 2);
+});
+
+test('iframe がリンク先へ移ったら、元のファイル名で付けてしまわない', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  // ページ自身の JS が別の html へ移った状態。タブは page.html を指したままなので、
+  // ここで錨ると sub/page.html の行番号を page.html の識別子で保存してしまう。
+  await page.evaluate(() => {
+    document.querySelector('iframe.html-frame').contentWindow.location.href = './sub/page.html';
+  });
+  await expect(frame.locator('body')).toContainText('サブフォルダ');
+
+  await page.keyboard.press('c');
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+  await expect(page.locator('.md-cmt-hint')).toContainText('リンク先へ移っています');
+  await expect(page.locator('.md-cmt-frame-mark[data-state="kbcursor"]')).toBeHidden();
+});
+
+test('html 表示でもモード中は掴む合図（十字カーソル）が出る', async ({ page }) => {
+  await openFolder(page);
+  await page.locator('.tree-item', { hasText: 'page.html' }).first().click();
+  const frame = page.frameLocator('iframe.html-frame');
+  await expect(frame.locator('h1')).toContainText('HTML フィクスチャ');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+
+  const cursorOf = () => page.evaluate(() => {
+    const d = document.querySelector('iframe.html-frame').contentDocument;
+    const cs = d.defaultView.getComputedStyle(d.querySelector('h1'));
+    return { cursor: cs.cursor, select: cs.webkitUserSelect || cs.userSelect };
+  });
+  expect((await cursorOf()).cursor).not.toBe('crosshair');
+
+  // 親の CSS は iframe の中まで届かない。届けないと html 表示だけ、掴む画面に入った
+  // 合図が出ないまま普段どおりの I ビームで指すことになる。
+  await page.keyboard.press('c');
+  await expect.poll(async () => (await cursorOf()).cursor).toBe('crosshair');
+  expect((await cursorOf()).select).toBe('none');
+
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await cursorOf()).cursor).not.toBe('crosshair');
 });
