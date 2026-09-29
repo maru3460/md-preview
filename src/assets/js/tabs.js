@@ -26,7 +26,8 @@
   // onOpen を呼ぶので、この印が無いと自分の呼び出しで状態を二重に書き換える。
   var switching = false;
 
-  function bar() { return document.getElementById('tabbar'); }
+  // #tabbar は外枠で、タブが並ぶのは内側のタブ帯。右隣にアイコン帯が居る。
+  function tabsEl() { return document.getElementById('tabbar-tabs'); }
 
   function indexOf(path) {
     for (var i = 0; i < tabs.length; i++) if (tabs[i].path === path) return i;
@@ -274,9 +275,8 @@
   // ── 描画 ────────────────────────────────────────────────────
   // タブは高々数十枚なので毎回作り直す（差分更新の複雑さに見合わない）。
   function render() {
-    var el = bar();
+    var el = tabsEl();
     if (!el) return;
-    document.body.classList.toggle('has-tabs', tabs.length > 0);
     el.innerHTML = '';
 
     // 同じファイル名のタブが並ぶ時だけ、親ディレクトリ名を添えて見分ける。
@@ -351,7 +351,9 @@
       opts = o;
       registerKeys();
       // 縦ホイールを横スクロールに回す（トラックパッド以外でもタブを辿れるように）。
-      var el = bar();
+      // 外枠ではなくタブ帯に付ける。アイコン帯の上で回しても流れないが、あそこは
+      // 押すものが並ぶ場所で、流す対象を持っていない。
+      var el = tabsEl();
       if (el) {
         el.addEventListener('wheel', function(e) {
           if (e.deltaX !== 0) return;
