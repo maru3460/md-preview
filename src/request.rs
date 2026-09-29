@@ -683,11 +683,12 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
             let page = build_html(&r.html, title, theme_css, custom_css, r.body_class);
             ok_response("text/html; charset=utf-8", page.into_bytes())
         }
-        // iframe に配信する html は、head 内 CSS が JS より先に適用されるよう
-        // style-gate を注入してから返す（下記 inject_style_gate 参照）。
+        // iframe に配信する html は 2 つ通してから返す。行の錨（`inject_src_lines`）と、
+        // head 内 CSS が JS より先に適用されるようにする style-gate（`inject_style_gate`）。
+        // 順序はどちらでもよい（差し込む文字列が互いのパターンを含まず、改行も足さない）。
         ViewKind::HtmlPage => {
             let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
-            ok_response("text/html; charset=utf-8", inject_style_gate(bytes))
+            ok_response("text/html; charset=utf-8", inject_style_gate(inject_src_lines(bytes)))
         }
         // 画像・CSS・フォントなど。iframe 内の html から参照されるサブリソースを含む。
         _ => {
@@ -712,24 +713,27 @@ fn starts_ci_at(hay: &[u8], i: usize, needle: &[u8]) -> bool {
         && hay[i..i + needle.len()].iter().zip(needle).all(|(a, b)| a.eq_ignore_ascii_case(b))
 }
 
-/// 本物の `</head>` の位置を返す。`<script>...</script>` とコメント `<!-- ... -->` の中身は
-/// スキップするので、そこに現れる文字列 `</head>` を誤検出しない（誤検出して script 内へ
-/// 注入すると、注入した `</script>` がページの script を途中で閉じて壊すため）。
-/// 見つからなければ None。閉じられていない script/コメントがあれば安全側に None。
+/// 本物の `</head>` の位置を返す。中身をタグとして読まない区間（`<script>` / `<style>` /
+/// `<title>` などとコメント）はスキップするので、そこに現れる文字列 `</head>` を誤検出
+/// しない（誤検出して script 内へ注入すると、注入した `</script>` がページの script を
+/// 途中で閉じて壊すため）。見つからなければ None。
+///
+/// 走査は `skip_opaque` に寄せてある。かつてはここが独自に `<script` と `<!--` だけを
+/// 見ていたが、`</script >`（名前の後の空白）で抜けられず、`<title></head></title>` では
+/// title の中へ gate を入れていた。同じ仕事をする走査を 2 つ持つと、片方だけ直したときに
+/// 配信の 2 段（行の錨と gate）が違う世界を見ることになる。
 fn find_head_close(hay: &[u8]) -> Option<usize> {
     let mut i = 0;
     while i < hay.len() {
-        if starts_ci_at(hay, i, b"<script") {
-            let rel = find_ci_ascii(&hay[i..], b"</script>")?;
-            i += rel + b"</script>".len();
-        } else if starts_ci_at(hay, i, b"<!--") {
-            let rel = find_ci_ascii(&hay[i..], b"-->")?;
-            i += rel + b"-->".len();
-        } else if starts_ci_at(hay, i, b"</head>") {
-            return Some(i);
-        } else {
-            i += 1;
+        if let Some(end) = skip_opaque(hay, i) {
+            // 閉じられていない script 等は末尾までスキップされるので、ここで打ち切られる。
+            i = end;
+            continue;
         }
+        if starts_ci_at(hay, i, b"</head>") {
+            return Some(i);
+        }
+        i += 1;
     }
     None
 }
@@ -759,6 +763,205 @@ fn inject_style_gate(bytes: Vec<u8>) -> Vec<u8> {
         }
         None => bytes,
     }
+}
+
+/// この大きさを超える html には行を刻まない。属性を差し込むぶん配信バイトが膨らむ上、
+/// 受け取った側は 1 万件級のユニットを走査することになる。刻まなければ錨が 1 つも無い
+/// 表示のままなので、`comment.js` は「付けられない」案内に落ちる（壊れはしない）。
+const STAMP_MAX_BYTES: usize = 1_000_000;
+
+/// 行を刻む対象。**ブロック要素だけ**に絞る。`div` や `span` を入れてはいけない
+/// ——`closest('[data-src-line]')` が最内の要素を返して単語 1 個にコメントが付き、
+/// レンジの引用が `<body>` 1 個に畳まれ、ユニットの走査が 1 万件級になる。
+/// 「浅く縦に並ぶユニット列」という md 側の前提を再現できる粒度がここ。
+const BLOCK_TAGS: &[&[u8]] = &[
+    b"h1", b"h2", b"h3", b"h4", b"h5", b"h6", b"p", b"li", b"tr", b"td", b"th",
+    b"blockquote", b"pre", b"figure", b"figcaption", b"dt", b"dd", b"details", b"summary",
+];
+
+/// 中身をタグとして読まない要素。ここに現れる `<p>` はタグではないので、刻むと本文に
+/// 属性文字列がそのまま見えてしまう。
+///
+/// HTML 仕様の raw text にはこのほか `iframe` / `noembed` / `noframes` / `noscript` も
+/// あるが入れない——どれも**対応ブラウザでは中身を描画しない**フォールバック用なので、
+/// 刻んでも誰の目にも触れないし、錨として掴めても行き先が無い。入れる基準は
+/// 「中身が画面に出るか」で、`textarea` と `xmp` / `plaintext` がそれに当たる。
+const OPAQUE_TAGS: &[(&[u8], &[u8])] = &[
+    (b"<script", b"</script"),
+    (b"<style", b"</style"),
+    (b"<textarea", b"</textarea"),
+    (b"<title", b"</title"),
+    (b"<xmp", b"</xmp"),
+    // 閉じタグを持たない（以降すべてがプレーンテキストになる）。見つからないので
+    // 下の「閉じられていなければ末尾まで」にそのまま乗る。
+    (b"<plaintext", b"</plaintext"),
+];
+
+/// `i` から始まる「中身を読まない」区間の終端（直後の位置）を返す。閉じられていなければ
+/// 末尾まで——安全側に倒して、閉じ忘れたページの残り全部を素通しにする。
+///
+/// SVG / MathML の中は見ていない。あそこの `<title>` は RCDATA ではなく普通の要素なので
+/// `<title/>` が本当に自己終了するが、ここは閉じタグを探して見つけられず、以降を全部
+/// 素通しにする（錨が減るだけで配信物は壊れない）。区別するには要素の入れ子を追って
+/// foreign content に居るかを知る必要があり、バイト走査のまま扱える範囲を超える。
+fn skip_opaque(bytes: &[u8], i: usize) -> Option<usize> {
+    if starts_ci_at(bytes, i, b"<!--") {
+        return Some(match find_ci_ascii(&bytes[i..], b"-->") {
+            Some(rel) => i + rel + b"-->".len(),
+            None => bytes.len(),
+        });
+    }
+    for (open, close) in OPAQUE_TAGS {
+        if !starts_ci_at(bytes, i, open) {
+            continue;
+        }
+        // `<script` と `<scripting` を分ける（開きタグはここで区切られる）。
+        let after = i + open.len();
+        if !bytes.get(after).map_or(true, |&c| is_tag_delim(c)) {
+            continue;
+        }
+        return Some(find_close_tag(bytes, after, close).unwrap_or(bytes.len()));
+    }
+    None
+}
+
+/// `</script` のような閉じタグ名を探し、そのタグの終端（`>` の直後）を返す。
+///
+/// `</script>` という並びを丸ごと探すのでは足りない。ブラウザは名前の後の空白も許すので、
+/// `</script >` や `</script\n>` で閉じているページだと次の本物の `</script>` まで
+/// 素通しになり、その間のブロック要素が刻まれないまま落ちる。
+fn find_close_tag(bytes: &[u8], from: usize, name: &[u8]) -> Option<usize> {
+    (from..bytes.len()).find(|&i| {
+        starts_ci_at(bytes, i, name)
+            && bytes.get(i + name.len()).map_or(true, |&c| is_tag_delim(c))
+    })
+    .map(|i| tag_end(bytes, i))
+}
+
+fn is_tag_delim(c: u8) -> bool {
+    matches!(c, b' ' | b'>' | b'/' | b'\t' | b'\n' | b'\r')
+}
+
+/// `i`（`<`）がタグの始まりか。HTML のトークナイザが「タグ開始」と見なすのは英字・`/`・
+/// `!`・`?` が続くときだけで、`a < b` や `5<6` の `<` はただの文字として本文に残る。
+fn is_tag_start(bytes: &[u8], i: usize) -> bool {
+    bytes.get(i + 1).map_or(false, |&c| {
+        c.is_ascii_alphabetic() || c == b'/' || c == b'!' || c == b'?'
+    })
+}
+
+/// `i`（`<`）から始まるタグの終端（`>` の直後）を返す。閉じられていなければ末尾。
+///
+/// 引用符の中の `>` ではタグを閉じない。ここを見ないと `data-tpl="<li>x</li>"` のような
+/// **属性値の中身を走査してしまい**、そこを開きタグと誤認して `data-src-line="N"` を
+/// 差し込む。差し込む文字列に `"` が入っているので属性値がそこで閉じ、タグごと壊れる
+/// （Bootstrap の `data-bs-content`、Alpine / Vue のインラインテンプレートで実在する書き方）。
+fn tag_end(bytes: &[u8], i: usize) -> usize {
+    let mut j = i + 1;
+    let mut quote = 0u8;
+    // 直前の非空白が `=` か。引用が始まるのは属性値の先頭だけなので、そこだけ見る
+    // ——タグの中のどこの `'` でも引用扱いにすると、`<p title=Bob's>` のような引用符無しの
+    // 属性値に含まれるアポストロフィで次の `'` か EOF まで飲み込み、その間のブロック要素が
+    // 刻まれないまま落ちる。
+    let mut after_eq = false;
+    while j < bytes.len() {
+        let c = bytes[j];
+        if quote != 0 {
+            if c == quote {
+                quote = 0;
+            }
+        } else if (c == b'"' || c == b'\'') && after_eq {
+            quote = c;
+        } else if c == b'>' {
+            return j + 1;
+        }
+        if !c.is_ascii_whitespace() {
+            after_eq = c == b'=';
+        }
+        j += 1;
+    }
+    bytes.len()
+}
+
+/// `i`（`<`）から始まるのがブロック要素の開きタグなら、タグ名の直後の位置を返す。
+/// 属性はそこへ差し込む。閉じタグ（`</p>`）・宣言（`<!DOCTYPE>`）・対象外のタグは None。
+fn block_tag_end(bytes: &[u8], i: usize) -> Option<usize> {
+    let start = i + 1;
+    let mut j = start;
+    while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+        j += 1;
+    }
+    if j == start {
+        return None;
+    }
+    // タグ名が区切りで終わっていること。`<p-custom>` のようなカスタム要素を `<p>` と
+    // 取り違えない（`-` で止まった時点で区切りではないので弾ける）。
+    if !bytes.get(j).map_or(false, |&c| is_tag_delim(c)) {
+        return None;
+    }
+    let name = &bytes[start..j];
+    if BLOCK_TAGS.iter().any(|t| t.eq_ignore_ascii_case(name)) {
+        Some(j)
+    } else {
+        None
+    }
+}
+
+/// iframe に配る html のブロック要素へ `data-src-line` を刻む。これが入ると iframe の
+/// 中の要素が md の段落や `<li>` と同じ「ユニット」になり、コメントのデータ構造
+/// （`file` + `startLine` + `endLine` + `quote`）を変えずに html へ広げられる。
+///
+/// なぜ属性か: 「N 番目の開始タグ = DOM の N 番目の要素」という対応表を別に持つ案は、
+/// パーサが構造を作り替える（`<tbody>` の暗黙挿入、入れ子の修復）ので**表のあるページで
+/// 静かにズレる**。属性なら要素に付いて回るし、JS が後から生成した DOM も最寄りの祖先の
+/// 行へ落とせる。
+///
+/// バイト列で処理するので文字コードに依存しない（`inject_style_gate` と同じ筋）。
+fn inject_src_lines(bytes: Vec<u8>) -> Vec<u8> {
+    if bytes.len() > STAMP_MAX_BYTES {
+        return bytes;
+    }
+    let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 16);
+    let mut line = 1usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b != b'<' {
+            if b == b'\n' {
+                line += 1;
+            }
+            out.push(b);
+            i += 1;
+            continue;
+        }
+        if let Some(end) = skip_opaque(&bytes, i) {
+            line += bytes[i..end].iter().filter(|&&c| c == b'\n').count();
+            out.extend_from_slice(&bytes[i..end]);
+            i = end;
+            continue;
+        }
+        // タグは丸ごと読み切ってから出す。中を 1 バイトずつ辿ると属性値の中の `<p>` まで
+        // 拾ってしまう（`tag_end` の Why not を参照）。
+        if !is_tag_start(&bytes, i) {
+            out.push(b);
+            i += 1;
+            continue;
+        }
+        let end = tag_end(&bytes, i);
+        match block_tag_end(&bytes, i) {
+            // 属性は**タグ名の直後**へ入れる。末尾（`>` の手前）に置くと、閉じていない
+            // 引用符や `/` の付いた自己終了タグで属性の外へ落ちることがある。
+            Some(name_end) => {
+                out.extend_from_slice(&bytes[i..name_end]);
+                out.extend_from_slice(format!(r#" data-src-line="{line}""#).as_bytes());
+                out.extend_from_slice(&bytes[name_end..end]);
+            }
+            None => out.extend_from_slice(&bytes[i..end]),
+        }
+        line += bytes[i..end].iter().filter(|&&c| c == b'\n').count();
+        i = end;
+    }
+    out
 }
 
 /// カスタムプロトコルのハンドラが 1 リクエストを処理するのに必要なもの一式。
@@ -1118,6 +1321,261 @@ mod tests {
         src.extend_from_slice(b"</head><body>x</body>");
         let out = inject_style_gate(src);
         assert!(find_ci_ascii(&out, b"md:style-gate").is_some());
+    }
+
+    /// 刻まれた行番号を (タグ名, 行) の並びで拾う。順序が本文どおりであることも見る。
+    fn stamps(out: &[u8]) -> Vec<(String, usize)> {
+        let s = String::from_utf8_lossy(out).into_owned();
+        let mut found = Vec::new();
+        let mut rest = s.as_str();
+        while let Some(pos) = rest.find(" data-src-line=\"") {
+            let head = &rest[..pos];
+            let tag = head.rsplit('<').next().unwrap_or("").to_string();
+            let after = &rest[pos + " data-src-line=\"".len()..];
+            let end = after.find('"').unwrap();
+            found.push((tag, after[..end].parse().unwrap()));
+            rest = &after[end..];
+        }
+        found
+    }
+
+    #[test]
+    fn src_lines_stamp_block_tags_only() {
+        let src = b"<html>\n<body>\n<p>a</p>\n<div><span>s</span><li>b</li></div>\n<h2>t</h2>\n</body>\n</html>".to_vec();
+        let out = inject_src_lines(src);
+        // div / span / html / body は対象外。ブロック要素だけが、本文の行番号で刻まれる。
+        assert_eq!(stamps(&out), vec![
+            ("p".to_string(), 3),
+            ("li".to_string(), 4),
+            ("h2".to_string(), 5),
+        ]);
+    }
+
+    #[test]
+    fn src_lines_stamp_table_rows_and_cells() {
+        // 表は tr / td / th が錨になる（table 自体は掴む単位として大きすぎる）。
+        let out = inject_src_lines(b"<table>\n<tr><th>h</th></tr>\n<tr><td>d</td></tr>\n</table>".to_vec());
+        assert_eq!(stamps(&out), vec![
+            ("tr".to_string(), 2),
+            ("th".to_string(), 2),
+            ("tr".to_string(), 3),
+            ("td".to_string(), 3),
+        ]);
+    }
+
+    #[test]
+    fn src_lines_insert_before_existing_attributes() {
+        let out = inject_src_lines(br#"<p class="a" id="b">x</p>"#.to_vec());
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, r#"<p data-src-line="1" class="a" id="b">x</p>"#);
+    }
+
+    #[test]
+    fn src_lines_match_whole_tag_name() {
+        // `<pre>` を見て `<p` と早合点しない。カスタム要素も別物として扱う。
+        let out = inject_src_lines(b"<pre>c</pre>\n<p-custom>x</p-custom>\n<paragraph>y</paragraph>".to_vec());
+        assert_eq!(stamps(&out), vec![("pre".to_string(), 1)]);
+    }
+
+    #[test]
+    fn src_lines_ignore_closing_tags() {
+        let out = inject_src_lines(b"<p>a</p><p>b</p>".to_vec());
+        // 開きタグ 2 つだけ。`</p>` には刻まない。
+        assert_eq!(stamps(&out), vec![("p".to_string(), 1), ("p".to_string(), 1)]);
+    }
+
+    #[test]
+    fn src_lines_uppercase_tags() {
+        let out = inject_src_lines(b"<P CLASS=x>y</P>".to_vec());
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, r#"<P data-src-line="1" CLASS=x>y</P>"#);
+    }
+
+    #[test]
+    fn src_lines_skip_raw_text_and_comments() {
+        // script / style / textarea / title の中身と HTML コメントに現れる `<p>` は
+        // タグではない。刻むと本文に属性文字列が見えてしまう。
+        let src = br#"<script>var s = "<p>x</p>";</script>
+<style>/* <li>y</li> */</style>
+<textarea><p>z</p></textarea>
+<title><p>t</p></title>
+<!-- <p>c</p> -->
+<p>real</p>"#
+            .to_vec();
+        let out = inject_src_lines(src);
+        assert_eq!(stamps(&out), vec![("p".to_string(), 6)]);
+        // 素通しした中身は 1 バイトも変わっていない。
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(r#"<script>var s = "<p>x</p>";</script>"#), "{s}");
+        assert!(s.contains("<textarea><p>z</p></textarea>"), "{s}");
+    }
+
+    #[test]
+    fn src_lines_count_lines_inside_skipped_regions() {
+        // 素通しした区間の改行も数えないと、以降の行番号が全部ずれる。
+        let out = inject_src_lines(b"<script>\n\n</script>\n<!--\n-->\n<p>x</p>".to_vec());
+        assert_eq!(stamps(&out), vec![("p".to_string(), 6)]);
+    }
+
+    #[test]
+    fn src_lines_unclosed_raw_text_swallows_rest() {
+        // 閉じ忘れた script は末尾まで素通し（安全側）。後続に刻まない。
+        let out = inject_src_lines(b"<script>\n<p>x</p>".to_vec());
+        assert!(stamps(&out).is_empty());
+    }
+
+    #[test]
+    fn src_lines_noop_for_huge_html() {
+        let mut src = b"<p>x</p>".to_vec();
+        src.resize(STAMP_MAX_BYTES + 1, b' ');
+        assert_eq!(inject_src_lines(src.clone()), src);
+    }
+
+    #[test]
+    fn src_lines_handle_non_utf8() {
+        // 非 UTF-8 バイトが混じってもパニックせず、行は刻まれる。
+        let mut src = b"<p>".to_vec();
+        src.push(0xFF);
+        src.extend_from_slice(b"</p>");
+        let out = inject_src_lines(src);
+        assert_eq!(find_ci_ascii(&out, br#"<p data-src-line="1">"#), Some(0));
+        assert!(out.contains(&0xFF));
+    }
+
+    #[test]
+    fn src_lines_do_not_read_inside_attribute_values() {
+        // 属性値の中の `<li>` をタグと見なすと、差し込む `"` が引用値を閉じてタグごと壊れる。
+        // Bootstrap の data-bs-content / Alpine・Vue のインラインテンプレートで実在する書き方。
+        let out = inject_src_lines(br#"<td data-tpl="<li>x</li>">v</td>"#.to_vec());
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, r#"<td data-src-line="1" data-tpl="<li>x</li>">v</td>"#);
+
+        // 刻まない側のタグでも同じ（`<a>` の属性値が本文へ漏れない）。
+        let out = inject_src_lines(br#"<a title="<p>">v</a>"#.to_vec());
+        assert_eq!(String::from_utf8(out).unwrap(), r#"<a title="<p>">v</a>"#);
+
+        // 単引用でも、引用の中の `>` でタグを閉じないことでも同じ。
+        let out = inject_src_lines(br#"<p title='a>b'>x</p>"#.to_vec());
+        assert_eq!(String::from_utf8(out).unwrap(), r#"<p data-src-line="1" title='a>b'>x</p>"#);
+    }
+
+    #[test]
+    fn src_lines_keep_anchors_after_attribute_values_that_look_opaque() {
+        // 属性値の中の `<script>` を本物と誤認すると、そこから本物の `</script>` までが
+        // 素通しになって、間のブロック要素が刻まれないまま落ちる。
+        let src = b"<div data-x=\"<script>\"></div>\n<p>one</p>\n<script>s</script>\n<p>two</p>".to_vec();
+        assert_eq!(stamps(&inject_src_lines(src)), vec![
+            ("p".to_string(), 2),
+            ("p".to_string(), 4),
+        ]);
+
+        // `<!--` も同じ。閉じが無いので、誤認すると以降が丸ごと落ちる。
+        let src = b"<a title=\"<!--\">x</a>\n<p>one</p>".to_vec();
+        assert_eq!(stamps(&inject_src_lines(src)), vec![("p".to_string(), 2)]);
+    }
+
+    #[test]
+    fn src_lines_accept_close_tags_with_trailing_space() {
+        // ブラウザは終了タグ名の後の空白を許す。`</script>` という並びだけを探すと
+        // 次の本物まで素通しになり、間の行が刻まれない。
+        let src = b"<script>1</script >\n<p>a</p>\n<script>2</script>\n<p>b</p>".to_vec();
+        assert_eq!(stamps(&inject_src_lines(src)), vec![
+            ("p".to_string(), 2),
+            ("p".to_string(), 4),
+        ]);
+    }
+
+    #[test]
+    fn src_lines_skip_text_that_shows_through() {
+        // 中身がそのまま画面に出る要素は素通しする（textarea と同じ理由）。
+        let out = inject_src_lines(b"<xmp><p>a</p></xmp>\n<p>b</p>".to_vec());
+        assert_eq!(stamps(&out), vec![("p".to_string(), 2)]);
+        // plaintext は閉じタグを持たない。以降すべてがプレーンテキストになる。
+        let out = inject_src_lines(b"<plaintext><p>a</p>\n<p>b</p>".to_vec());
+        assert!(stamps(&out).is_empty());
+    }
+
+    #[test]
+    fn src_lines_win_over_an_existing_attribute() {
+        // md-preview 自身の --html ダンプを .html として開くとこの入力になる。
+        // 重複属性は先勝ちなので、こちらが差した値が採用される。
+        let out = inject_src_lines(br#"<p data-src-line="42">a</p>"#.to_vec());
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, r#"<p data-src-line="1" data-src-line="42">a</p>"#);
+    }
+
+    #[test]
+    fn src_lines_and_style_gate_compose_either_way() {
+        // 本番経路は 2 つを順に通す。差し込む文字列が互いのパターンを含まず、改行も
+        // 足さないので順序に依存しない——依存し始めたらここが落ちる。
+        let src = b"<html>\n<head><link></head>\n<body>\n<p>x</p>\n</body>".to_vec();
+        let a = inject_style_gate(inject_src_lines(src.clone()));
+        let b = inject_src_lines(inject_style_gate(src));
+        assert_eq!(a, b);
+        let s = String::from_utf8(a).unwrap();
+        assert!(s.contains(r#"<p data-src-line="4">"#), "{s}");
+        assert_eq!(s.matches("md:style-gate").count(), 1, "{s}");
+    }
+
+    #[test]
+    fn src_lines_count_crlf_as_one_line() {
+        let out = inject_src_lines(b"<p>a</p>\r\n<p>b</p>\r\n<p>c</p>".to_vec());
+        assert_eq!(stamps(&out), vec![
+            ("p".to_string(), 1),
+            ("p".to_string(), 2),
+            ("p".to_string(), 3),
+        ]);
+    }
+
+    #[test]
+    fn src_lines_keep_scanning_after_an_unquoted_apostrophe() {
+        // 引用が始まるのは属性値の先頭だけ。タグの中のどの `'` でも引用扱いにすると、
+        // 引用符無しの属性値に含まれるアポストロフィで次の `'` か EOF まで飲み込む。
+        let out = inject_src_lines(b"<p title=Bob's>a</p>\n<p>b</p>\n<p>c</p>".to_vec());
+        assert_eq!(stamps(&out), vec![
+            ("p".to_string(), 1),
+            ("p".to_string(), 2),
+            ("p".to_string(), 3),
+        ]);
+    }
+
+    #[test]
+    fn src_lines_degrade_without_breaking_the_page() {
+        // 走査が誤っても配信物を壊さないこと。差し込みは常にタグ名の直後なので、
+        // 飲み込んだ区間はそのまま出る＝錨が減るだけで済む。この性質が崩れると、
+        // 走査の穴が「刻み漏れ」ではなく「他人のページの破壊」になる。
+        let src = br#"<p data-x="<b>" title='a>b' onclick="if(x<y){}">t</p>"#.to_vec();
+        let out = inject_src_lines(src.clone());
+        let s = String::from_utf8(out).unwrap();
+        // 刻んだ属性を抜くと元のバイト列に戻る。
+        assert_eq!(s.replace(r#" data-src-line="1""#, ""), String::from_utf8(src).unwrap());
+    }
+
+    #[test]
+    fn style_gate_accepts_close_tags_with_trailing_space() {
+        // gate 側の走査も `</script >` を終端と認める（行の錨と同じ規則で読む）。
+        let src = b"<head><script>var s=\"</head>\";</script ><link></head><body>x</body>".to_vec();
+        let out = String::from_utf8(inject_style_gate(src)).unwrap();
+        assert_eq!(out.matches("md:style-gate").count(), 1, "{out}");
+        assert!(out.contains("<link><script>/*md:style-gate*/void 0</script></head>"), "{out}");
+    }
+
+    #[test]
+    fn style_gate_skips_pseudo_head_inside_title() {
+        // `<title>` の中身はタグとして読まない。ここへ gate を入れるとタイトルが壊れる。
+        let src = b"<head><title></head></title><link></head><body>x</body>".to_vec();
+        let out = String::from_utf8(inject_style_gate(src)).unwrap();
+        assert_eq!(out.matches("md:style-gate").count(), 1, "{out}");
+        assert!(out.contains("<title></head></title>"), "{out}");
+        assert!(out.contains("<link><script>/*md:style-gate*/void 0</script></head>"), "{out}");
+    }
+
+    #[test]
+    fn src_lines_leave_bare_angle_brackets_alone() {
+        // `a < b` の `<` はタグではない。読み飛ばすと後続のブロックまで落ちる。
+        let out = inject_src_lines(b"a < b 5<6\n<p>x</p>".to_vec());
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s, "a < b 5<6\n<p data-src-line=\"2\">x</p>");
     }
 
     #[test]
