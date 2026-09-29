@@ -10,8 +10,12 @@
 // 時刻（UNIX 秒）、read は既読か。並びは新しい順で、その順に描く。
 //
 // ドロップダウンは開いている間だけ DOM にある（右クリックメニューと同じ作法）。
-// 開いている間は本文の素キーを止めるので、j/k/Enter はここで受ける——keymap.js の
-// 表には `b` だけを載せ、中の移動キーは ⌘P のパレットと同じくモジュール側が持つ。
+//
+// ⚠️ keymap.js は「効く文脈を表だけに置く」と宣言しているが、ここはその例外になる。
+// 開いている間は本文の素キーを止めるので、表の `when: bare`（`!overlayOpen()` を含む）
+// が偽になり、表からは開く側しか撃てない。**移動キーと閉じる `b` はこのファイルが持つ。**
+// `/`（検索）は同じ制約に「開くだけ」と割り切って応えているが、ベルは押した指で
+// 閉じられる方がよい（開けたまま離れる用事が無い）ので、1 キーで開閉させている。
 (function() {
   // Rust から渡された全件。ここは写しであって持ち主ではない。
   var list = [];
@@ -36,8 +40,10 @@
     var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
-  // 直上のフォルダ名。**名前だけでは足りない**ので必ず添える——通知で届くのは AI が
+  // 直上のフォルダ名。**名前だけでは足りない**ので添える——通知で届くのは AI が
   // 書いた md で、`README.md` や `notes.md` が別のフォルダから並ぶ。
+  // root 直下のファイルには付かない（表示名に区切りが無いため）。どの行にも同じ
+  // 名前が付いて見分けの役に立たないので、それでよい——タブの見出しと同じ規則。
   function parentName(p) {
     var segs = displayOf(p).split('/');
     segs.pop();
@@ -50,11 +56,13 @@
   // 「20 分前」なのは正しいが、そこから先を経過秒で割ると、日付が変わっているのに
   // 「0 日前」と言うことになる。
   function relTime(at) {
+    // 保存ファイルの時刻が読めなかった行は 0 で来る（行ごと落とすより残す、という
+    // notifications.rs の決め）。ここで空を返し、呼ぶ側が「時刻不明」と書く。
     if (!at) return '';
     var then = at * 1000;
     var now = Date.now();
     var sec = Math.floor((now - then) / 1000);
-    if (sec < 0) return 'たった今';        // 時計が巻き戻った端末でも嘘を言わない
+    // 負（時計が巻き戻った端末）もここへ落とす。未来の時刻を「-3 分前」と書かない。
     if (sec < 60) return 'たった今';
     if (sec < 3600) return Math.floor(sec / 60) + ' 分前';
     if (sec < 86400) return Math.floor(sec / 3600) + ' 時間前';
@@ -72,6 +80,11 @@
     return Math.round((midnight(b) - midnight(a)) / 86400000);
   }
 
+  function indexOfPath(path) {
+    for (var i = 0; i < list.length; i++) if (list[i].path === path) return i;
+    return -1;
+  }
+
   function unreadCount() {
     var n = 0;
     for (var i = 0; i < list.length; i++) if (!list[i].read) n++;
@@ -84,7 +97,7 @@
     if (!host || bellEl) return;
     bellEl = document.createElement('button');
     bellEl.type = 'button';
-    bellEl.id = 'md-bell';
+    bellEl.id = 'tabbar-bell';
     bellEl.title = '通知 (b)';
     bellEl.setAttribute('aria-label', '通知');
     bellEl.innerHTML =
@@ -148,9 +161,19 @@
   function place() {
     if (!panel || !bellEl) return;
     var r = bellEl.getBoundingClientRect();
-    panel.style.top = (r.bottom + 4) + 'px';
+    var top = r.bottom + 4;
+    panel.style.top = top + 'px';
     // 画面の左へはみ出さない下限だけ見る。右端は窓の縁から 8px。
     panel.style.right = Math.max(8, window.innerWidth - r.right - 2) + 'px';
+    // 一覧の高さは「7 件ぶん」と「窓に残っている高さ」の小さい方。窓の高さを見ないと、
+    // 低い窓では下の行がスクロール容器ごと画面の外へ出る——そうなると
+    // scrollIntoView でも連れて来られない（容器の中では既に見えている扱いになる）。
+    var rows = panel.querySelector('.md-bell-list');
+    if (rows) {
+      var room = window.innerHeight - top - 8 - panel.firstChild.offsetHeight;
+      rows.style.maxHeight = 'min(calc(var(--md-bell-row-h) * ' + VISIBLE_ROWS + '), ' +
+        Math.max(88, room) + 'px)';
+    }
   }
 
   function renderPanel() {
@@ -186,9 +209,9 @@
       return;
     }
 
+    // 高さの上限は place() が入れる（窓の高さを見て決めるので、描くだけでは決まらない）。
     var rows = document.createElement('div');
     rows.className = 'md-bell-list';
-    rows.style.maxHeight = 'calc(var(--md-bell-row-h) * ' + VISIBLE_ROWS + ')';
     list.forEach(function(item, i) {
       rows.appendChild(buildRow(item, i));
     });
@@ -207,7 +230,7 @@
     row.appendChild(dot);
 
     // 名前と「親フォルダ · 相対時刻」の 2 段。1 段に詰めると親フォルダの置き場所が
-    // 無くなり、同名のファイルが並んだときに見分けが付かない（#32 の決め）。
+    // 無くなる（`parentName` を参照）。
     var lines = document.createElement('span');
     lines.className = 'md-bell-lines';
     var name = document.createElement('span');
@@ -216,9 +239,10 @@
     lines.appendChild(name);
     var sub = document.createElement('span');
     sub.className = 'md-bell-sub';
-    var dir = parentName(item.path);
-    var when = relTime(item.at);
-    sub.textContent = dir && when ? dir + ' · ' + when : (dir || when);
+    var parts = [parentName(item.path), relTime(item.at)].filter(Boolean);
+    // 2 段目が空のまま残ると壊れて見える。root 直下のファイルで、かつ保存ファイルの
+    // 時刻が読めなかった行だけがここに来る。
+    sub.textContent = parts.length ? parts.join(' · ') : '時刻不明';
     lines.appendChild(sub);
     row.appendChild(lines);
 
@@ -244,6 +268,9 @@
     if (window.ipc) window.ipc.postMessage('notify:' + verb);
   }
 
+  // Why not 端で反対側へ巡回する: 押し間違いが「一覧の反対端へのジャンプ」になる。
+  // タブの ⇧Tab は巡回するが、あちらは数枚で全部見えている。こちらは 100 件まで
+  // 伸びるので、飛んだ先がどこか画面から分からない。
   function moveCursor(delta) {
     if (!list.length) return;
     cursor = Math.max(0, Math.min(list.length - 1, cursor + delta));
@@ -258,9 +285,15 @@
 
   // 開いている間の移動キー。capture で受けて本文へ流さない。
   // Esc は MdCommon が一括で持っている（最前面の 1 つだけを閉じる）ので拾わない。
+  //
+  // 入力欄にフォーカスがあるときは何も取らない。ベルは `mousedown` を
+  // `preventDefault` するので**フォーカスを奪わずに開く**——コメントを書きかけの
+  // まま開くと、この先の分岐が textarea への `j` や `b` を食う（実測）。
+  // keymap.js の `bare` が同じガード（`isFieldEl`）を持っているのと揃える。
   function onKeyDown(e) {
     if (!panel) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (window.MdCommon && MdCommon.isFieldEl && MdCommon.isFieldEl(e.target)) return;
     if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
     else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); activate(); }
@@ -287,13 +320,20 @@
     },
     // Rust から全件を渡される唯一の口（#32）。差分ではないので、毎回まるごと置き換える。
     push: function(next) {
+      // カーソルは添字で持っているが、**新着は先頭に差し込まれる**ので、
+      // 添字を据え置くと指す行がずれる。開いて眺めている最中に届いたぶんだけ
+      // 下へ押されて、直後の Enter が狙いと違うファイルを開くことになる。
+      // 置き直す基準はパス（並びが変わっても同じ行に留まる）。
+      var was = list[cursor] ? list[cursor].path : null;
       list = Array.isArray(next) ? next : [];
-      if (cursor >= list.length) cursor = list.length - 1;
+      cursor = was ? indexOfPath(was) : -1;
+      // 消えた行に居たとき、開いている最中に 0 件から増えたとき、どちらも先頭へ。
+      // 開いていないなら -1 のまま（open() が置き直す）。
+      if (cursor < 0 && panel && list.length) cursor = 0;
       renderBell();
       if (panel) { renderPanel(); place(); }
     },
-    isOpen: isOpen,
-    toggle: toggle,
-    close: close
+    // 公開するのは 2 つだけ。`isOpen` / `close` は registerOverlay へ、`toggle` は
+    // MdKeymap へ、どちらもモジュールの中から渡している。
   };
 })();

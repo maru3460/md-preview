@@ -1034,7 +1034,7 @@ body.folder-mode {
    currentColor と --md-accent の混色で組む。未読の丸を赤にしないのはそのため——
    赤はテーマが持っていない色で、1 つ足すと「ベルのためだけの色」が 13 テーマに要る。
    アクセントで塗りつぶせば、地色が明るくても暗くても目に入る。 */
-#md-bell {
+#tabbar-bell {
     position: relative;
     display: flex;
     align-items: center;
@@ -1052,15 +1052,15 @@ body.folder-mode {
     cursor: pointer;
 }
 
-#md-bell:hover,
-#md-bell.is-open {
+#tabbar-bell:hover,
+#tabbar-bell.is-open {
     opacity: 1;
     background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 /* 未読があるときだけ濃くする。押さなくても「来ている」が分かるのがベルの仕事で、
    ドロップダウンを開くのはその後の能動的な行為。 */
-#md-bell.has-unread {
+#tabbar-bell.has-unread {
     opacity: 1;
 }
 
@@ -1082,15 +1082,20 @@ body.folder-mode {
     text-align: center;
 }
 
-/* ドロップダウン。ベルの真下に fixed で置く（位置は notify.js が測って入れる）。 */
+/* ドロップダウン。ベルの真下に fixed で置く（位置は notify.js が測って入れる）。
+   地も文字もシステムカラーで組む——パネルは Canvas 地に浮く chrome、という
+   下の宣言どおり（右クリックメニュー・⌘P・TOC・トーストと同じ）。地だけ Canvas に
+   して文字をテーマの本文色から借りると、`color-scheme` を書き忘れたテーマが来た日に
+   **このパネルだけ**暗地に暗文字になる。 */
 .md-bell-panel {
     position: fixed;
     z-index: 1000;
     width: 300px;
     max-width: calc(100vw - 16px);
-    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
     border-radius: 8px;
     background: Canvas;
+    color: CanvasText;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     overflow: hidden;
     font-size: 12.5px;
@@ -1101,7 +1106,7 @@ body.folder-mode {
     align-items: center;
     justify-content: space-between;
     padding: 8px 10px;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
 }
 
 .md-bell-title {
@@ -1109,12 +1114,15 @@ body.folder-mode {
     font-size: 12px;
 }
 
+/* 下線を引くのは、アクセントが本文と同じ色のテーマ（ink の #000000）で
+   ただの文字に見えてしまうため。色だけを押せる合図にしない。 */
 .md-bell-readall {
     padding: 0;
     border: 0;
     background: transparent;
     color: var(--md-accent, Highlight);
     font-size: 11px;
+    text-decoration: underline;
     cursor: pointer;
 }
 
@@ -1132,7 +1140,7 @@ body.folder-mode {
     height: var(--md-bell-row-h);
     padding: 0 10px;
     box-sizing: border-box;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, CanvasText 8%, transparent);
     cursor: pointer;
 }
 
@@ -1141,7 +1149,7 @@ body.folder-mode {
 }
 
 .md-bell-row:hover {
-    background: color-mix(in srgb, currentColor 7%, transparent);
+    background: color-mix(in srgb, CanvasText 7%, transparent);
 }
 
 /* j/k のカーソル。ツリーの `.tree-item.active` と同じ「塗り＋行頭の帯」にする。

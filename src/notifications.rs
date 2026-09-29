@@ -50,9 +50,10 @@ pub fn load() -> Vec<Entry> {
 /// 「開けません」と言う。ここで聞くと、`--notify` の直後に書き換えられただけの
 /// ファイル（AI が書いて、すぐ整形し直す）が通知ごと消える。
 ///
-/// ⚠️ read-modify-write をロック無しでやっている。いま `add` を呼ぶのは**座を持つ
-/// 1 プロセスのイベントループスレッドだけ**なので直列だが、#32 が別プロセスから
-/// 書けるようにすると last-writer-wins で行が消える。
+/// ⚠️ read-modify-write をロック無しでやっている。守っているのは「呼ぶのは窓を持つ
+/// 1 プロセスのイベントループスレッドだけ」という約束で、#32 の既読（[`mark_read`]）も
+/// そこへ揃えてある。別のスレッドや別プロセスから書けるようにすると、あとから
+/// 書いた方が勝って行が消える。
 pub fn add(ids: &[String]) -> Vec<Entry> {
     let Some(dir) = crate::config_dir() else { return Vec::new() };
     let mut list = parse(crate::store::read(&dir, FILE));
@@ -68,8 +69,7 @@ pub fn add(ids: &[String]) -> Vec<Entry> {
 /// （`id_to_path`）を挟むと、**ファイルが消えた通知だけ既読にできなくなる**——
 /// それは押して「開けません」と言われた直後の通知そのものである。
 ///
-/// ⚠️ 読んで・変えて・書き戻す の 3 手なので、[`add`] と同時に走ってはいけない。
-/// 呼ぶのはどちらもイベントループのスレッドだけ、という約束で守っている（#32 の決め）。
+/// ⚠️ [`add`] と同じ read-modify-write。同じ約束で守っている。
 pub fn mark_read(id: Option<&str>) -> Vec<Entry> {
     let Some(dir) = crate::config_dir() else { return Vec::new() };
     let mut list = parse(crate::store::read(&dir, FILE));
@@ -258,9 +258,8 @@ mod tests {
         assert!(!set_read(&mut list, None));
     }
 
-    /// 消えたファイルの通知こそ既読にしたい（押して「開けません」と言われた直後）。
-    /// 実体の有無を見ないので、居ないパスを指したときは黙って何もしない。
     #[test]
+    /// 居ないパスを指しても何も変えない（実体の有無は見ない。理由は `mark_read` の doc）。
     fn marking_a_path_that_is_not_in_the_list_changes_nothing() {
         let mut list = vec![entry("/a.md", 9, false)];
         assert!(!set_read(&mut list, Some("/gone.md")));

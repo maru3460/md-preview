@@ -737,18 +737,14 @@ fn main() {
                             _ => {}
                         }
                     } else if let Some(rest) = body.strip_prefix("notify:") {
-                        // 既読（#32）。`quick:remove` と同じく素の識別子で引く——
-                        // `id_to_path` は canonicalize なので、通すと**消えたファイルの
-                        // 通知だけ既読にできなくなる**。それは押して「開けません」と
-                        // 言われた直後の通知そのものである。
-                        match rest.split_once(':') {
-                            Some(("read", id)) => {
-                                let target = Some(id.to_string());
-                                let _ = proxy.send_event(AppEvent::NotifyRead(target));
+                        // 既読（#32）。理由は `notifications::mark_read` の doc。
+                        // 識別子を `id_to_path` に通さないのもあちらに書いてある。
+                        let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
+                        match verb {
+                            "read" => {
+                                let _ = proxy.send_event(AppEvent::NotifyRead(Some(id.to_string())));
                             }
-                            None if rest == "read-all" => {
-                                let _ = proxy.send_event(AppEvent::NotifyRead(None));
-                            }
+                            "read-all" => { let _ = proxy.send_event(AppEvent::NotifyRead(None)); }
                             _ => {}
                         }
                     } else if let Some(id) = body.strip_prefix("closed:") {
@@ -932,9 +928,8 @@ fn main() {
                 let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
             }
             Event::UserEvent(AppEvent::NotifyRead(id)) => {
-                // 書き換えた結果をページへ渡し直す。ページに先に自分の写しを直させない
-                // のは、**一覧の持ち主を 1 つに保つ**ため（#32）。往復はローカルなので
-                // 押した感触は落ちない。
+                // ページに先に自分の写しを直させず、書き換えた結果を渡し直す。
+                // 往復はローカルなので押した感触は落ちない。
                 let list = md_preview::notifications::mark_read(id.as_deref());
                 let _ = webview.evaluate_script(&md_preview::html::notifications_script(&list));
             }

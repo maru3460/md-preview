@@ -108,6 +108,14 @@
       run: 'toc-toggle', match: letter('t'), when: cmdAnywhere },
     { cat: 'find', keys: '⌘P', desc: 'ファイル検索（あいまい検索。未入力なら git 変更ファイルが先頭）',
       run: 'palette-toggle', match: letter('p'), when: cmdAnywhere },
+    // 通知ベル（notify.js）。⌘P と同じ「一覧を出して選んで開く」ものなのでここに置く。
+    // ⚠️ この行が撃てるのは**開く側だけ**。ベルは素キーを止めるオーバーレイなので、
+    // 開いた瞬間に `bare`（`!overlayOpen()`）が偽になる。閉じる `b` と中の j/k/Enter は
+    // notify.js が持っている（`/` は同じ制約に「開くだけ」と割り切っているが、ベルは
+    // 押した指で閉じられる方がよいと判断した）。
+    // ⌘B（サイドバー）の隣なので押し間違いは起きるが、素キーの空きは限られている。
+    { cat: 'find', keys: 'b', desc: '通知（届いたファイル）を開閉（開いている間 j/k で移動・Enter で開く）',
+      run: 'notify-toggle', match: keys('b'), when: bare },
 
     // ── 表示を切り替える（viewmode.js） ──
     { cat: 'view', keys: '⌘D', desc: 'git 差分表示を切り替え',
@@ -146,14 +154,6 @@
     { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）',
       run: 'tab-goto', match: digit19,
       when: function(e) { return cmd(e) && !overlayOpen(); } },
-
-    // ── 通知ベル（notify.js） ──
-    // `md --notify` で届いたファイルの一覧。開いている間の j/k/Enter はこの表に
-    // 載せない——ベルは素キーを止めるオーバーレイなので、`when` に使う `bare` が
-    // 偽になる。⌘P のパレットと同じく、中の移動キーはモジュール側が持つ。
-    // ⌘B（サイドバー）の隣なので押し間違いは起きるが、素キーの空きは限られている。
-    { cat: 'files', keys: 'b', desc: '通知（届いたファイル）を開閉（開いている間 j/k で移動・Enter で開く）',
-      run: 'notify-toggle', match: keys('b'), when: bare },
 
     // ── ファイルツリー（folder.js） ──
     { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉',
