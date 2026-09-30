@@ -205,6 +205,19 @@ test('入力欄に書きかけがあるときは、開いていても素キー�
   await expect(panel(page)).toBeVisible();
 });
 
+test('j/k で選び直しても、一覧の高さは変わらない', async ({ page }) => {
+  await openFolder(page);
+  await push(page, Array.from({ length: 12 }, (_, i) => ({ path: id(page, 'a.md') + i, ago: i * 60 })));
+  await page.keyboard.press('b');
+
+  const height = () => page.evaluate(() => document.querySelector('.md-bell-list').getBoundingClientRect().height);
+  // 12 件あっても 7 件ぶんで打ち切る。
+  const before = await height();
+  expect(before).toBeLessThan(44 * 8);
+  for (let i = 0; i < 4; i += 1) await page.keyboard.press('j');
+  expect(await height()).toBe(before);
+});
+
 test('窓が低いときも、一覧は画面の中に収まる', async ({ page }) => {
   await openFolder(page);
   await page.setViewportSize({ width: 900, height: 260 });

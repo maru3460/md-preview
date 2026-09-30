@@ -136,8 +136,7 @@
     document.body.appendChild(panel);
     // 最初の 1 件にカーソルを置く。開いてすぐ Enter で最新を開けるようにするため。
     cursor = list.length ? 0 : -1;
-    renderPanel();
-    place();
+    redraw();
     bellEl.classList.add('is-open');
     document.addEventListener('mousedown', onDocMouseDown, true);
     document.addEventListener('keydown', onKeyDown, true);
@@ -174,6 +173,13 @@
       rows.style.maxHeight = 'min(calc(var(--md-bell-row-h) * ' + VISIBLE_ROWS + '), ' +
         Math.max(88, room) + 'px)';
     }
+  }
+
+  // 描き直したら必ず置き直す。高さの上限を入れるのは place() なので、
+  // renderPanel だけを呼ぶと一覧が伸びきって画面の外へ出る。
+  function redraw() {
+    renderPanel();
+    place();
   }
 
   function renderPanel() {
@@ -274,7 +280,7 @@
   function moveCursor(delta) {
     if (!list.length) return;
     cursor = Math.max(0, Math.min(list.length - 1, cursor + delta));
-    renderPanel();
+    redraw();
     var el = panel && panel.querySelector('.md-bell-row.is-cursor');
     if (el) el.scrollIntoView({ block: 'nearest' });
   }
@@ -331,7 +337,7 @@
       // 開いていないなら -1 のまま（open() が置き直す）。
       if (cursor < 0 && panel && list.length) cursor = 0;
       renderBell();
-      if (panel) { renderPanel(); place(); }
+      if (panel) redraw();
     },
     // 公開するのは 2 つだけ。`isOpen` / `close` は registerOverlay へ、`toggle` は
     // MdKeymap へ、どちらもモジュールの中から渡している。

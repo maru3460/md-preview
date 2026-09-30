@@ -1083,16 +1083,17 @@ body.folder-mode {
 }
 
 /* ドロップダウン。ベルの真下に fixed で置く（位置は notify.js が測って入れる）。
-   地も文字もシステムカラーで組む——パネルは Canvas 地に浮く chrome、という
-   下の宣言どおり（右クリックメニュー・⌘P・TOC・トーストと同じ）。地だけ Canvas に
-   して文字をテーマの本文色から借りると、`color-scheme` を書き忘れたテーマが来た日に
-   **このパネルだけ**暗地に暗文字になる。 */
+   **色の本家はテーマ側**（`.md-bell-panel` を 13 テーマが塗る。TOC パネルと同じ
+   「地の上に浮く面」として扱う）。ここに置く Canvas / CanvasText は、テーマが
+   塗り忘れたときに地と文字が対のまま残るための落とし所で、見えている色ではない。
+   中の区切り線・ホバー・沈めた 2 段目は、テーマが入れた color から currentColor で
+   作る——面ごとに色を 1 つ決めれば中身が追従する。 */
 .md-bell-panel {
     position: fixed;
     z-index: 1000;
     width: 300px;
     max-width: calc(100vw - 16px);
-    border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+    border: 1px solid;
     border-radius: 8px;
     background: Canvas;
     color: CanvasText;
@@ -1106,7 +1107,7 @@ body.folder-mode {
     align-items: center;
     justify-content: space-between;
     padding: 8px 10px;
-    border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
 }
 
 .md-bell-title {
@@ -1140,7 +1141,7 @@ body.folder-mode {
     height: var(--md-bell-row-h);
     padding: 0 10px;
     box-sizing: border-box;
-    border-bottom: 1px solid color-mix(in srgb, CanvasText 8%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
     cursor: pointer;
 }
 
@@ -1149,7 +1150,7 @@ body.folder-mode {
 }
 
 .md-bell-row:hover {
-    background: color-mix(in srgb, CanvasText 7%, transparent);
+    background: color-mix(in srgb, currentColor 7%, transparent);
 }
 
 /* j/k のカーソル。ツリーの `.tree-item.active` と同じ「塗り＋行頭の帯」にする。
