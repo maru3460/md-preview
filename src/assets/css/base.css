@@ -861,12 +861,16 @@ body.folder-mode {
 }
 
 /* 高さはタブと同じに刻む。34px を全部使うと、下 2px を横スクロールバーへ譲って
-   いるタブとの中心が 1px ずれる。 */
+   いるタブとの中心が 1px ずれる。
+   右の余白は窓の縁のぶん。詰めるとベルが縁に貼り付き、未読の数（アイコンの外へ
+   食み出す）が角に食い込む。 */
 #tabbar-icons {
     display: flex;
     align-items: center;
+    gap: 2px;
     flex-shrink: 0;
     height: calc(var(--md-tabbar-h) - var(--md-sb-w));
+    padding-right: 6px;
 }
 
 /* タブの高さはタブ帯の高さから横スクロールバーぶんを引いて固定する。stretch に任せると、
@@ -1022,6 +1026,188 @@ body.folder-mode.nav-tree .tree-item.active.cursor {
 body.folder-mode {
     padding: 0;
     overflow: hidden;
+}
+
+
+/* ── 通知ベル（#32）────────────────────────────────────────────
+   タブバー右端のアイコン帯（#tabbar-icons）に住む。色はここでもテーマに増やさず
+   currentColor と --md-accent の混色で組む。未読の丸を赤にしないのはそのため——
+   赤はテーマが持っていない色で、1 つ足すと「ベルのためだけの色」が 13 テーマに要る。
+   アクセントで塗りつぶせば、地色が明るくても暗くても目に入る。 */
+#tabbar-bell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 幅はベル（15px）より広く取る。未読の数は右上に重ねるので、詰めると数が
+       ベルそのものを覆って何のアイコンか分からなくなる。 */
+    width: 32px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.65;
+    cursor: pointer;
+}
+
+#tabbar-bell:hover,
+#tabbar-bell.is-open {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* 未読があるときだけ濃くする。押さなくても「来ている」が分かるのがベルの仕事で、
+   ドロップダウンを開くのはその後の能動的な行為。 */
+#tabbar-bell.has-unread {
+    opacity: 1;
+}
+
+/* ベルの角に外掛けする。中へ寄せるとベルそのものを覆って、何のアイコンか
+   分からなくなる（34px の帯には 4px の余りがあるので、はみ出しても切れない）。 */
+.md-bell-count {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 12px;
+    height: 12px;
+    padding: 0 2px;
+    border-radius: 6px;
+    background: var(--md-accent, Highlight);
+    color: Canvas;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 12px;
+    text-align: center;
+}
+
+/* ドロップダウン。ベルの真下に fixed で置く（位置は notify.js が測って入れる）。
+   **色の本家はテーマ側**（`.md-bell-panel` を 13 テーマが塗る。TOC パネルと同じ
+   「地の上に浮く面」として扱う）。ここに置く Canvas / CanvasText は、テーマが
+   塗り忘れたときに地と文字が対のまま残るための落とし所で、見えている色ではない。
+   中の区切り線・ホバー・沈めた 2 段目は、テーマが入れた color から currentColor で
+   作る——面ごとに色を 1 つ決めれば中身が追従する。 */
+.md-bell-panel {
+    position: fixed;
+    z-index: 1000;
+    width: 300px;
+    max-width: calc(100vw - 16px);
+    border: 1px solid;
+    border-radius: 8px;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    font-size: 12.5px;
+}
+
+.md-bell-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.md-bell-title {
+    font-weight: 600;
+    font-size: 12px;
+}
+
+/* 下線を引くのは、アクセントが本文と同じ色のテーマ（ink の #000000）で
+   ただの文字に見えてしまうため。色だけを押せる合図にしない。 */
+.md-bell-readall {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--md-accent, Highlight);
+    font-size: 11px;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* 1 件の高さ。ここを見せる件数に掛けて一覧の高さの上限を出す（notify.js）ので、
+   行の高さを変えるときはこの変数だけ動かす。2 段組みの実測値。 */
+.md-bell-list {
+    --md-bell-row-h: 44px;
+    overflow-y: auto;
+}
+
+.md-bell-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--md-bell-row-h);
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+    cursor: pointer;
+}
+
+.md-bell-row:last-child {
+    border-bottom: 0;
+}
+
+.md-bell-row:hover {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+/* j/k のカーソル。ツリーの `.tree-item.active` と同じ「塗り＋行頭の帯」にする。
+   別の見せ方にすると、同じ「いま選んでいる行」が画面の中で 2 通りになる。 */
+.md-bell-row.is-cursor {
+    background: color-mix(in srgb, var(--md-accent, Highlight) 14%, transparent);
+    box-shadow: inset 2px 0 0 var(--md-accent, Highlight);
+}
+
+/* 既読は沈めるが消さない。「さっき開いたやつ、どれだっけ」を起こさないため（#32）。 */
+.md-bell-row.is-read {
+    opacity: 0.45;
+}
+
+/* 未読の印は「丸 ＋ 太字」の 2 つ重ね。丸だけだと 6px は小さすぎ、太字だけだと
+   既読と並んだときに濃さの差でしか分からない。 */
+.md-bell-row.is-unread .md-bell-name {
+    font-weight: 700;
+}
+
+.md-bell-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--md-accent, Highlight);
+}
+
+/* 既読の行でも場所は空けておく。詰めると、既読になった瞬間に名前が左へ飛ぶ。 */
+.md-bell-row.is-read .md-bell-dot {
+    background: transparent;
+}
+
+.md-bell-lines {
+    flex: 1;
+    min-width: 0;
+}
+
+.md-bell-name,
+.md-bell-sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.md-bell-sub {
+    margin-top: 1px;
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+.md-bell-empty {
+    padding: 22px 10px;
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.6;
 }
 
 /* ── Find bar (Cmd+F) ───────────────────────────────────────── */

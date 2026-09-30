@@ -108,6 +108,14 @@
       run: 'toc-toggle', match: letter('t'), when: cmdAnywhere },
     { cat: 'find', keys: '⌘P', desc: 'ファイル検索（あいまい検索。未入力なら git 変更ファイルが先頭）',
       run: 'palette-toggle', match: letter('p'), when: cmdAnywhere },
+    // 通知ベル（notify.js）。⌘P と同じ「一覧を出して選んで開く」ものなのでここに置く。
+    // ⚠️ この行が撃てるのは**開く側だけ**。ベルは素キーを止めるオーバーレイなので、
+    // 開いた瞬間に `bare`（`!overlayOpen()`）が偽になる。閉じる `b` と中の j/k/Enter は
+    // notify.js が持っている（`/` は同じ制約に「開くだけ」と割り切っているが、ベルは
+    // 押した指で閉じられる方がよいと判断した）。
+    // ⌘B（サイドバー）の隣なので押し間違いは起きるが、素キーの空きは限られている。
+    { cat: 'find', keys: 'b', desc: '通知（届いたファイル）を開閉（開いている間 j/k で移動・Enter で開く）',
+      run: 'notify-toggle', match: keys('b'), when: bare },
 
     // ── 表示を切り替える（viewmode.js） ──
     { cat: 'view', keys: '⌘D', desc: 'git 差分表示を切り替え',
@@ -160,7 +168,7 @@
       when: function(e) { return metaOnly(e) && !inField(e) && !overlayOpen(); } },
     // Quick Access（#35）。ツリーのカーソル行を留める / 外す。★ と右クリックだけだと
     // マウス専用になるので、キーからも同じことができるようにする。
-    // `m` は vim の mark から。素キーの空き（`b` は #32 のベルが取る）。
+    // `m` は vim の mark から。素キーの空き（`b` はこの下のベルが取った）。
     { cat: 'tree', keys: 'm', desc: 'カーソル行を Quick Access に留める / 外す',
       run: 'quick-toggle', match: keys('m'),
       when: function(e) { return bare(e) && inTree(); } },
