@@ -57,10 +57,66 @@ enum AppEvent {
     /// ツリーの頂点を張り替える（#34）。ページの `root:` と、別プロセスから
     /// 転送されてきた `md <dir>` の両方がここへ集まる。
     SetRoot(PathBuf),
+    /// 通知を既読にする（#32）。`None` は「すべて既読」。
+    ///
+    /// ページの `notify:` を**その場で処理せずここまで運ぶ**のは、保存ファイルを
+    /// 書く場所を 1 か所に寄せるため。受信（`Open` の腕の `notifications::add`）と
+    /// 既読はどちらも「読んで・変えて・書き戻す」なので、別々の場所から呼ぶと
+    /// 割り込まないことがコードを追わないと分からなくなる。Quick Access
+    /// （`quick:`）が IPC ハンドラで直に書いているのと形が揃わないのは承知の上で、
+    /// あちらは**並びの持ち主がページ**で Rust は写しているだけ、という違いがある。
+    NotifyRead(Option<String>),
     /// root を動かせなかった（消えたフォルダ）。中身はページが送ってきた識別子で、
     /// 名前を出すためだけに運ぶ。**黙って終わらせないために要る**——Quick Access は
     /// 消えた行を残す設計（#35）なので、押した結果が何も起きないと故障に見える。
     RootFailed(String),
+    /// 設定タブ（#38）からの要求。ページの `settings:` がここへ集まる。
+    ///
+    /// IPC ハンドラで直に書かないのは、テーマの切り替えが窓と webview と
+    /// 配信の文脈を触るから。どれもイベントループの持ち物である。
+    Settings(SettingsRequest),
+}
+
+/// [`AppEvent::Settings`] の中身。
+enum SettingsRequest {
+    /// いまの状態をページへ渡し直す。設定タブを前に出すたびに来る。
+    Get,
+    /// テーマを切り替えて保存する。
+    Theme(String),
+    /// 初期サイズを保存する（#42）。打ち込まれた値と「いまの大きさに設定する」の両方が
+    /// ここへ来る。後者の大きさはページが測る（`settings.js` の `useCurrentSize`）。
+    ///
+    /// Why not Rust で `window.inner_size()` を測る: 窓を広げても起動時の大きさが返る。
+    /// tao が測るのは自分が作った中身の view だが、wry が webview を載せるときに
+    /// 窓の中身を自前の view へ差し替える（wry 0.55 `wkwebview/mod.rs` の
+    /// `setContentView`）ので、tao の view は窓から外れて大きさが追従しない。
+    /// webview は窓の中身いっぱいに張られているので、ページの innerWidth / innerHeight が
+    /// 窓を作るときに渡す大きさ（`with_inner_size`）と同じものになる。
+    WindowSize(u32, u32),
+    /// 初期サイズを既定へ戻す。
+    WindowSizeReset,
+}
+
+impl SettingsRequest {
+    /// `settings:` の後ろを読む。
+    fn parse(rest: &str) -> Option<Self> {
+        let (verb, value) = rest.split_once(':').unwrap_or((rest, ""));
+        Some(match verb {
+            "get" => SettingsRequest::Get,
+            "theme" => SettingsRequest::Theme(value.to_string()),
+            "window-size" => match value {
+                "reset" => SettingsRequest::WindowSizeReset,
+                // 関門は `parse_window_size`（読む側と同じ）。読めない値は保存せず、
+                // 今の状態を送り返す——ページの欄は打ったままになっているので、
+                // 黙って捨てると保存されたように見える。
+                _ => match app_config::parse_window_size(value) {
+                    Some((w, h)) => SettingsRequest::WindowSize(w, h),
+                    None => SettingsRequest::Get,
+                },
+            },
+            _ => return None,
+        })
+    }
 }
 
 /// 自己デタッチ後の子プロセスに「お前が本体だ」と伝える目印。
@@ -94,6 +150,7 @@ const SEAT_POLL: Duration = Duration::from_millis(20);
 /// `split_open_flags` を通るので、`-n` は子まで届く必要がある）。`targets` はそこから
 /// フラグを剥がしたパスで、検証に使う。
 fn detach_self(
+    flags: &cli::OpenFlags,
     stdin_mode: bool,
     argv: &[String],
     current_dir: &Option<PathBuf>,
@@ -111,7 +168,14 @@ fn detach_self(
     // 持たないので、ここを素通りさせると「窓も出ずエラーも出ず終了コード 0」になる。
     // 本体の from_paths と同じ関門（開けないパス・フォルダ混在）を通す。
     if !targets.is_empty() {
-        let _ = app_config::plan_paths(targets, current_dir);
+        // `--notify` は関門が違う（フォルダを 1 つ渡されただけでも弾く）ので、
+        // 本体と同じ方を通す。`plan_paths` に通すとフォルダが root として受かり、
+        // 子の中で初めて落ちる＝誰にも見えないエラーになる。
+        if flags.notify {
+            let _ = app_config::notify_ids(targets);
+        } else {
+            let _ = app_config::plan_paths(targets, current_dir);
+        }
     }
 
     // 子の口は 3 つとも /dev/null にする。端末へ繋ぐと、窓を持つプロセスが吐く
@@ -169,26 +233,36 @@ fn may_forward(flags: &cli::OpenFlags) -> bool {
 /// パスの検証（開けないパス・フォルダ混在）は `plan_paths` に任せる。
 /// ここは stderr を持っている経路なので、落ちるなら人に見える形で落ちてよい。
 fn message_to_forward(
+    flags: &cli::OpenFlags,
     stdin_mode: bool,
     targets: &[String],
     current_dir: &Option<PathBuf>,
 ) -> Option<md_preview::instance::Message> {
     use md_preview::instance::Message;
 
-    // フォルダ指定は「ツリーの頂点を張り替えろ」という要求として転送する（#34）。
-    // タブは 1 枚も増えないので `files` は空のまま。
+    // ⚠️ **後から足したキーには、古い受け側へ届いたときの穴がある**（引き受けた）。
+    // 踏むのは「古い窓が生きたまま `cargo install` で入れ替えた」ときだけで、
+    // 落ち方はキーごとに違う。
     //
-    // ⚠️ **引き受けた穴。** `root=` を知らない古い受け側（＝入れ替える前のバイナリが
-    // 持っている窓）へ届くと、未知キーとして捨てられて `files` が空になり、
-    // **窓が前に出るだけでフォルダが変わらない。** 変更前はフォルダ指定を転送せず
-    // 新しい窓を開いていたので、その場面だけ悪くなっている。
+    // - `root=`（#34）— 未知キーとして捨てられて `files` が空になり、**窓が前に出る
+    //   だけでフォルダが変わらない**
+    // - `notify=`（#36）— 同じく捨てられて**普通の転送になる**。タブが開き、窓が
+    //   前に出る。積むだけのはずが作業を中断させる側に化けるので体感はこちらが悪い
+    // - `theme=`（#38。送るのはここではなく `md theme` の `cli::run_theme_command`）—
+    //   捨てられて「ファイルの無い普通の転送」になる。アプリは前面化されない
+    //   （`activate=0` は古い受け側も解す）が、**⌘W で隠した窓が出てくる**。
+    //   テーマは次の起動まで変わらない
     //
-    // Why not 挨拶に「root を解せる」印を足して、無ければ転送しない: 踏むのは
-    // 「古い窓が生きたまま入れ替えた」ときだけで、⌘Q すれば消える。#31 が決めた
+    // Why not 挨拶に「このキーを解せる」印を足して、無ければ転送しない: #31 が決めた
     // 「未知のキーは無視。キーを足してもバージョンは上げない」に手を入れる対価の方が
-    // 大きいと見た。`plan.md` 4.5 に「入れ替えの前に ⌘Q」を書いてある。
+    // 大きいと見た。⌘Q すれば消えるので、`plan.md` 4.5 の「入れ替えの前に ⌘Q」で
+    // 引き受けている。
     let mut root = None;
-    let ids = if stdin_mode {
+    let ids = if flags.notify {
+        // `--notify` はファイルを並べるだけのフラグ。フォルダは積む対象ではないので
+        // ここで弾かれ、パイプ入力は main の入口で落としてあるのでここへ来ない。
+        app_config::notify_ids(targets)
+    } else if stdin_mode {
         // パイプ入力も `md file.md` と同じ経路に乗せる。実体化は main の頭で済んで
         // いるので、ここはそのパスを識別子にするだけ。
         let doc = PathBuf::from(std::env::var_os(app_config::STDIN_FILE_ENV)?)
@@ -196,6 +270,8 @@ fn message_to_forward(
             .ok()?;
         vec![request::file_id(&doc)]
     } else if let Some(dir) = single_dir_arg(targets) {
+        // フォルダ指定は「ツリーの頂点を張り替えろ」という要求として転送する（#34）。
+        // タブは 1 枚も増えないので `files` は空のまま。
         root = Some(request::file_id(&dir));
         Vec::new()
     } else {
@@ -205,7 +281,9 @@ fn message_to_forward(
         return None;
     }
 
-    let mut msg = Message::new(ids);
+    // 「積むだけ」の 2 つ（タブを増やすな・前に出すな）を対で立てるのは
+    // `Message::notification` の仕事。ここでばらさない。
+    let mut msg = if flags.notify { Message::notification(ids) } else { Message::new(ids) };
     msg.root = root;
     msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     msg.sender_pid = Some(std::process::id() as i32);
@@ -225,8 +303,11 @@ fn message_to_forward(
     //
     // 誰も居ないとき（冷スタート）は 0.8ms を捨てることになるが、その経路は
     // 元から 259ms 掛かっているので、避けるために組み替える価値は無いと見た。
+    //
+    // 通知では取らない。窓を前に出さないので「閉じたら戻る先」も動かす理由が無く、
+    // ここで付け替えると、裏で積んだだけのエージェントの端末が ⌘W の戻り先になる。
     #[cfg(target_os = "macos")]
-    {
+    if !flags.notify {
         msg.launcher_pid = platform::get_frontmost_pid();
     }
     // stdin の一時ディレクトリは受け側が引き取る。**送り側は消さない**——消すと
@@ -278,7 +359,7 @@ fn forward_to_running_instance(
         return false;
     }
     let Some(ep) = Endpoint::user_default() else { return false };
-    let Some(msg) = message_to_forward(stdin_mode, targets, current_dir) else { return false };
+    let Some(msg) = message_to_forward(flags, stdin_mode, targets, current_dir) else { return false };
     matches!(deliver(&ep, &msg), Delivery::Done)
 }
 
@@ -363,7 +444,7 @@ fn take_the_seat(
         // かもしれないので、層1 と違ってここは待つ。
         let msg = match &msg {
             Some(m) => m,
-            None => msg.insert(message_to_forward(stdin_mode, targets, current_dir)?),
+            None => msg.insert(message_to_forward(flags, stdin_mode, targets, current_dir)?),
         };
         match deliver(&ep, msg) {
             Delivery::Done => std::process::exit(0),
@@ -455,6 +536,14 @@ fn main() {
         std::process::exit(1);
     }
 
+    // `--notify` にパイプ入力は積めない（#36）。実体化した一時ファイルはタブと同じ
+    // 寿命（#49）なので、積んだ行は**閉じた時点で死んだパスを指す**。押して初めて
+    // 「開けません」と言う行を台帳に残すより、ここで断る方が筋が通る。
+    if open_flags.notify && stdin_mode {
+        eprintln!("md: --notify にはファイルを指定してください（パイプ入力は積めません）");
+        std::process::exit(2);
+    }
+
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
     // 標準入力は一度しか読めない。転送に回すのか、子へ渡すのか、前景で開くのかを
@@ -490,7 +579,7 @@ fn main() {
     // 終わり」でプロンプトが返る方が自然なので、stdout が端末かどうかで挙動を分けない。
     if std::env::var_os(DETACHED_ENV).is_none()
         && std::env::var_os(NO_DETACH_ENV).is_none()
-        && detach_self(stdin_mode, &args[1..], &current_dir, &targets)
+        && detach_self(&open_flags, stdin_mode, &args[1..], &current_dir, &targets)
     {
         return;
     }
@@ -501,11 +590,15 @@ fn main() {
     let seat = take_the_seat(&open_flags, stdin_mode, &targets, &current_dir);
 
     let custom_css = md_preview::user_style_css();
-    let (theme_paint, appearance, active_theme) = theme::resolve(&theme::read_active_name());
+    // テーマは設定画面と `md theme` で変わる（#38）ので mut。
+    let (theme_paint, appearance, mut active_theme) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
     let config = if stdin_mode {
         AppConfig::from_stdin(&theme_css, &custom_css, &current_dir)
+    } else if open_flags.notify {
+        // 受け取る md が居なかった `--notify`。積む先が無いので普通に開く（#36）。
+        AppConfig::from_notify(&targets, &theme_css, &custom_css, &current_dir)
     } else {
         AppConfig::from_paths(&targets, &theme_css, &custom_css, &current_dir)
     };
@@ -580,9 +673,10 @@ fn main() {
     // 透かしても白の代わりが無いので、直しようが無い方を選んでいる。
     let bg = window_bg_rgba(active_theme, platform::os_is_dark());
 
+    let (width, height) = initial_window_size(&event_loop);
     let mut window_builder = WindowBuilder::new()
         .with_title(&title)
-        .with_inner_size(LogicalSize::new(app_config::WINDOW_WIDTH, app_config::WINDOW_HEIGHT));
+        .with_inner_size(LogicalSize::new(width, height));
     if let Some(color) = bg {
         window_builder = window_builder.with_background_color(color);
     }
@@ -694,6 +788,21 @@ fn main() {
                             // `canonicalize` なので、**消えたパスを外せなくなる**。
                             "remove" => quick_access::remove(id),
                             _ => {}
+                        }
+                    } else if let Some(rest) = body.strip_prefix("notify:") {
+                        // 既読（#32）。理由は `notifications::mark_read` の doc。
+                        // 識別子を `id_to_path` に通さないのもあちらに書いてある。
+                        let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
+                        match verb {
+                            "read" => {
+                                let _ = proxy.send_event(AppEvent::NotifyRead(Some(id.to_string())));
+                            }
+                            "read-all" => { let _ = proxy.send_event(AppEvent::NotifyRead(None)); }
+                            _ => {}
+                        }
+                    } else if let Some(rest) = body.strip_prefix("settings:") {
+                        if let Some(req) = SettingsRequest::parse(rest) {
+                            let _ = proxy.send_event(AppEvent::Settings(req));
                         }
                     } else if let Some(id) = body.strip_prefix("closed:") {
                         let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
@@ -875,6 +984,41 @@ fn main() {
             Event::UserEvent(AppEvent::RootFailed(id)) => {
                 let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
             }
+            Event::UserEvent(AppEvent::NotifyRead(id)) => {
+                // ページに先に自分の写しを直させず、書き換えた結果を渡し直す。
+                // 往復はローカルなので押した感触は落ちない。
+                let list = md_preview::notifications::mark_read(id.as_deref());
+                let _ = webview.evaluate_script(&md_preview::html::notifications_script(&list));
+            }
+            Event::UserEvent(AppEvent::Settings(req)) => {
+                match req {
+                    SettingsRequest::Get => {}
+                    SettingsRequest::Theme(name) => {
+                        // 一覧に無い名前は受けない。ページが送るのは一覧から選んだ名前
+                        // だけだが、一覧を渡した後でユーザーテーマが消えることはある。
+                        if theme::theme_exists(&name) {
+                            if let Err(e) = theme::write_active_name(&name) {
+                                eprintln!("md: テーマを保存できませんでした: {}", e);
+                            }
+                            active_theme = apply_theme(&name, &ctx, &window, &webview);
+                            // 状態は渡し直さない。続けて押している最中に返事が届くと、
+                            // ページの ✓ が 1 つ前のテーマへ引き戻される。ページは自分で
+                            // 選んだ名前を写しへ書いてある。
+                            return;
+                        }
+                    }
+                    SettingsRequest::WindowSize(w, h) => {
+                        let (w, h) = app_config::raise_to_min(w, h);
+                        save_window_size(&app_config::format_window_size(w, h));
+                    }
+                    SettingsRequest::WindowSizeReset => {
+                        // 行を消す口は settings に無い。空の値は「書いていない」と同じに読む
+                        // （`app_config::window_size`）ので、それで足りる。
+                        save_window_size("");
+                    }
+                }
+                send_settings(&webview);
+            }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
                 let _ = webview.evaluate_script(&script);
@@ -889,8 +1033,40 @@ fn main() {
                 if !script.is_empty() {
                     let _ = webview.evaluate_script(&script);
                 }
+                // 前回までに届いていたぶんと、この合図より前に届いたぶん（#32）。
+                // ページは自分では一覧を持たないので、ここで渡すまでベルは空のまま。
+                let list = md_preview::notifications::load();
+                let _ = webview.evaluate_script(&md_preview::html::notifications_script(&list));
             }
             Event::UserEvent(AppEvent::Open(msg)) => {
+                // `md theme <name>` が保存した後の知らせ（#38）。窓は出さない——打った人は
+                // 端末に居て、切り替わったことは窓が見えていれば色で分かる。
+                if msg.theme {
+                    active_theme = apply_theme(&theme::read_active_name(), &ctx, &window, &webview);
+                    // 設定タブが開いていれば ✓ を動かす。開いていなければ写しを
+                    // 持っているだけで、次に前に出したときに取り直す。
+                    if page_ready {
+                        send_settings(&webview);
+                    }
+                    return;
+                }
+                // `--notify` は開かずに積むだけ（#36）。窓は前に出ないし、隠して
+                // あるなら隠れたまま、閉じかけているなら閉じ切る。下の作法（隠すのを
+                // やめる・戻り先の付け替え・窓を持ち上げる・タブを開く）は全部
+                // 「人が md を叩いて窓を見に来た」ための手順なので、1 つも通らない。
+                //
+                // ここで台帳へ積む（見せるのは #32）。ページに持たせないのは、窓が
+                // `AppEvent::Ready` より前に届いたぶんを取りこぼすため。
+                if msg.notify {
+                    let list = md_preview::notifications::add(&msg.files);
+                    // ページがまだ描けていないなら渡さない。`AppEvent::Ready` の腕が
+                    // 同じものを渡し直すので、取りこぼしにはならない。
+                    if page_ready {
+                        let script = md_preview::html::notifications_script(&list);
+                        let _ = webview.evaluate_script(&script);
+                    }
+                    return;
+                }
                 // 隠すと決めた後でも、全画面から抜けるのを待っている間（最大 2.5 秒）に
                 // 転送が届いたら隠すのをやめる。隠す経路は座を手放さないので受け口は
                 // 生きていて、ここへ来られる。終了の待ちは座を手放してから始めるので、
@@ -1263,16 +1439,95 @@ mod close_tests {
 
 /// 窓の外観（タイトルバーと信号ボタン）をテーマに合わせる。
 ///
-/// 外観を固定したテーマだけ指定する。OS 追従のテーマに指定してしまうと、OS の設定を
-/// 変えても窓だけ古い外観に取り残される。
+/// 外観を固定したテーマなら、その外観を指定する。OS 追従のテーマなら指定を外す。
+/// 外さないと、固定テーマから切り替えたとき（#38）に古い外観が残り、OS の設定を
+/// 変えても窓だけ取り残される。
 /// OS の外観が変わっても呼び直さなくてよい。指定しなかった窓（OS 追従テーマ）は
 /// macOS が勝手に追随し、指定した窓（固定テーマ）は追随しないのが正しい姿だから。
 fn apply_window_appearance(window: &tao::window::Window, appearance: theme::Appearance) {
-    match appearance {
-        theme::Appearance::Dark => platform::set_window_appearance(window, true),
-        theme::Appearance::Light => platform::set_window_appearance(window, false),
-        theme::Appearance::Auto => {}
+    let dark = match appearance {
+        theme::Appearance::Dark => Some(true),
+        theme::Appearance::Light => Some(false),
+        theme::Appearance::Auto => None,
+    };
+    platform::set_window_appearance(window, dark);
+}
+
+/// 窓の初期サイズ（#42）。`settings` の値を、つながっている画面の大きさで縮める。
+///
+/// 幅と高さは別々に「いちばん大きい画面」と比べる。縦置きと横置きが混ざると、
+/// どの画面にも収まらない組み合わせを通すことがあり、メニューバーと Dock のぶんも
+/// 見ていない。ここが受け持つのは桁違いの値（外付け画面で保存した大きさ）を
+/// 落とすことだけで、数十ポイントの食み出しは引き受けている。
+///
+/// Why not 収めない: 画面より大きい窓は、タイトルバーと右下のつまみが画面の外へ出て
+/// 掴めなくなる。外付け画面で保存した大きさを、ノートの画面だけで開いたときに起きる。
+///
+/// Why not 窓を出す画面に合わせる: 窓を作る前は、どの画面に出るかがまだ決まっていない。
+fn initial_window_size(event_loop: &tao::event_loop::EventLoop<AppEvent>) -> (f64, f64) {
+    let size = app_config::window_size(
+        md_preview::settings::load().get(md_preview::settings::WINDOW_SIZE),
+    );
+    let monitors = event_loop.available_monitors().map(|m| {
+        let s = m.size().to_logical::<f64>(m.scale_factor());
+        (s.width, s.height)
+    });
+    fit_to_largest_monitor(size, monitors)
+}
+
+/// 幅と高さを、それぞれいちばん大きい画面に収める。画面が 1 つも読めなければそのまま。
+fn fit_to_largest_monitor(
+    (w, h): (f64, f64),
+    monitors: impl Iterator<Item = (f64, f64)>,
+) -> (f64, f64) {
+    let largest = monitors.fold(None::<(f64, f64)>, |acc, (mw, mh)| match acc {
+        Some((aw, ah)) => Some((aw.max(mw), ah.max(mh))),
+        None => Some((mw, mh)),
+    });
+    match largest {
+        Some((sw, sh)) => (w.min(sw), h.min(sh)),
+        None => (w, h),
     }
+}
+
+/// テーマを切り替える（#38）。配信の文脈・窓の外観と下地・開いているページの 4 つを
+/// 同じ解決結果から揃える。戻り値は下地色を引き直すとき（OS の外観が変わったとき）の
+/// ために持っておく、当たった同梱テーマ。
+fn apply_theme(
+    name: &str,
+    ctx: &request::RequestContext,
+    window: &tao::window::Window,
+    webview: &wry::WebView,
+) -> Option<&'static theme::Theme> {
+    let (paint, appearance, active) = theme::resolve(name);
+    let css = theme::style_layer(appearance, &paint);
+    apply_window_appearance(window, appearance);
+    if let Some(color) = window_bg_rgba(active, platform::os_is_dark()) {
+        window.set_background_color(Some(color));
+        let _ = webview.set_background_color(color);
+    }
+    let _ = webview.evaluate_script(&md_preview::html::theme_script(&css, appearance));
+    ctx.set_theme(css);
+    active
+}
+
+/// 初期サイズ（#42）を保存する。空は「既定へ戻す」。
+fn save_window_size(value: &str) {
+    if let Err(e) = md_preview::settings::set(md_preview::settings::WINDOW_SIZE, value) {
+        eprintln!("md: 窓の大きさを保存できませんでした: {}", e);
+    }
+}
+
+/// 設定タブへ状態を渡す（#38）。毎回 `settings` を読み直すのは、`md theme` や
+/// 手で書き換えたぶんも拾うため。読むのは数十バイトのファイル 1 つ。
+fn send_settings(webview: &wry::WebView) {
+    let theme_name = theme::read_active_name();
+    let window_size = md_preview::settings::load()
+        .get(md_preview::settings::WINDOW_SIZE)
+        .and_then(app_config::parse_window_size);
+    let themes = theme::choices();
+    let view = md_preview::html::SettingsView { theme: &theme_name, themes: &themes, window_size };
+    let _ = webview.evaluate_script(&md_preview::html::settings_script(&view));
 }
 
 /// 窓と webview に渡す下地色。色を決められないときは None（塗らない）。
@@ -1509,6 +1764,34 @@ mod tests {
 
     fn top(s: &str) -> bool {
         is_top_frame(&s.parse::<wry::http::Uri>().unwrap())
+    }
+
+    /// 外付け画面で保存した大きさを、ノートの画面だけで開いたときに掴めなくならないこと。
+    /// 幅と高さは別々に、つながっている中でいちばん大きい画面に収める。
+    #[test]
+    fn the_initial_size_is_fitted_to_the_largest_monitor() {
+        let monitors = [(1512.0, 982.0), (2560.0, 1440.0)];
+        assert_eq!(fit_to_largest_monitor((3000.0, 900.0), monitors.into_iter()), (2560.0, 900.0));
+        assert_eq!(fit_to_largest_monitor((1440.0, 900.0), monitors.into_iter()), (1440.0, 900.0));
+        assert_eq!(fit_to_largest_monitor((3000.0, 2000.0), std::iter::empty()), (3000.0, 2000.0));
+    }
+
+    /// 設定タブから来る `settings:` の読み方（#38）。打ち込まれた大きさは読む側と
+    /// 同じ関門（`parse_window_size`）に通す。
+    #[test]
+    fn settings_requests_are_parsed_and_bad_sizes_are_sent_back() {
+        assert!(matches!(SettingsRequest::parse("get"), Some(SettingsRequest::Get)));
+        assert!(matches!(SettingsRequest::parse("theme:nord"), Some(SettingsRequest::Theme(n)) if n == "nord"));
+        assert!(matches!(
+            SettingsRequest::parse("window-size:1440x900"),
+            Some(SettingsRequest::WindowSize(1440, 900))
+        ));
+        assert!(matches!(SettingsRequest::parse("window-size:reset"), Some(SettingsRequest::WindowSizeReset)));
+        // 読めない大きさは保存せず、今の状態を送り返させる。
+        assert!(matches!(SettingsRequest::parse("window-size:abc"), Some(SettingsRequest::Get)));
+        assert!(matches!(SettingsRequest::parse("window-size:0x900"), Some(SettingsRequest::Get)));
+        assert!(matches!(SettingsRequest::parse("window-size:20000x900"), Some(SettingsRequest::Get)));
+        assert!(SettingsRequest::parse("unknown").is_none());
     }
 
     #[test]

@@ -10,10 +10,12 @@
     /* 見出しナビ(TOC)サイドバーの幅。開いている間は右ガターをこの幅ぶん空ける。 */
     --md-toc-w: 300px;
     /* タブバーの高さ。ビューポート高から本文の高さを引く計算（.html-frame）が
-       参照するので、タブが出ていない時は 0 でなければならない。 */
+       参照するので、#tabbar を持たないページ（1 枚もの表示 = md の直開き /
+       --html ダンプ）では 0 でなければならない。シェルは body.folder-mode で
+       上書きする——あちらはタブが 0 枚でも帯を畳まない。 */
     --md-tabbar-h: 0px;
-    /* スクロールバーの太さ。タブの高さもこの値から引くので、太さを変えるときは
-       ここだけ動かす（2 箇所に 2px を散らさない）。 */
+    /* スクロールバーの太さ。タブとアイコン帯の高さもこの値から引くので、太さを
+       変えるときはここだけ動かす（2 箇所に 2px を散らさない）。 */
     --md-sb-w: 2px;
     /* 本文の外周（額縁）。1 枚もの表示は body、シェルは #preview-pane が持ち、
        .html-frame の高さもここから引く。値を散らすと iframe の高さだけ置き去りに
@@ -51,7 +53,7 @@
 #preview-pane::-webkit-scrollbar,
 #sidebar::-webkit-scrollbar,
 #quick-access::-webkit-scrollbar,
-#tabbar::-webkit-scrollbar,
+#tabbar-tabs::-webkit-scrollbar,
 pre::-webkit-scrollbar,
 .table-wrap::-webkit-scrollbar,
 .source-main pre code[data-src-wrapped]::-webkit-scrollbar,
@@ -68,7 +70,7 @@ pre::-webkit-scrollbar,
 #preview-pane::-webkit-scrollbar-track,
 #sidebar::-webkit-scrollbar-track,
 #quick-access::-webkit-scrollbar-track,
-#tabbar::-webkit-scrollbar-track,
+#tabbar-tabs::-webkit-scrollbar-track,
 pre::-webkit-scrollbar-track,
 .table-wrap::-webkit-scrollbar-track,
 .source-main pre code[data-src-wrapped]::-webkit-scrollbar-track,
@@ -86,7 +88,7 @@ pre::-webkit-scrollbar-corner {
 #preview-pane::-webkit-scrollbar-thumb,
 #sidebar::-webkit-scrollbar-thumb,
 #quick-access::-webkit-scrollbar-thumb,
-#tabbar::-webkit-scrollbar-thumb,
+#tabbar-tabs::-webkit-scrollbar-thumb,
 pre::-webkit-scrollbar-thumb,
 .table-wrap::-webkit-scrollbar-thumb,
 .source-main pre code[data-src-wrapped]::-webkit-scrollbar-thumb,
@@ -829,30 +831,49 @@ body.sidebar-closed #resizer::before {
 /* ── Folder mode: タブバー ──────────────────────────────────
    色はテーマ側に増やさず、本文の文字色(currentColor)と --md-accent の混色で組む
    （テーマを 1 つ足すたびにタブの配色まで書かせない、というのがここの方針）。
-   非アクティブは opacity で沈めるので、地色が明るくても暗くても破綻しない。
-   横スクロールバーは以前ここで消していたが、2px なら邪魔にならず「まだ右にタブがある」
-   合図になるので出す。消すには scrollbar-width:none と ::-webkit-scrollbar{display:none}
-   の両方が必要だった（前者も WebKit で効く）。 */
+   非アクティブは opacity で沈めるので、地色が明るくても暗くても破綻しない。 */
+
+/* 左がタブ帯、右がアイコン帯。外枠自身はスクロールしない——1 層のままここへ
+   アイコンを置くと、タブが増えたときに一緒に流れて画面外へ出る。 */
 #tabbar {
-    display: none;
+    display: flex;
     flex-shrink: 0;
     height: var(--md-tabbar-h);
-    align-items: stretch;
-    overflow-x: auto;
-    overflow-y: hidden;
     box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 14%, transparent);
 }
 
-/* タブが 1 枚も無い間（起動直後にファイル未指定）はバーごと畳む。 */
-body.has-tabs #tabbar {
-    display: flex;
-}
-
-body.has-tabs {
+/* タブが 0 枚でも畳まない。歯車とベルの居場所なので、ファイル未指定で開いた直後
+   （タブ帯が空）にも出ていなければならない。 */
+body.folder-mode {
     --md-tabbar-h: 34px;
 }
 
-/* タブの高さはバーの高さから横スクロールバーぶんを引いて固定する。stretch に任せると、
+/* 溢れてスクロールするのはこちらだけ。
+   横スクロールバーは以前消していたが、2px なら邪魔にならず「まだ右にタブがある」
+   合図になるので出す。消すには scrollbar-width:none と ::-webkit-scrollbar{display:none}
+   の両方が必要だった（前者も WebKit で効く）。 */
+#tabbar-tabs {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+/* 高さはタブと同じに刻む。34px を全部使うと、下 2px を横スクロールバーへ譲って
+   いるタブとの中心が 1px ずれる。
+   右の余白は窓の縁のぶん。詰めるとベルが縁に貼り付き、未読の数（アイコンの外へ
+   食み出す）が角に食い込む。 */
+#tabbar-icons {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    height: calc(var(--md-tabbar-h) - var(--md-sb-w));
+    padding-right: 6px;
+}
+
+/* タブの高さはタブ帯の高さから横スクロールバーぶんを引いて固定する。stretch に任せると、
    overflow-x:auto が「溢れた時だけ」バーを出すせいで、タブが増えた瞬間に高さが
    34px → 32px へ跳ねる。固定すれば溢れの有無で動かない（align-items:stretch は
    高さが決まった子には効かないので、タブは上端に揃う——溢れていない時に下へ空く
@@ -864,6 +885,10 @@ body.has-tabs {
     gap: 6px;
     flex-shrink: 0;
     height: calc(var(--md-tabbar-h) - var(--md-sb-w));
+    /* 下限は `sample.md` のタブの外寸（実測 107px）。「設定」や `a.md` のような短い名前の
+       タブが、押しにくいほど細くならないように。content-box なので、左右の余白（20px）と
+       右の罫（1px）を引いた中身の幅で書く。 */
+    min-width: 86px;
     max-width: 220px;
     padding: 0 8px 0 12px;
     font-size: 12.5px;
@@ -899,7 +924,10 @@ body.has-tabs {
 
 /* 閉じるボタンは常時出すと賑やかなので、hover と現在タブだけに出す。
    場所は空けたままにする（出た瞬間に文字が詰まって見えるのを防ぐ）。 */
+/* 名前が下限の幅より短いときも、× をタブの右端に揃える。名前の側を伸ばすと、
+   同名タブに添える親フォルダ名（.md-tab-dir）まで × の側へ押される。 */
 .md-tab-close {
+    margin-left: auto;
     flex-shrink: 0;
     width: 16px;
     height: 16px;
@@ -1005,6 +1033,191 @@ body.folder-mode.nav-tree .tree-item.active.cursor {
 body.folder-mode {
     padding: 0;
     overflow: hidden;
+}
+
+
+/* ── 通知ベル（#32）────────────────────────────────────────────
+   タブバー右端のアイコン帯（#tabbar-icons）に住む。色はここでもテーマに増やさず
+   currentColor と --md-accent の混色で組む。未読の丸を赤にしないのはそのため——
+   赤はテーマが持っていない色で、1 つ足すと「ベルのためだけの色」が 13 テーマに要る。
+   アクセントで塗りつぶせば、地色が明るくても暗くても目に入る。 */
+/* 歯車（#38）も同じ形のボタンなので、ここで一緒に組む。 */
+#tabbar-bell,
+#tabbar-gear {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 幅はベル（15px）より広く取る。未読の数は右上に重ねるので、詰めると数が
+       ベルそのものを覆って何のアイコンか分からなくなる。 */
+    width: 32px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.65;
+    cursor: pointer;
+}
+
+#tabbar-bell:hover,
+#tabbar-bell.is-open,
+#tabbar-gear:hover {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* 未読があるときだけ濃くする。押さなくても「来ている」が分かるのがベルの仕事で、
+   ドロップダウンを開くのはその後の能動的な行為。 */
+#tabbar-bell.has-unread {
+    opacity: 1;
+}
+
+/* ベルの角に外掛けする。中へ寄せるとベルそのものを覆って、何のアイコンか
+   分からなくなる（34px の帯には 4px の余りがあるので、はみ出しても切れない）。 */
+.md-bell-count {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 12px;
+    height: 12px;
+    padding: 0 2px;
+    border-radius: 6px;
+    background: var(--md-accent, Highlight);
+    color: Canvas;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 12px;
+    text-align: center;
+}
+
+/* ドロップダウン。ベルの真下に fixed で置く（位置は notify.js が測って入れる）。
+   **色の本家はテーマ側**（`.md-bell-panel` を 13 テーマが塗る。TOC パネルと同じ
+   「地の上に浮く面」として扱う）。ここに置く Canvas / CanvasText は、テーマが
+   塗り忘れたときに地と文字が対のまま残るための落とし所で、見えている色ではない。
+   中の区切り線・ホバー・沈めた 2 段目は、テーマが入れた color から currentColor で
+   作る——面ごとに色を 1 つ決めれば中身が追従する。 */
+.md-bell-panel {
+    position: fixed;
+    z-index: 1000;
+    width: 300px;
+    max-width: calc(100vw - 16px);
+    border: 1px solid;
+    border-radius: 8px;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    font-size: 12.5px;
+}
+
+.md-bell-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.md-bell-title {
+    font-weight: 600;
+    font-size: 12px;
+}
+
+/* 下線を引くのは、アクセントが本文と同じ色のテーマ（ink の #000000）で
+   ただの文字に見えてしまうため。色だけを押せる合図にしない。 */
+.md-bell-readall {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--md-accent, Highlight);
+    font-size: 11px;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* 1 件の高さ。ここを見せる件数に掛けて一覧の高さの上限を出す（notify.js）ので、
+   行の高さを変えるときはこの変数だけ動かす。2 段組みの実測値。 */
+.md-bell-list {
+    --md-bell-row-h: 44px;
+    overflow-y: auto;
+}
+
+.md-bell-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: var(--md-bell-row-h);
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+    cursor: pointer;
+}
+
+.md-bell-row:last-child {
+    border-bottom: 0;
+}
+
+.md-bell-row:hover {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+/* j/k のカーソル。ツリーの `.tree-item.active` と同じ「塗り＋行頭の帯」にする。
+   別の見せ方にすると、同じ「いま選んでいる行」が画面の中で 2 通りになる。 */
+.md-bell-row.is-cursor {
+    background: color-mix(in srgb, var(--md-accent, Highlight) 14%, transparent);
+    box-shadow: inset 2px 0 0 var(--md-accent, Highlight);
+}
+
+/* 既読は沈めるが消さない。「さっき開いたやつ、どれだっけ」を起こさないため（#32）。 */
+.md-bell-row.is-read {
+    opacity: 0.45;
+}
+
+/* 未読の印は「丸 ＋ 太字」の 2 つ重ね。丸だけだと 6px は小さすぎ、太字だけだと
+   既読と並んだときに濃さの差でしか分からない。 */
+.md-bell-row.is-unread .md-bell-name {
+    font-weight: 700;
+}
+
+.md-bell-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--md-accent, Highlight);
+}
+
+/* 既読の行でも場所は空けておく。詰めると、既読になった瞬間に名前が左へ飛ぶ。 */
+.md-bell-row.is-read .md-bell-dot {
+    background: transparent;
+}
+
+.md-bell-lines {
+    flex: 1;
+    min-width: 0;
+}
+
+.md-bell-name,
+.md-bell-sub {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.md-bell-sub {
+    margin-top: 1px;
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+.md-bell-empty {
+    padding: 22px 10px;
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.6;
 }
 
 /* ── Find bar (Cmd+F) ───────────────────────────────────────── */
@@ -1161,10 +1374,12 @@ body.folder-mode.md-toc-open #preview-pane {
     margin-right: calc(var(--md-toc-w) + 8px);
 }
 
-/* タブバーも TOC パネルの下に潜らせない。横スクロールするので padding ではなく
-   margin で幅そのものを詰める（padding だと右端のタブがパネルの裏に隠れる）。
-   詰める量はペインと同じ +8px。揃えないとタブバーの箱だけ 8px 右へ突き出て段差になり、
-   タブバー自身の横スクロールバーがパネルの左枠線に密着する。 */
+/* タブバーも TOC パネルの下に潜らせない。ここも padding ではなく margin。
+   #tabbar がスクロールコンテナだった頃の理由（末尾の padding はスクロール量に
+   含まれず、右端のタブが裏へ潜る）は 2 層化で消えたが、padding だと箱そのものが
+   パネルの裏まで伸びるので、下端の罫がペインの右端で切れずに食い込む。
+   詰める量はペインと同じ +8px。揃えないとタブバーの箱だけ 8px 右へ突き出て段差に
+   なり、タブ帯の横スクロールバーがパネルの左枠線に密着する。 */
 body.folder-mode.md-toc-open #tabbar {
     margin-right: calc(var(--md-toc-w) + 8px);
 }
@@ -2256,4 +2471,232 @@ body.md-cmt-mode .source-main .copy-btn {
     gap: 8px;
     padding: 9px 11px;
     border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+
+/* ── 設定タブ（#38）──────────────────────────────────────────────
+   本体の窓のタブの 1 枚として、本文ペイン（#preview-pane）の中に描く。
+   **色の本家はテーマ側**——テーマの CSS が `body` の地色・文字色と `--md-accent` を
+   塗るので、ここはそれを currentColor と --md-accent から混ぜて使うだけにする。
+   テーマを切り替えると、この画面もその場で塗り替わる。 */
+
+.st-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+    /* 本文（読み物）と違って行の長さを抑える理由が無いので、幅は広く取る。
+       カードの組（ライト・ダークとも 6 枚）が既定の窓で 1 段に並ぶ幅が要る。 */
+    max-width: 1120px;
+    margin: 0 auto;
+    /* 本文の読み物向けの大きさ（17px）と書体は持ち込まない。設定は UI。 */
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+/* 本文ペインの余白は読み物向け（--md-pad）で、設定画面には広すぎる。既定の窓で
+   カードの組を 1 段に並べる幅を取るために、設定タブを描いている間だけ詰める。
+   Why not JS でペインに class を付け外しする: 別のタブへ移ったとき、本文を差し替える
+   経路（loadPreview・clearPreview・raw / diff）の全部で外す必要がある。中身を見て
+   決めれば、外し忘れる場所ができない。 */
+#preview-pane:has(> .st-layout) {
+    padding: 16px 24px;
+}
+
+/* ── 左のナビ ── */
+/* 右のペインを読み進めても見えている位置に留める（本文ペインがスクローラ）。 */
+.st-nav {
+    position: sticky;
+    top: 0;
+    width: 176px;
+    flex: 0 0 auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 10px;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    user-select: none;
+}
+
+.st-nav button {
+    all: unset;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.st-nav button:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+
+.st-nav button.is-on {
+    background: color-mix(in srgb, var(--md-accent, Highlight) 16%, transparent);
+    color: color-mix(in srgb, var(--md-accent, Highlight) 70%, currentColor);
+    font-weight: 600;
+}
+
+.st-nav svg { width: 16px; height: 16px; flex: 0 0 auto; }
+
+/* ── 右のペイン ── */
+.st-pane { flex: 1; min-width: 0; padding: 4px 0 28px; }
+
+/* 文字はどれも同じ濃さで書く（薄くすると読みにくい）。段の区切りは濃淡ではなく、
+   ペインの見出しの下の線で付ける。 */
+.st-title {
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.st-item { padding: 6px 0 12px; }
+
+.st-label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 15px; }
+
+.st-desc { margin: 0 0 12px; font-size: 13.5px; }
+
+.st-group { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
+
+/* ── テーマのカード ── */
+.st-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 10px;
+}
+
+.st-card {
+    all: unset;
+    position: relative;
+    cursor: pointer;
+    border-radius: 9px;
+    padding: 6px;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.st-card:hover { border-color: color-mix(in srgb, currentColor 30%, transparent); }
+
+.st-card.is-on {
+    border-color: var(--md-accent, Highlight);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 35%, transparent);
+}
+
+.st-sw {
+    height: 58px;
+    border-radius: 6px;
+    padding: 8px 9px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px solid rgba(127, 127, 127, .18);
+}
+
+.st-sw .aa { font: 600 15px/1 Georgia, "Hiragino Mincho ProN", serif; }
+.st-sw .dots { display: flex; gap: 4px; }
+.st-sw .dots i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+/* ユーザーテーマは配色を持たない（theme.rs の swatch は同梱テーマにしか無い）。 */
+.st-sw.is-unknown {
+    border-style: dashed;
+    background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(127, 127, 127, .12) 6px 12px);
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    opacity: .8;
+}
+
+.st-card .name {
+    margin-top: 6px;
+    padding: 0 4px;
+    font-size: 13.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 印は見本の右上に重ねる。名前の前に置くと、その幅のぶん長い名前（solarized-light）が
+   既定の窓で切れる。地が明暗どちらでも見えるよう、アクセントの丸に白抜きで置く。 */
+.st-card .chk {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--md-accent, Highlight);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    visibility: hidden;
+}
+.st-card.is-on .chk { visibility: visible; }
+
+/* ── 既定に戻す ── */
+.st-reset { margin-top: 12px; font-size: 13px; }
+
+.st-link {
+    all: unset;
+    cursor: pointer;
+    color: var(--md-accent, LinkText);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.st-note { margin: 0 0 12px; font-size: 13px; }
+
+/* ── 初期サイズ ── */
+.st-dims { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+
+.st-field label { display: block; font-size: 13px; margin-bottom: 3px; }
+
+.st-num {
+    display: flex;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, currentColor 3%, transparent);
+    padding: 0 8px 0 0;
+}
+
+.st-num input {
+    all: unset;
+    width: 70px;
+    padding: 5px 8px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    user-select: text;
+}
+
+.st-num span { font-size: 12.5px; }
+
+.st-num:focus-within {
+    border-color: var(--md-accent, Highlight);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 30%, transparent);
+}
+
+.st-times { padding-bottom: 6px; }
+
+.st-btn {
+    all: unset;
+    cursor: pointer;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.st-btn:hover { background: color-mix(in srgb, currentColor 11%, transparent); }
+
+.st-when {
+    margin-top: 12px;
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-size: 13px;
+    background: color-mix(in srgb, var(--md-accent, Highlight) 9%, transparent);
 }

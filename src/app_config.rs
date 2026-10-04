@@ -24,6 +24,54 @@ pub const WINDOW_WIDTH: f64 = 1280.0;
 /// ウィンドウの高さ。
 pub const WINDOW_HEIGHT: f64 = 700.0;
 
+/// 初期サイズの下限。ツリーとタブバーが潰れずに出る大きさ。
+const MIN_WINDOW_WIDTH: u32 = 480;
+const MIN_WINDOW_HEIGHT: u32 = 320;
+
+/// これを超える値は書き損じとして読まない（`14400x900` のような桁の打ち間違い）。
+/// 画面より大きいだけの値は、窓を作るときに画面へ収める（`main.rs`）。
+const MAX_WINDOW_SIDE: u32 = 16384;
+
+/// `settings` の `window-size=`（#42）の値を幅と高さ（論理ポイント）へ。
+///
+/// 書いていない・読めないなら既定の [`WINDOW_WIDTH`] × [`WINDOW_HEIGHT`]。
+/// 小さすぎる値は下限まで持ち上げる。
+///
+/// Why not 小さすぎる値も書き損じとして既定へ戻す: 手で `400x300` と書いた人は
+/// 「小さめにしたい」という意図を持っている。下限で受ける方がその意図に近い。
+pub fn window_size(value: Option<&str>) -> (f64, f64) {
+    match value.and_then(parse_window_size) {
+        Some((w, h)) => {
+            let (w, h) = raise_to_min(w, h);
+            (w as f64, h as f64)
+        }
+        None => (WINDOW_WIDTH, WINDOW_HEIGHT),
+    }
+}
+
+/// 下限まで持ち上げる。読むとき（[`window_size`]）と、設定タブから保存するときの
+/// 両方が通る——保存する側が通さないと、欄には `100` と出ているのに次の窓は 480 で
+/// 開く、という食い違いになる。
+pub fn raise_to_min(w: u32, h: u32) -> (u32, u32) {
+    (w.max(MIN_WINDOW_WIDTH), h.max(MIN_WINDOW_HEIGHT))
+}
+
+/// `1440x900` → `(1440, 900)`。区切りは `x` だけを受ける（`×` は手で打ちにくい）。
+pub fn parse_window_size(s: &str) -> Option<(u32, u32)> {
+    let (w, h) = s.trim().split_once('x')?;
+    let w: u32 = w.trim().parse().ok()?;
+    let h: u32 = h.trim().parse().ok()?;
+    if w == 0 || h == 0 || w > MAX_WINDOW_SIDE || h > MAX_WINDOW_SIDE {
+        return None;
+    }
+    Some((w, h))
+}
+
+/// 保存する綴り。[`parse_window_size`] と対。
+pub fn format_window_size(w: u32, h: u32) -> String {
+    format!("{w}x{h}")
+}
+
 /// ウィンドウ起動に必要な、入力から決まる設定一式。
 pub struct AppConfig {
     pub title: String,
@@ -112,6 +160,26 @@ impl AppConfig {
         config
     }
 
+    /// `--notify` を受け取る md が居なかったときの窓（#36）。渡されたファイルは
+    /// タブで開いた状態で始まり、**通知には積まない**（もう見えているので）。
+    ///
+    /// root は [`files_root`] を通さず**常に作業ディレクトリ**にする。別のツリーの
+    /// ファイルを 2 つ渡されると共通の親が `/` まで広がり、ボリューム全体の再帰監視と
+    /// ⌘P の予算切れを踏むため。エージェントが並べたパスは cwd の外に出やすい。
+    ///
+    /// ⚠️ issue #36 はこれを「共通の親が `/` まで広がると**起動を拒否される**から」と
+    /// 書いているが、その門はもう無い（[`files_root`] の Why not）。理由は入れ替わって
+    /// いて、規則だけが残っている。
+    pub fn from_notify(
+        args: &[String],
+        theme_css: &str,
+        custom_css: &str,
+        current_dir: &Option<PathBuf>,
+    ) -> Self {
+        let ids = notify_ids(args);
+        Self::folder(notify_root(&ids, current_dir), theme_css, custom_css, &ids)
+    }
+
     /// 引数で渡されたパス（1 つ以上）から設定を組み立てる。
     pub fn from_paths(
         args: &[String],
@@ -159,21 +227,39 @@ pub fn plan_paths(args: &[String], current_dir: &Option<PathBuf>) -> (PathBuf, V
         }
     }
 
-    let paths = resolve_file_args(args);
+    let paths = resolve_file_args(args, "複数指定できるのはファイルだけです");
     let root = files_root(&paths, current_dir);
     let ids = paths.iter().map(|p| file_id(p)).collect();
     (root, ids)
 }
 
+/// `--notify` が積むファイルたちの識別子（#36）。
+///
+/// [`plan_paths`] に任せられないのは、あちらがフォルダ単発を「ツリーの頂点」として
+/// 受けるため（`md <dir>` はそれで正しい）。**通知に積む対象はファイルだけ**なので、
+/// 数に関係なくフォルダを弾く。開けないパスは `resolve_arg_path` がそこで終わらせる。
+///
+/// **stderr を持っている経路から呼ぶこと。** デタッチした子から呼ぶと、フォルダを
+/// 渡されたときに「窓も出ずエラーも出ず終了コード 1」になる。
+pub fn notify_ids(args: &[String]) -> Vec<String> {
+    resolve_file_args(args, "--notify に積めるのはファイルだけです")
+        .iter()
+        .map(|p| file_id(p))
+        .collect()
+}
+
 /// ファイル指定の引数を絶対パスへ解決する。重複は 1 つにまとめる。
-fn resolve_file_args(args: &[String]) -> Vec<PathBuf> {
+///
+/// `dir_refusal` を呼び出し側から受けるのは、フォルダを弾く理由が経路ごとに違うため
+/// （複数指定は「2 つのツリーを同時に出せない」、`--notify` は「積む対象ではない」）。
+fn resolve_file_args(args: &[String], dir_refusal: &str) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = Vec::new();
     for arg in args {
         let path = resolve_arg_path(arg);
-        // フォルダは root を決める側なので、複数指定には混ぜられない
+        // フォルダは root を決める側なので、ファイルと混ぜられない
         // （2 つのツリーを同時に出す作りになっていない）。
         if path.is_dir() {
-            eprintln!("md: 複数指定できるのはファイルだけです（'{}' はフォルダ）", arg);
+            eprintln!("md: {}（'{}' はフォルダ）", dir_refusal, arg);
             std::process::exit(1);
         }
         // タブの識別子はパスなので、同じファイルを 2 回渡されても 1 枚にまとめる。
@@ -182,6 +268,23 @@ fn resolve_file_args(args: &[String]) -> Vec<PathBuf> {
         }
     }
     paths
+}
+
+/// `--notify` が冷スタートしたときの root（#36）。**常に作業ディレクトリ。**
+///
+/// cwd が取れないとき（消えている等）だけ、先頭のファイルの親へ逃がす。`.` へ
+/// 落とさないのは、root がそのまま `?dir=` の識別子になるため——絶対パスでなければ
+/// `request::id_to_path` が弾き、ツリーも初期タブも出ない真っ白になる
+/// （[`stdin_root`] と同じ事情）。
+fn notify_root(ids: &[String], current_dir: &Option<PathBuf>) -> PathBuf {
+    current_dir
+        .clone()
+        .or_else(|| Path::new(ids.first()?).parent().map(Path::to_path_buf))
+        // 絶対パスでない答えは捨てる。`notify_ids` が canonicalize を通すので
+        // いまここへ相対パスは来ないが、`"a.md"` の親は**空文字**であって `None`
+        // ではないので、来た日に「root が空の窓」が黙って開く。
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// タブに乗せるファイルたちを収める root を決める。
@@ -314,6 +417,48 @@ fn canonical(p: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_saved_window_size_is_read_back_as_logical_points() {
+        assert_eq!(window_size(Some("1440x900")), (1440.0, 900.0));
+        assert_eq!(parse_window_size(&format_window_size(1512, 945)), Some((1512, 945)));
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_window_size_falls_back_to_the_default() {
+        let default = (WINDOW_WIDTH, WINDOW_HEIGHT);
+        assert_eq!(window_size(None), default);
+        // 「既定に戻す」は空の値を書く。
+        assert_eq!(window_size(Some("")), default);
+        assert_eq!(window_size(Some("1440")), default);
+        assert_eq!(window_size(Some("1440×900")), default);
+        assert_eq!(window_size(Some("0x900")), default);
+        assert_eq!(window_size(Some("-1x900")), default);
+        // 桁の打ち間違いは画面へ収めるより、書き損じとして読まない方が害が小さい。
+        assert_eq!(window_size(Some("144000x900")), default);
+    }
+
+    #[test]
+    fn a_too_small_window_size_is_raised_to_the_minimum() {
+        assert_eq!(
+            window_size(Some("100x100")),
+            (MIN_WINDOW_WIDTH as f64, MIN_WINDOW_HEIGHT as f64)
+        );
+    }
+
+    /// 設定タブから保存するときも下限を通す。通さないと、欄には 100 と出ているのに
+    /// 次の窓は 480 で開く。
+    #[test]
+    fn saving_raises_a_too_small_size_to_the_minimum_as_reading_does() {
+        assert_eq!(raise_to_min(100, 1000), (MIN_WINDOW_WIDTH, 1000));
+        let (w, h) = raise_to_min(100, 100);
+        assert_eq!(window_size(Some(&format_window_size(w, h))), (w as f64, h as f64));
+    }
+
+    #[test]
+    fn spaces_around_the_numbers_are_tolerated() {
+        assert_eq!(window_size(Some(" 1440 x 900 ")), (1440.0, 900.0));
+    }
+
     fn paths(list: &[&str]) -> Vec<PathBuf> {
         list.iter().map(PathBuf::from).collect()
     }
@@ -369,6 +514,58 @@ mod tests {
             files_root(&paths(&["/work/a.md", "/tmp/b.md"]), &None),
             PathBuf::from("/")
         );
+    }
+
+    #[test]
+    fn notify_root_is_the_working_dir_even_when_the_files_are_elsewhere() {
+        let cwd = Some(PathBuf::from("/work"));
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // cwd 配下でも外でも cwd。`files_root` と違って共通の親へ広げない——
+        // 別のツリーの 2 本を渡されたときに `/` を丸ごと監視することになる。
+        assert_eq!(notify_root(&ids(&["/work/a.md"]), &cwd), PathBuf::from("/work"));
+        assert_eq!(notify_root(&ids(&["/other/a.md", "/tmp/b.md"]), &cwd), PathBuf::from("/work"));
+        // cwd が取れないときだけ、先頭のファイルの親へ逃がす。
+        assert_eq!(notify_root(&ids(&["/other/a.md"]), &None), PathBuf::from("/other"));
+    }
+
+    #[test]
+    fn notify_root_is_always_absolute() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // root はそのまま `?dir=` の識別子になる。`.` や空を返すと `id_to_path` が
+        // 弾いて真っ白な窓になるので、逃げ道の先まで絶対パスであること。
+        for (given, cwd) in [
+            (ids(&["/a/b.md"]), Some(PathBuf::from("/work"))),
+            (ids(&["/a/b.md"]), None),
+            (ids(&["relative.md"]), None),
+            (Vec::new(), None),
+        ] {
+            assert!(notify_root(&given, &cwd).is_absolute(), "{given:?} / {cwd:?}");
+        }
+    }
+
+    /// `from_notify` が `notify_root` を通っていること。`files_root` に差し替えても
+    /// 単体では動いてしまうので、**この関数の存在理由そのもの**をここで押さえる。
+    #[test]
+    fn a_notification_cold_start_roots_at_the_working_dir_not_the_shared_parent() {
+        let dir = std::env::temp_dir().join("md-notify-coldstart");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (a, b) = (dir.join("one"), dir.join("two"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("x.md"), "# x").unwrap();
+        std::fs::write(b.join("y.md"), "# y").unwrap();
+
+        // cwd の外にある、共通の親が cwd ではない 2 本。`files_root` ならその共通の親
+        // （…/md-notify-coldstart）になるところを、cwd のままにする。
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let args = vec![
+            a.join("x.md").to_string_lossy().into_owned(),
+            b.join("y.md").to_string_lossy().into_owned(),
+        ];
+        let config = AppConfig::from_notify(&args, "", "", &Some(cwd.clone()));
+        assert_eq!(config.root_dir, cwd);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `spool_stdin` が作るのと同じ形の（存在しない）パス。

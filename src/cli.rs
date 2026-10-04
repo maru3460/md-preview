@@ -30,6 +30,8 @@ md - 高速Markdownプレビュー
 
 オプション:
   --new-window, -n    既存のウィンドウへ送らず、新しいウィンドウで開きます
+  --notify <file>…    開かずにベルへ積みます（ウィンドウは前に出ません）
+                      ウィンドウが無ければ、普通に開きます
   --                  これ以降をフラグとして解釈しません（md -- -n.md）
   --sample            サンプルのMarkdownを標準出力に出します
   --help, -h          このヘルプを表示します
@@ -39,6 +41,14 @@ md - 高速Markdownプレビュー
 pub struct OpenFlags {
     /// `--new-window` / `-n`。既存の窓へ転送せず、2 枚目を開く（#31）。
     pub new_window: bool,
+    /// `--notify`。開かずにベルへ積む（#36）。窓を持っている md が居なければ
+    /// 普通に開くので、「窓を開く経路のフラグ」のままここに居る。
+    ///
+    /// ⚠️ `MD_NO_IPC=1` を併せると転送そのものが切れるので、**窓があっても
+    /// 2 枚目が開いて前に出る**（積まれない）。`-n` との併用は下で断っているが、
+    /// あちらは逃げ道（前景デバッグ）なので断らない——切るために在るものを
+    /// 「使い方が矛盾している」と拒むと、逃げ道が逃げ道でなくなる。
+    pub notify: bool,
 }
 
 /// 窓を開く経路の引数からフラグを剥がし、残りをパスとして返す。
@@ -50,7 +60,8 @@ pub struct OpenFlags {
 /// 短縮形を置く基準は「**繰り返し叩く × 人が叩く**」の両方を満たすもの（#56）。
 /// `--new-window` はこれを満たす唯一のオプションで、いま置いてある短縮形も `-n`
 /// だけである。`--sample` も `uninstall --dry-run` も人が叩くが実質 1 回しか叩かない。
-/// `--notify`（#36）は繰り返し叩くがエージェントが叩くので、短くしても誰も得をしない。
+/// `--notify`（#36）は繰り返し叩くがエージェントが叩くので、短くしても誰も得をしない
+/// （足していない理由をここに残す。後から慣習で `-N` を生やさないため）。
 ///
 /// Why not `--dry-run` に `-n` を足す: 多くの道具（`make -n` / `rsync -n`）がそうしている
 /// が、**この道具では `-n` は新しい窓に取った**。後から慣習に従って足そうとしないよう、
@@ -61,7 +72,7 @@ pub struct OpenFlags {
 /// `uninstall::run` の完全一致も、ここからは独立して動いている。#31 が必要とするのは
 /// 「窓を開く経路でフラグとパスを混ぜられること」だけなので、その 1 点に絞ってある。
 pub fn split_open_flags(args: &[String]) -> Result<(OpenFlags, Vec<String>), String> {
-    let mut flags = OpenFlags { new_window: false };
+    let mut flags = OpenFlags { new_window: false, notify: false };
     let mut paths = Vec::new();
     let mut only_paths = false;
     for arg in args {
@@ -73,6 +84,7 @@ pub fn split_open_flags(args: &[String]) -> Result<(OpenFlags, Vec<String>), Str
             // `md -- -n.md` のように、フラグに見える名前のファイルを開く逃げ道。
             "--" => only_paths = true,
             "-n" | "--new-window" => flags.new_window = true,
+            "--notify" => flags.notify = true,
             // 素の `-` はフラグではない。md は標準入力をパス引数で受けないので、
             // ここを通して「開けませんでした」の普通のエラーに落とす。
             s if s.len() > 1 && s.starts_with('-') => {
@@ -80,6 +92,11 @@ pub fn split_open_flags(args: &[String]) -> Result<(OpenFlags, Vec<String>), Str
             }
             _ => paths.push(arg.clone()),
         }
+    }
+    // 「窓を開くな」と「新しい窓を開け」が同時に立っている。黙って片方を勝たせると、
+    // 負けた方の意図（`--notify` なら「邪魔したくない」）が何の痕跡も残さずに消える。
+    if flags.notify && flags.new_window {
+        return Err("md: --notify と --new-window は一緒に使えません".to_string());
     }
     Ok((flags, paths))
 }
@@ -191,6 +208,15 @@ pub fn run_theme_command(rest: &[String]) {
                 eprintln!("md: テーマを保存できませんでした: {}", e);
                 std::process::exit(1);
             }
+            // 動いている md の窓にも効かせる（#38）。窓はプロセスごと ⌘Q まで生き続ける
+            // （#49）ので、知らせないと次に起動し直すまで古いテーマのまま残る。
+            // 届かなくても（誰も居ない）保存は済んでいるので、黙って続ける。
+            //
+            // ⚠️ `theme=` を知らない古い md が相手の穴は、`main.rs` の
+            // `message_to_forward` に並べてある（⌘Q すれば消える）。
+            if let Some(ep) = crate::instance::Endpoint::user_default() {
+                let _ = crate::instance::try_send(&ep, &crate::instance::Message::theme_changed());
+            }
             println!("テーマを '{}' に切り替えました", name);
         }
         _ => {
@@ -260,7 +286,7 @@ mod tests {
 
     #[test]
     fn usage_lists_every_subcommand() {
-        for flag in ["--sample", "--help", "--version", "theme", "uninstall", "--new-window"] {
+        for flag in ["--sample", "--help", "--version", "theme", "uninstall", "--new-window", "--notify"] {
             assert!(USAGE.contains(flag), "{flag} が使い方に無い");
         }
     }
@@ -271,6 +297,28 @@ mod tests {
         let (flags, paths) = split_open_flags(&args).unwrap();
         assert!(flags.new_window);
         assert_eq!(paths, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn notify_is_a_flag_and_the_rest_stays_a_path() {
+        let (flags, paths) = split_open_flags(&own(&["--notify", "a.md", "b.md"])).unwrap();
+        assert!(flags.notify);
+        assert!(!flags.new_window);
+        assert_eq!(paths, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn notify_and_new_window_together_are_refused() {
+        // 片方が黙って勝つのを避ける。順序は関係しない。
+        assert!(split_open_flags(&own(&["--notify", "-n", "a.md"])).is_err());
+        assert!(split_open_flags(&own(&["-n", "--notify", "a.md"])).is_err());
+    }
+
+    #[test]
+    fn a_file_called_notify_is_reachable_through_the_terminator() {
+        let (flags, paths) = split_open_flags(&own(&["--", "--notify"])).unwrap();
+        assert!(!flags.notify);
+        assert_eq!(paths, vec!["--notify"]);
     }
 
     #[test]

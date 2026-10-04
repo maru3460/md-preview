@@ -96,18 +96,18 @@ fn user_themes_dir() -> Option<PathBuf> {
     crate::config_dir().map(|d| d.join("themes"))
 }
 
-fn active_theme_path() -> Option<PathBuf> {
-    crate::config_dir().map(|d| d.join("active-theme"))
-}
-
 fn builtin(name: &str) -> Option<&'static Theme> {
     BUILTIN.iter().find(|t| t.name == name)
 }
 
+/// 何も選んでいないときのテーマ名。`md theme` の既定・未知の名前の行き先・設定タブの
+/// 「既定に戻す」が同じ綴りを使う。
+pub const DEFAULT_NAME: &str = "default";
+
 /// 未知のテーマ名のフォールバック先。`default` が `BUILTIN` に居る前提を
 /// ここ 1 箇所に閉じる。
 fn default_theme() -> &'static Theme {
-    builtin("default").expect("default テーマは BUILTIN に必ずある")
+    builtin(DEFAULT_NAME).expect("default テーマは BUILTIN に必ずある")
 }
 
 /// `~/.config/md-preview/themes/<name>.css` があればユーザーテーマの CSS を返す。
@@ -141,7 +141,7 @@ pub fn resolve(name: &str) -> (String, Appearance, Option<&'static Theme>) {
     }
     // この警告が届くのは `md --html` だけ。窓を開く経路では resolve が走るのは
     // デタッチ後の子で、その stderr は /dev/null（親に繋ぐと OS のログが混ざるため）。
-    // 設定画面でテーマを扱えるようにするとき（#38）に、窓の中で見せる形へ移す。
+    // 窓の中では、設定画面が「その名前のテーマは無い」と添えて見せる。
     eprintln!("md: '{}' というテーマがないため 'default' を使用します", name);
     let d = default_theme();
     (d.css.to_string(), d.appearance, Some(d))
@@ -155,6 +155,12 @@ pub fn resolve(name: &str) -> (String, Appearance, Option<&'static Theme>) {
 /// 限らない。
 const AUTO_LIGHT_BG: [u8; 3] = [0xff, 0xff, 0xff];
 const AUTO_DARK_BG: [u8; 3] = [0x0d, 0x11, 0x17];
+
+/// [`AUTO_DARK_BG`] を `#rrggbb` で。設定タブが OS 追従テーマの見本の暗い側に使う。
+pub fn auto_dark_bg_hex() -> String {
+    let [r, g, b] = AUTO_DARK_BG;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
 
 /// 窓の下地色。[`resolve`] が返したテーマをそのまま渡す。
 ///
@@ -219,21 +225,21 @@ fn resolve_style_layer(name: &str) -> String {
     style_layer(appearance, &paint)
 }
 
-/// 使用中のテーマ名を `~/.config/md-preview/active-theme` から読む。
-/// ファイルが無い/空なら "default"（このファイルは `md theme <name>` でのみ作られる）。
+/// 使用中のテーマ名を `~/.config/md-preview/settings` の `theme=` から読む。
+/// 書かれていなければ "default"（この行は `md theme <name>` でのみ作られる）。
+///
+/// 旧 `active-theme` からの移行は [`crate::settings::load`] が持つ。テーマ側は
+/// 「どこに置いてあるか」を settings へ預けて、キーの綴りだけを知っている。
 pub fn read_active_name() -> String {
-    active_theme_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_string())
+    crate::settings::load()
+        .get(crate::settings::THEME)
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "default".to_string())
+        .unwrap_or(DEFAULT_NAME)
+        .to_string()
 }
 
 pub fn write_active_name(name: &str) -> std::io::Result<()> {
-    let dir = crate::config_dir()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set"))?;
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("active-theme"), name)
+    crate::settings::set(crate::settings::THEME, name)
 }
 
 pub fn user_theme_names() -> Vec<String> {
@@ -256,9 +262,83 @@ pub fn user_theme_names() -> Vec<String> {
     names
 }
 
+/// 設定画面（#38）に並べるテーマ 1 つ。
+pub struct Choice {
+    pub name: String,
+    /// `light` / `dark` / `auto` / `user`。
+    pub group: &'static str,
+    /// カードの見本の色（[`Theme::swatch`]）。ユーザーテーマは配色を持たないので `None`。
+    pub swatch: Option<[&'static str; 5]>,
+}
+
+/// 設定画面（#38）に並べるテーマ。並びと組は `md theme` の一覧と同じ
+/// （ライト → ダーク → OS 追従 → ユーザー）。
+///
+/// 同梱テーマと同名のユーザーテーマは同梱側の組に残す。中身はユーザーの CSS が
+/// 勝つ（[`resolve`]）が、名前で選ぶ以上、行を 2 本に割る意味が無い。ただし見本は
+/// 外す——同梱の配色を見せると、選んだ後に出てくる色と食い違う。
+pub fn choices() -> Vec<Choice> {
+    choices_with(user_theme_names())
+}
+
+/// [`choices`] の中身。ユーザーテーマの名前を引数で受けるのは、`~/.config` を
+/// 読まずにテストするため。
+fn choices_with(user: Vec<String>) -> Vec<Choice> {
+    let mut out = Vec::new();
+    for (appearance, group) in
+        [(Appearance::Light, "light"), (Appearance::Dark, "dark"), (Appearance::Auto, "auto")]
+    {
+        for t in BUILTIN.iter().filter(|t| t.appearance == appearance) {
+            let shadowed = user.iter().any(|u| u == t.name);
+            out.push(Choice {
+                name: t.name.to_string(),
+                group,
+                swatch: (!shadowed).then_some(t.swatch),
+            });
+        }
+    }
+    for name in user {
+        if builtin(&name).is_none() {
+            out.push(Choice { name, group: "user", swatch: None });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choices_are_grouped_light_dark_auto_then_user() {
+        let list = choices_with(vec!["zzz".to_string()]);
+        let groups: Vec<&str> = list.iter().map(|c| c.group).collect();
+        let mut sorted = groups.clone();
+        let rank = |g: &str| ["light", "dark", "auto", "user"].iter().position(|x| *x == g).unwrap();
+        sorted.sort_by_key(|g| rank(g));
+        assert_eq!(groups, sorted);
+        assert_eq!(list.last().map(|c| (c.name.as_str(), c.group)), Some(("zzz", "user")));
+        assert!(list.last().unwrap().swatch.is_none());
+        assert_eq!(list.len(), BUILTIN.len() + 1);
+    }
+
+    /// 同梱テーマと同名のユーザーテーマは同梱の組に 1 本だけ残り、見本を外す
+    /// （中身はユーザーの CSS が勝つので、同梱の配色を見せると食い違う）。
+    #[test]
+    fn a_user_theme_shadowing_a_builtin_stays_in_place_without_a_swatch() {
+        let list = choices_with(vec!["nord".to_string()]);
+        let nords: Vec<&Choice> = list.iter().filter(|c| c.name == "nord").collect();
+        assert_eq!(nords.len(), 1);
+        assert_eq!(nords[0].group, "dark");
+        assert!(nords[0].swatch.is_none());
+        assert!(list.iter().find(|c| c.name == "dracula").unwrap().swatch.is_some());
+    }
+
+    #[test]
+    fn auto_dark_bg_hex_matches_the_window_backdrop() {
+        assert_eq!(auto_dark_bg_hex(), "#0d1117");
+        assert_eq!(parse_hex_rgb(&auto_dark_bg_hex()), Some(AUTO_DARK_BG));
+    }
 
     #[test]
     fn auto_theme_keeps_os_following_syntax_highlight() {

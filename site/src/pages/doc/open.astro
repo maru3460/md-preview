@@ -83,6 +83,27 @@ md -n guide.md       # 2 枚目のウィンドウで開く`}</pre>
     （ウィンドウは残ります）。
   </p>
 
+  <h2 id="notify">開かずに知らせる</h2>
+
+  <p>
+    <code>--notify</code> を付けると、<strong>タブを開かずにベルへ積むだけ</strong>になります。
+    ウィンドウは前面に出ず、読んでいるものも切り替わりません。
+    AI エージェントに Markdown を書かせているとき、<strong>書いた側から「書いたよ」を伝えるための口</strong>です。
+    あとで手が空いたときに、タブバー右端のベルから拾えます。
+  </p>
+
+  <div class="codebox">
+    <div class="codebox-head"><span>Terminal</span></div>
+    <pre>{`md --notify docs/api-design.md          # 開かずにベルへ積む
+md --notify docs/*.md                   # まとめて積む`}</pre>
+  </div>
+
+  <p class="note">
+    ウィンドウが 1 枚も開いていないときは、積む先が無いので<strong>ふつうに開きます</strong>。
+    パイプ（<code>cat x.md | md --notify</code>）は受け付けません
+    ——積んだ先が一時ファイルになり、タブを閉じた時点で消えてしまうためです。
+  </p>
+
   <p>
     複数ファイルをまとめて渡すなどの細かい指定は <code>md --help</code> にあります。
     Claude Code から使う場合は、同梱のスキルが状況に応じて使い分けます。

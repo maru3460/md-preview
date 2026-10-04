@@ -140,6 +140,16 @@ mark.md-search-hit-current { background-color: #ffe066; color: #0b0f0b; outline:
 .md-toc-list .lvl-5 > a,
 .md-toc-list .lvl-6 > a { color: #4a9d63; }
 
+/* 通知ベル（#32）。ドロップダウンは TOC パネルと同じ「地の上に浮く面」なので、
+   同じ地色・枠・文字で塗る。中の区切り線・ホバー・沈めた 2 段目は base.css が
+   この文字色（currentColor）から作るので、ここで決めるのは 4 色だけ。 */
+.md-bell-panel {
+    background-color: #0b0f0b;
+    border-color: #1c3a24;
+    color: #6ee787;
+}
+.md-bell-title { color: #4a9d63; }
+
 pre.mermaid { background-color: transparent; }
 
 .drawio-wrap { background-color: #ffffff; border-color: #1c3a24; }

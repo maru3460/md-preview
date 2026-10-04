@@ -9,7 +9,7 @@
 //! 黙って落とさない**（クリックして初めて気づかせる、が #32 と揃えた決め）ので、
 //! 描画の時点で `is_dir()` を聞けるとは限らない。登録できた時点の答えを持っておく。
 
-use std::path::PathBuf;
+use std::path::Path;
 
 /// 台帳のファイル名。`~/.config/md-preview/` 直下。
 const FILE: &str = "quick-access";
@@ -73,10 +73,10 @@ fn parse(records: Vec<Vec<String>>) -> Vec<Entry> {
     out
 }
 
-fn save(dir: &PathBuf, list: &[Entry]) {
+fn save(dir: &Path, list: &[Entry]) {
     let records: Vec<Vec<String>> = list.iter().map(record).collect();
     // 書けなくても窓は動き続ける（次の起動で前の内容に戻るだけ）。窓の中に出す
-    // 手段を持たないので、ここで握りつぶす。設定画面（#38）ができたら知らせ先ができる。
+    // 手段を持たないので、ここで握りつぶす。
     let _ = crate::store::write(dir, FILE, &records);
 }
 
@@ -87,6 +87,7 @@ fn record(e: &Entry) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn entries(paths: &[(&str, bool)]) -> Vec<Entry> {
         paths.iter().map(|(p, d)| Entry { path: p.to_string(), is_dir: *d }).collect()

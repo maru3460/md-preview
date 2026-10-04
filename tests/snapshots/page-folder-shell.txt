@@ -4,8 +4,10 @@
 <meta charset="utf-8">
 <title>fixtures</title>
 <style>…</style>
+<style id="md-theme">…</style>
 <style>…</style>
-<style>…</style>
+<script>…</script>
+<script>…</script>
 <script>…</script>
 <script>…</script>
 <script>…</script>
@@ -40,7 +42,10 @@
   </div>
   <div id="resizer"></div>
   <div id="main-col">
-    <div id="tabbar"></div>
+    <div id="tabbar">
+      <div id="tabbar-tabs"></div>
+      <div id="tabbar-icons"></div>
+    </div>
     <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
   </div>
 </div>

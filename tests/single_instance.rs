@@ -82,6 +82,40 @@ fn root_is_read_alongside_the_files_whatever_the_token_order() {
 }
 
 #[test]
+fn a_notification_travels_without_activation() {
+    let msg = Message::notification(vec!["/work/docs/plan.md".into()]);
+    // 組み立てた時点で対になっていること。片方だけだと、受け側は
+    // 「前に出さないが窓にタブが増える」になる。
+    assert!(msg.notify);
+    assert!(!msg.activate);
+    // ワイヤを往復しても対のまま。
+    let back = Message::decode(&msg.encode()).unwrap();
+    assert!(back.notify);
+    assert!(!back.activate);
+    assert_eq!(back.files, vec!["/work/docs/plan.md".to_string()]);
+}
+
+#[test]
+fn a_theme_change_travels_without_files_or_activation() {
+    let back = Message::decode(&Message::theme_changed().encode()).unwrap();
+    assert!(back.theme);
+    // 読み直しの知らせで窓が前に出たら、`md theme` を打った端末からフォーカスを奪う。
+    assert!(!back.activate);
+    assert!(back.files.is_empty());
+    assert!(!back.notify);
+}
+
+#[test]
+fn a_message_without_the_notify_key_opens_as_usual() {
+    // 既定は「開く」。ここが逆に倒れると、キーを載せない普通の `md file.md` が
+    // 全部ベルへ吸い込まれて窓に何も出なくなる。
+    let wire = b"md-preview\x001\x00file=/a.md\x00\x00" as &[u8];
+    let msg = Message::decode(wire).unwrap();
+    assert!(!msg.notify);
+    assert!(msg.activate);
+}
+
+#[test]
 fn broken_input_is_rejected() {
     assert_eq!(Message::decode(b""), None, "空");
     assert_eq!(Message::decode(b"other\0" as &[u8]), None, "マジック違い");

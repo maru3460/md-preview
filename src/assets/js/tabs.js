@@ -26,7 +26,8 @@
   // onOpen を呼ぶので、この印が無いと自分の呼び出しで状態を二重に書き換える。
   var switching = false;
 
-  function bar() { return document.getElementById('tabbar'); }
+  // #tabbar は外枠で、タブが並ぶのは内側のタブ帯。右隣にアイコン帯が居る。
+  function tabsEl() { return document.getElementById('tabbar-tabs'); }
 
   function indexOf(path) {
     for (var i = 0; i < tabs.length; i++) if (tabs[i].path === path) return i;
@@ -36,7 +37,10 @@
   // タブに出す名前は識別子ではなく表示名（root を剥いだ形）から作る。root 直下の
   // ファイルに親ディレクトリ名（＝ root のフォルダ名）が付かないのは、それが
   // どのタブにも同じように付いて区別の役に立たないため。
+  // 設定タブ（#38）はファイルではない。名前をパスから作らず「設定」と出す。
+  function isSettings(p) { return !!(window.MdSettings && MdSettings.isTab(p)); }
   function displayOf(p) {
+    if (isSettings(p)) return '設定';
     return (window.MdCommon && MdCommon.idToDisplay) ? MdCommon.idToDisplay(p) : String(p);
   }
   function baseName(p) {
@@ -195,7 +199,10 @@
   function reportClosed(closed) {
     if (!window.ipc) return;
     for (var i = 0; i < closed.length; i++) {
-      if (closed[i] && closed[i].path) ipc.postMessage('closed:' + closed[i].path);
+      // 設定タブは一時ファイルを持たないので知らせない。
+      if (closed[i] && closed[i].path && !isSettings(closed[i].path)) {
+        ipc.postMessage('closed:' + closed[i].path);
+      }
     }
   }
 
@@ -274,9 +281,8 @@
   // ── 描画 ────────────────────────────────────────────────────
   // タブは高々数十枚なので毎回作り直す（差分更新の複雑さに見合わない）。
   function render() {
-    var el = bar();
+    var el = tabsEl();
     if (!el) return;
-    document.body.classList.toggle('has-tabs', tabs.length > 0);
     el.innerHTML = '';
 
     // 同じファイル名のタブが並ぶ時だけ、親ディレクトリ名を添えて見分ける。
@@ -351,7 +357,9 @@
       opts = o;
       registerKeys();
       // 縦ホイールを横スクロールに回す（トラックパッド以外でもタブを辿れるように）。
-      var el = bar();
+      // 外枠ではなくタブ帯に付ける。アイコン帯の上で回しても流れないが、あそこは
+      // 押すものが並ぶ場所で、流す対象を持っていない。
+      var el = tabsEl();
       if (el) {
         el.addEventListener('wheel', function(e) {
           if (e.deltaX !== 0) return;

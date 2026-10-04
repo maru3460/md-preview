@@ -344,12 +344,12 @@ mod tests {
         let home = temp("plan");
         // 設定だけがある状態（テーマを一度も切り替えていなければこれも無い）。
         std::fs::create_dir_all(home.join(".config/md-preview")).unwrap();
-        std::fs::write(home.join(".config/md-preview/active-theme"), b"nord").unwrap();
+        std::fs::write(home.join(".config/md-preview/settings"), b"theme=nord").unwrap();
 
         let targets = plan(&home, "md");
         assert_eq!(targets.len(), 1, "存在しない Library 側まで並べている");
         assert!(targets[0].path.ends_with(".config/md-preview"));
-        assert_eq!(targets[0].bytes, 4);
+        assert_eq!(targets[0].bytes, 10);
 
         // WebKit 側が md のものとして存在すれば 3 件になる。
         let webkit = home.join("Library/WebKit/md");
