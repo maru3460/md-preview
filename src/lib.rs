@@ -14,6 +14,7 @@ pub mod instance;
 pub mod notifications;
 pub mod quick_access;
 pub mod request;
+pub mod settings;
 pub mod store;
 pub mod theme;
 pub mod uninstall;

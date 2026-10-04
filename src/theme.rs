@@ -96,10 +96,6 @@ fn user_themes_dir() -> Option<PathBuf> {
     crate::config_dir().map(|d| d.join("themes"))
 }
 
-fn active_theme_path() -> Option<PathBuf> {
-    crate::config_dir().map(|d| d.join("active-theme"))
-}
-
 fn builtin(name: &str) -> Option<&'static Theme> {
     BUILTIN.iter().find(|t| t.name == name)
 }
@@ -219,21 +215,21 @@ fn resolve_style_layer(name: &str) -> String {
     style_layer(appearance, &paint)
 }
 
-/// 使用中のテーマ名を `~/.config/md-preview/active-theme` から読む。
-/// ファイルが無い/空なら "default"（このファイルは `md theme <name>` でのみ作られる）。
+/// 使用中のテーマ名を `~/.config/md-preview/settings` の `theme=` から読む。
+/// 書かれていなければ "default"（この行は `md theme <name>` でのみ作られる）。
+///
+/// 旧 `active-theme` からの移行は [`crate::settings::load`] が持つ。テーマ側は
+/// 「どこに置いてあるか」を settings へ預けて、キーの綴りだけを知っている。
 pub fn read_active_name() -> String {
-    active_theme_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_string())
+    crate::settings::load()
+        .get(crate::settings::THEME)
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "default".to_string())
+        .unwrap_or("default")
+        .to_string()
 }
 
 pub fn write_active_name(name: &str) -> std::io::Result<()> {
-    let dir = crate::config_dir()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set"))?;
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("active-theme"), name)
+    crate::settings::set(crate::settings::THEME, name)
 }
 
 pub fn user_theme_names() -> Vec<String> {

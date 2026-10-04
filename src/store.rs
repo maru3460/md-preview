@@ -3,18 +3,23 @@
 //! 1 行 ＝ 1 レコード、フィールドはタブ区切り。レコードの並びがそのまま意味を持つ
 //! （Quick Access なら表示順、通知なら新しい順）ので、読んだ順序は保って返す。
 //!
-//! 最初の客は Quick Access（#35）だが、通知の履歴（#32）と設定（#38）も同じ書式で
-//! ここへ乗る。**書式とエスケープと原子書き込みを持つ場所はここ 1 つ**にする——
-//! 機能ごとに手書きすると、パスにタブが入ったときに壊れる場所が 3 つになる。
+//! 客は Quick Access（#35）と通知の履歴（#32）。**書式とエスケープを持つ場所はここ
+//! 1 つ**にする——機能ごとに手書きすると、パスにタブが入ったときに壊れる場所が
+//! 2 つになる。原子書き込み（[`write_text`]）はレコードの形を取らない設定（#38）も
+//! 使うので、書式を組む側から切り離して**単体で呼べるようにしてある**。
+//!
+//! ⚠️ ただし**層になってはいない。**[`write_text`] は [`escape`] と同じ公開面に
+//! 並んでいるだけで、新しい客が書式を手書きするのを止めるものは無い。守っているのは
+//! このコメントだけである。
 //!
 //! Why not serde / JSON: 依存を 1 つも増やしていないプロジェクトで、扱うのは
 //! 「文字列の表」だけである。手書きのパーサが 30 行で済むうちは、行指向の方が
 //! 壊れたファイルを人が読んで直せる。
 //!
-//! Why not `theme.rs` の `active-theme` もここへ移す: あれは 1 行の素文字列で、
-//! 読み手が `trim()` するだけの形が外（ユーザーが手で書き換える設定）として成立して
-//! いる。エスケープを被せると人が書いた `\` の意味が変わる。設定（#38）を作るときに
-//! まとめて決め直す。
+//! Why not 設定（`active-theme` の行き先）もこの書式に乗せる: #38 で決め直して、
+//! 乗せないことにした。エスケープを被せると人が手で書いた `\` の意味が変わる。
+//! 設定は [`crate::settings`] が `key=value` で持ち、ここからは [`write_text`] だけを
+//! 借りる。
 //!
 //! 置き場所（`dir`）を引数で受けるのは、`uninstall::plan` と同じ理由——テストが
 //! 実物の HOME を触らずに往復を確かめられるようにするため。ここは「壊れたら全部の
@@ -43,15 +48,8 @@ pub fn read(dir: &Path, name: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// `<dir>/<name>` へ書く。temp へ書いてから rename するので、途中で落ちても
-/// 中途半端な内容が残らない（次の起動が読むのは前の完全な内容）。
-///
-/// ⚠️ **temp の名前は書き手ごとに変える。** 固定名にすると、A が temp へ書いている
-/// 最中に B が同じ temp を rename してしまい、A の続きが live のファイルを直接
-/// 書き換える。rename 自体が原子でも、そこで壊れる。
+/// `<dir>/<name>` へ書く。置き換えが原子になる仕掛けは [`write_text`] が持つ。
 pub fn write(dir: &Path, name: &str, records: &[Vec<String>]) -> io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-
     let mut text = String::new();
     for record in records {
         for (i, field) in record.iter().enumerate() {
@@ -62,7 +60,22 @@ pub fn write(dir: &Path, name: &str, records: &[Vec<String>]) -> io::Result<()> 
         }
         text.push('\n');
     }
+    write_text(dir, name, &text)
+}
 
+/// `<dir>/<name>` をまるごと置き換える。temp へ書いてから rename するので、途中で
+/// 落ちても中途半端な内容が残らない（次の起動が読むのは前の完全な内容）。
+///
+/// レコードの形を持たない設定（[`crate::settings`]）もここを通る。**書式は客ごとに
+/// 違ってよいが、置き換え方は 1 つ**——temp の置き場所を間違える場所を増やさない。
+///
+/// ⚠️ **temp の名前は書き手ごとに変える。** 固定名にすると、A が temp へ書いている
+/// 最中に B が同じ temp を rename してしまい、A の続きが live のファイルを直接
+/// 書き換える。rename 自体が原子でも、そこで壊れる（8 スレッドで測って、読んだ
+/// 2889 回のうち 2466 回が途中の状態だった）。#49 で窓が長生きするので、窓と CLI が
+/// 同時に書く経路は現実に在る。
+pub fn write_text(dir: &Path, name: &str, text: &str) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
     // temp は同じディレクトリに置く。別のファイルシステム（/tmp）へ置くと
     // rename が EXDEV で落ちる。
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -166,23 +179,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn names_in(dir: &PathBuf) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(dir)
+    /// 書き終わったディレクトリに残るのは本物 1 つだけ。temp の名前を変えたので、
+    /// 決め打ちの `list.tmp` を見るだけでは番人にならない。
+    #[test]
+    fn writing_leaves_no_temp_file_behind() {
+        let dir = temp("tmp");
+        write(&dir, "list", &records(&[&["/a", "dir"]])).unwrap();
+        write_text(&dir, "plain", "x\n").unwrap();
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        names
-    }
-
-    /// 書き終わったディレクトリに残るのは本物 1 つだけ。temp の名前が書き手ごとに
-    /// 変わるので、決め打ちの `list.tmp` を見るだけでは番人にならない。
-    #[test]
-    fn writing_leaves_no_temp_file_behind() {
-        let dir = temp("tmp");
-        write(&dir, "list", &records(&[&["/a", "dir"]])).unwrap();
-        assert_eq!(names_in(&dir), vec!["list".to_string()]);
+        assert_eq!(names, vec!["list".to_string(), "plain".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -193,10 +203,14 @@ mod tests {
         let dir = temp("rename-fails");
         // 行き先をディレクトリにして rename を失敗させる。
         std::fs::create_dir_all(dir.join("list").join("blocker")).unwrap();
-        assert!(write(&dir, "list", &records(&[&["/a", "dir"]])).is_err(), "失敗するはずが通っている");
+        assert!(write_text(&dir, "list", "x\n").is_err(), "失敗するはずが通っている");
 
-        let leftovers: Vec<String> =
-            names_in(&dir).into_iter().filter(|n| n.contains(".tmp.")).collect();
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
         assert!(leftovers.is_empty(), "一時ファイルが残っている: {leftovers:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
