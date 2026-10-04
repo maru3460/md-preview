@@ -976,15 +976,44 @@ pub struct RequestContext {
     /// 実行中に動く（#34）。フォルダ移動はイベントループのスレッドから来て、
     /// リクエストは 1 本ずつ別スレッドで走るので、共有の可変にするしかない。
     root_dir: RwLock<PathBuf>,
-    /// `/` で返す初期ページ。起動時に組み立て済み。
-    pub index_html: Vec<u8>,
-    pub theme_css: String,
+    /// `/` で返す初期ページ。起動時に組み立て済みで、テーマの層だけが後から変わる
+    /// （[`RequestContext::set_theme`]）。
+    index_html: RwLock<Vec<u8>>,
+    /// テーマの層（[`crate::theme::style_layer`]）。設定画面と `md theme` で変わる（#38）。
+    theme_css: RwLock<String>,
     pub custom_css: String,
 }
 
 impl RequestContext {
     pub fn new(root_dir: PathBuf, index_html: Vec<u8>, theme_css: String, custom_css: String) -> Self {
-        RequestContext { root_dir: RwLock::new(root_dir), index_html, theme_css, custom_css }
+        RequestContext {
+            root_dir: RwLock::new(root_dir),
+            index_html: RwLock::new(index_html),
+            theme_css: RwLock::new(theme_css),
+            custom_css,
+        }
+    }
+
+    pub fn index_html(&self) -> Vec<u8> {
+        read_lock(&self.index_html).clone()
+    }
+
+    pub fn theme_css(&self) -> String {
+        read_lock(&self.theme_css).clone()
+    }
+
+    /// テーマの層を差し替える。開いているページへの反映は呼び出し側が別に送る
+    /// （[`crate::html::theme_script`]）。ここが持つのは**この後に配信するもの**。
+    ///
+    /// 初期ページの中の層も書き換える。ページが読み込み直されることは普段無いが、
+    /// WebContent プロセスが落ちたときに WKWebView が勝手に読み込み直すので、
+    /// そこで起動時のテーマへ巻き戻らないようにする。
+    pub fn set_theme(&self, css: String) {
+        let mut theme = write_lock(&self.theme_css);
+        let mut index = write_lock(&self.index_html);
+        let page = String::from_utf8_lossy(&index);
+        *index = crate::html::swap_theme_style(&page, &theme, &css).into_bytes();
+        *theme = css;
     }
 
     /// いまの root。**借りるのではなく複製して返す。**
@@ -998,18 +1027,22 @@ impl RequestContext {
     /// ここが落ちると窓ごと消えるのに対し、root は「いまどこを見ているか」でしかなく、
     /// 古い値で 1 リクエスト返すほうが安いから。
     pub fn root(&self) -> PathBuf {
-        match self.root_dir.read() {
-            Ok(g) => g.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
+        read_lock(&self.root_dir).clone()
     }
 
     pub fn set_root(&self, root: PathBuf) {
-        match self.root_dir.write() {
-            Ok(mut g) => *g = root,
-            Err(poisoned) => *poisoned.into_inner() = root,
-        }
+        *write_lock(&self.root_dir) = root;
     }
+}
+
+/// 毒を無視して読む。理由は [`RequestContext::root`] の doc。テーマも同じで、
+/// 古い層で 1 リクエスト返す方が窓ごと落ちるより安い。
+fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// URL とクエリが指す処理。
@@ -1130,8 +1163,8 @@ pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Resp
         Route::Raw(id) => serve_view(ctx, &id, ViewMode::RawSource),
         Route::Diff(id) => serve_diff(&id),
         Route::DiffStat(id) => serve_diffstat(&id),
-        Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html.clone()),
-        Route::Asset(p) => handle_asset(p, &ctx.root(), &ctx.theme_css, &ctx.custom_css),
+        Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html()),
+        Route::Asset(p) => handle_asset(p, &ctx.root(), &ctx.theme_css(), &ctx.custom_css),
     }
 }
 
@@ -1163,6 +1196,31 @@ fn handle_has_md(id: &str, root_dir: &Path) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// テーマを変えた後に配る初期ページと md の直開きが、新しいテーマの層を持つこと
+    /// （#38）。フィールドを書き換えただけで、配る側が古い値を掴んでいる形を見逃さない。
+    #[test]
+    fn a_new_theme_is_served_from_then_on() {
+        let dir = std::env::temp_dir().canonicalize().unwrap().join("md-theme-swap-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "# a").unwrap();
+
+        let index = crate::html::build_folder_html("t", "THEME_OLD", "", &[]).into_bytes();
+        let ctx = RequestContext::new(dir.clone(), index, "THEME_OLD".to_string(), String::new());
+        let body = |path: &str| {
+            String::from_utf8(handle_request(&ctx, path, "").body().to_vec()).unwrap()
+        };
+
+        ctx.set_theme("THEME_NEW".to_string());
+
+        let page = body("/");
+        assert!(page.contains("THEME_NEW") && !page.contains("THEME_OLD"), "初期ページ");
+        let doc = body("/a.md");
+        assert!(doc.contains("THEME_NEW") && !doc.contains("THEME_OLD"), "md の直開き");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn swapping_the_root_changes_what_the_tree_can_reach() {

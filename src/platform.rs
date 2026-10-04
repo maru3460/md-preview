@@ -93,22 +93,19 @@ pub fn os_is_dark() -> Option<bool> {
 /// （draw.io の自動ダーク）。窓全体の見え方を揃えるための意図した挙動で、`.html-frame`
 /// 側のコメントもそう書いてある。
 ///
-/// 呼ぶのは外観を固定したテーマのときだけ。OS 追従のテーマでは OS の設定がそのまま
-/// 正解なので、何も指定せず OS に任せる。
+/// `dark` が `None` なら指定を外して OS に任せる。OS 追従のテーマでは OS の設定が
+/// そのまま正解なので、指定しない。実行中にテーマを切り替える経路（#38）では
+/// これが要る——固定テーマから OS 追従へ戻ったときに外さないと、古い固定外観が残る。
 ///
 /// **tao の `Window::set_theme` は使えない。** あちらの実装は `NSApp` へ `setAppearance`
 /// するので、窓ではなくアプリ全体の外観が変わる。[`os_is_dark`] が読む実効 appearance
 /// まで固定値に化けて、OS の設定を知る手段が無くなる。
 ///
-/// 前提は「起動時に一度だけ呼ぶ」こと。実行中にテーマを切り替えられるようにする
-/// とき（#38）は、固定テーマから OS 追従へ戻す経路で `setAppearance(None)` を呼んで
-/// 指定を外す必要がある。呼ばないと古い固定外観が残る。
-///
 /// 外観固定テーマの窓は、アクセシビリティの「コントラストを上げる」にも追随しなく
 /// なる（素の `NSAppearanceNameDarkAqua` で固定するため）。テーマが外観を決める以上は
 /// 筋が通るが、[`os_is_dark`] が高コントラスト版まで拾うのと非対称なのは承知の上。
 #[cfg(target_os = "macos")]
-pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
+pub fn set_window_appearance(window: &tao::window::Window, dark: Option<bool>) {
     use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSWindow,
@@ -117,10 +114,14 @@ pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
 
     let ptr = window.ns_window() as *mut NSWindow;
     // 引き受けている不変条件は 2 つ。tao が「Window が生きている間だけ有効」と言って
-    // いる生ポインタであること（呼ぶのは窓を作った直後だけなので生きている）と、
+    // いる生ポインタであること（呼ぶのは `Window` を借りている間だけなので生きている）と、
     // `NSWindow` がメインスレッド専用であること（tao のイベントループがメインスレッド
     // でしか回らないので満たされる）。
     let Some(ns_window) = (unsafe { ptr.as_ref() }) else {
+        return;
+    };
+    let Some(dark) = dark else {
+        ns_window.setAppearance(None);
         return;
     };
     let name = unsafe {
@@ -134,7 +135,7 @@ pub fn set_window_appearance(window: &tao::window::Window, dark: bool) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn set_window_appearance(_window: &tao::window::Window, _dark: bool) {}
+pub fn set_window_appearance(_window: &tao::window::Window, _dark: Option<bool>) {}
 
 /// 窓がネイティブ全画面に入っているか。**「閉じる前に抜けるのを待つ必要があるか」の
 /// 判定だけに使う**（#59）。

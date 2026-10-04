@@ -189,7 +189,8 @@ pub struct Message {
     /// 送り側は run loop を回さないので `frontmostApplication` は起動時点の値を
     /// 握ったままだが、**欲しいのがまさにその値**なのでこれでよい。
     pub launcher_pid: Option<i32>,
-    /// 受け側を前面に出すか。#38 の 4 値設定の受け皿で、`--notify` だけが false。
+    /// 受け側を前面に出すか。#38 の 4 値設定の受け皿。false にするのは `--notify` と
+    /// `md theme` の知らせ（[`Message::theme_changed`]）だけ。
     pub activate: bool,
     /// 開かずにベルへ積め、という要求（#36）。受け側は窓を出さず、タブも増やさず、
     /// `files` を通知の台帳へ積むだけにする。
@@ -198,6 +199,10 @@ pub struct Message {
     /// だけで、隠れていない窓にタブが増えるのは止められない。**対で立てるのは
     /// [`Message::notification`] の仕事**で、呼び出し側でばらさないこと。
     pub notify: bool,
+    /// 設定のテーマが変わったので読み直せ、という知らせ（#38）。`md theme <name>` が
+    /// 送る。受け側は窓を出さず、タブも増やさない。対で立てるのは
+    /// [`Message::theme_changed`] の仕事。
+    pub theme: bool,
 }
 
 impl Message {
@@ -213,6 +218,11 @@ impl Message {
     /// 気づけない。
     pub fn notification(files: Vec<String>) -> Self {
         Message { files, notify: true, activate: false, ..Default::default() }
+    }
+
+    /// テーマを読み直させる 1 通（#38）。`files` は空で、前にも出さない。
+    pub fn theme_changed() -> Self {
+        Message { theme: true, activate: false, ..Default::default() }
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -237,6 +247,9 @@ impl Message {
         // 「普通の転送」と「通知」が目で分かる方がよい。
         if self.notify {
             push_token(&mut out, "notify=1");
+        }
+        if self.theme {
+            push_token(&mut out, "theme=1");
         }
         for f in &self.files {
             push_token(&mut out, &format!("file={}", f));
@@ -270,6 +283,7 @@ impl Message {
                 "launcher" => msg.launcher_pid = value.parse().ok(),
                 "activate" => msg.activate = value != "0",
                 "notify" => msg.notify = value != "0",
+                "theme" => msg.theme = value != "0",
                 // 未知のキーは無視する。前方互換の約束そのものなので、ここで
                 // エラーにしてはいけない。
                 _ => {}

@@ -179,6 +179,13 @@
       when: function(e) { return bare(e) && inTree(); } },
 
     // ── ウィンドウ・ヘルプ ──
+    // 設定（settings.js / #38）。タブで開く（もう開いていればそこへ移る）。
+    // 入力欄にフォーカスがあっても効かせる——⌘, に入力欄としての意味は無い。
+    // オーバーレイ表示中は譲る。理由は ⌘1…⌘9 と同じで、⌘P やコメントの入力欄を
+    // 開いたまま裏だけが設定に切り替わると、何が起きたか分からなくなる。
+    { cat: 'app', keys: '⌘,', desc: '設定をタブで開く',
+      run: 'settings-open', match: function(e) { return e.key === ',' || e.code === 'Comma'; },
+      when: function(e) { return cmdAnywhere(e) && !overlayOpen(); } },
     { cat: 'app', keys: '⌘A', desc: '本文を全選択',
       run: 'select-body', match: letter('a'), when: cmd },
     // JS を通らない（macOS のメニュー項目が処理する）。表示のためだけの行。

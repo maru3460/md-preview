@@ -42,7 +42,7 @@ fn fold_inline_assets(html: &str) -> String {
     let mut out = String::with_capacity(html.len() / 50);
     let mut rest = html;
     loop {
-        let next = ["<style>", "<script"]
+        let next = ["<style", "<script"]
             .iter()
             .filter_map(|t| rest.find(t).map(|i| (i, *t)))
             .min_by_key(|(i, _)| *i);
@@ -53,7 +53,7 @@ fn fold_inline_assets(html: &str) -> String {
         out.push_str(&rest[..pos]);
         rest = &rest[pos..];
 
-        let close = if tag == "<style>" { "</style>" } else { "</script>" };
+        let close = if tag == "<style" { "</style>" } else { "</script>" };
         let (Some(gt), Some(end)) = (rest.find('>'), rest.find(close)) else {
             out.push_str(rest);
             return out;

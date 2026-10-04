@@ -96,6 +96,16 @@ fn a_notification_travels_without_activation() {
 }
 
 #[test]
+fn a_theme_change_travels_without_files_or_activation() {
+    let back = Message::decode(&Message::theme_changed().encode()).unwrap();
+    assert!(back.theme);
+    // 読み直しの知らせで窓が前に出たら、`md theme` を打った端末からフォーカスを奪う。
+    assert!(!back.activate);
+    assert!(back.files.is_empty());
+    assert!(!back.notify);
+}
+
+#[test]
 fn a_message_without_the_notify_key_opens_as_usual() {
     // 既定は「開く」。ここが逆に倒れると、キーを載せない普通の `md file.md` が
     // 全部ベルへ吸い込まれて窓に何も出なくなる。
