@@ -154,6 +154,11 @@ const TABS_JS: &str = include_str!("assets/js/tabs.js");
 /// アイコン帯（`#tabbar-icons`）に住むので、1 枚もの表示には置き場所が無い。
 const NOTIFY_JS: &str = include_str!("assets/js/notify.js");
 
+/// 設定タブ（#38）。入口の歯車がアイコン帯に住み、画面はタブの 1 枚として描くので、
+/// `NOTIFY_JS` と同じくシェル専用。CSS はベルと同じく base.css に置く（ユーザーの
+/// style.css が後から上書きできるように）。
+const SETTINGS_JS: &str = include_str!("assets/js/settings.js");
+
 const ICON_NOTE: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
 const ICON_TIP: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/></svg>"##;
 const ICON_IMPORTANT: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>"##;
@@ -688,6 +693,18 @@ fn transform_events<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>>(
     out
 }
 
+/// テーマの層を入れる `<style>`。id はページ側が差し替えるとき（`MdSettings.applyTheme`）に
+/// 掴むためのもので、[`swap_theme_style`] も同じ綴りを探す。
+fn theme_style(theme_css: &str) -> String {
+    format!(r#"<style id="md-theme">{theme_css}</style>"#)
+}
+
+/// 組み立て済みのページの中のテーマの層を `old` から `new` へ差し替える。
+/// 見つからなければそのまま返す（差し替えられないページを壊すより、古い層のまま出す）。
+pub fn swap_theme_style(page: &str, old: &str, new: &str) -> String {
+    page.replacen(&theme_style(old), &theme_style(new), 1)
+}
+
 /// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、`PAGE_SCRIPTS` の
 /// 各モジュールを inline する。
 /// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILES 等）を末尾に差し込む。
@@ -705,12 +722,12 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> Str
         r#"<meta charset="utf-8">
 <title>{title}</title>
 <style>{base_css}</style>
-<style>{theme_css}</style>
+{theme_style}
 <style>{custom_css}</style>
 {scripts}{extra_head}"#,
         title = html_escape(title),
         base_css = BASE_CSS,
-        theme_css = theme_css,
+        theme_style = theme_style(theme_css),
         custom_css = custom_css,
         scripts = scripts,
         extra_head = extra_head,
@@ -841,8 +858,8 @@ pub fn build_folder_html(
         .collect::<Vec<_>>()
         .join(",");
     let folder_head = format!(
-        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>\n<script>{}</script>",
-        initial_files_json, TABS_JS, NOTIFY_JS
+        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>\n<script>{}</script>\n<script>{}</script>",
+        initial_files_json, TABS_JS, NOTIFY_JS, SETTINGS_JS
     );
     format!(
         r#"<!DOCTYPE html>
@@ -937,9 +954,117 @@ pub fn root_failed_script(id: &str) -> String {
     format!("window.MdRootFailed && window.MdRootFailed({});", json_string(id))
 }
 
+/// 設定タブ（#38）に映す状態。持ち主は Rust 側の `settings` で、ページは写しを
+/// 受けて描くだけ（ベルの一覧と同じ形）。
+pub struct SettingsView<'a> {
+    /// `settings` に書いてあるテーマ名。一覧に無い名前のこともある（手で書いた・
+    /// ユーザーテーマを消した）。そのときページは「無い」と添える。
+    pub theme: &'a str,
+    /// 並べるテーマ。
+    pub themes: &'a [crate::theme::Choice],
+    /// 保存してある窓の初期サイズ。`None` は既定のまま。
+    pub window_size: Option<(u32, u32)>,
+}
+
+/// 設定タブの状態を**まるごと**ページへ渡すスクリプト。差分にしない理由は
+/// [`notifications_script`] と同じ。
+pub fn settings_script(view: &SettingsView) -> String {
+    let themes = view
+        .themes
+        .iter()
+        .map(|t| {
+            let swatch = match t.swatch {
+                Some(colors) => format!(
+                    "[{}]",
+                    colors.iter().map(|c| json_string(c)).collect::<Vec<_>>().join(",")
+                ),
+                None => "null".to_string(),
+            };
+            format!(
+                "{{name:{},group:{},swatch:{}}}",
+                json_string(&t.name),
+                json_string(t.group),
+                swatch
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let size = |(w, h): (u32, u32)| format!("{{w:{w},h:{h}}}");
+    let default_size = (
+        crate::app_config::WINDOW_WIDTH as u32,
+        crate::app_config::WINDOW_HEIGHT as u32,
+    );
+    format!(
+        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{}}});",
+        json_string(view.theme),
+        json_string(crate::theme::DEFAULT_NAME),
+        json_string(&crate::theme::auto_dark_bg_hex()),
+        themes,
+        view.window_size.map(size).unwrap_or_else(|| "null".to_string()),
+        size(default_size),
+    )
+}
+
+/// 開いているページのテーマの層を差し替えるスクリプト（#38）。CSS は丸ごと渡す——
+/// ページは同梱テーマの CSS を持っていないし、ユーザーテーマはそもそも Rust 側にしか無い。
+pub fn theme_script(theme_css: &str, appearance: crate::theme::Appearance) -> String {
+    format!(
+        "window.MdSettings && window.MdSettings.applyTheme({}, {});",
+        json_string(theme_css),
+        json_string(appearance.as_str())
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 起動後にテーマを変えても、配信し直す初期ページが新しい層を持つこと。
+    /// 古い層が残ると、WebContent が落ちて読み込み直したときに起動時のテーマへ戻る。
+    #[test]
+    fn swapping_the_theme_replaces_only_the_theme_layer() {
+        let page = build_folder_html("t", "THEME_OLD", "CUSTOM", &[]);
+        let swapped = swap_theme_style(&page, "THEME_OLD", "THEME_NEW");
+        assert!(swapped.contains(r#"<style id="md-theme">THEME_NEW</style>"#), "{swapped}");
+        assert!(!swapped.contains("THEME_OLD"));
+        assert!(swapped.contains("<style>CUSTOM</style>"));
+    }
+
+    /// 保存していない初期サイズは `null` で渡す。ページはそれを見て「既定」と書く。
+    #[test]
+    fn settings_script_carries_the_whole_state() {
+        let themes = vec![
+            crate::theme::Choice {
+                name: "nord".to_string(),
+                group: "dark",
+                swatch: Some(["#2e3440", "#d8dee9", "#88c0d0", "#a3be8c", "#bf616a"]),
+            },
+            crate::theme::Choice { name: "my\"theme".to_string(), group: "user", swatch: None },
+        ];
+        let script = settings_script(&SettingsView { theme: "nord", themes: &themes, window_size: None });
+        assert!(script.starts_with("window.MdSettings && window.MdSettings.push({"), "{script}");
+        assert!(script.contains(r#"theme:"nord""#), "{script}");
+        assert!(script.contains(r#"{name:"my\"theme",group:"user",swatch:null}"#), "{script}");
+        assert!(
+            script.contains(r##"{name:"nord",group:"dark",swatch:["#2e3440","#d8dee9","#88c0d0","#a3be8c","#bf616a"]}"##),
+            "{script}"
+        );
+        assert!(script.contains("windowSize:null"), "{script}");
+        assert!(script.contains(r##"defaultTheme:"default",autoDarkBg:"#0d1117""##), "{script}");
+        assert!(script.contains("defaultWindowSize:{w:1280,h:700}"), "{script}");
+
+        let script = settings_script(&SettingsView { theme: "nord", themes: &themes, window_size: Some((1440, 900)) });
+        assert!(script.contains("windowSize:{w:1440,h:900}"), "{script}");
+    }
+
+    /// テーマの CSS に `</style>` や `</script>` の綴りがあっても、渡す文字列から
+    /// 抜け出さないこと（ユーザーテーマは何でも書ける）。
+    #[test]
+    fn theme_script_keeps_css_inside_the_string() {
+        let script = theme_script("a{}</script><b>\n", crate::theme::Appearance::Dark);
+        assert!(!script.contains("</script>"), "{script}");
+        assert!(script.ends_with(r#", "dark");"#), "{script}");
+    }
 
     /// 0 件でも呼び出しを作ること。作らないと、最後の 1 件が消えたときに
     /// ページが古い一覧を出したままになる。

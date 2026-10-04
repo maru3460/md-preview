@@ -113,6 +113,25 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     履歴は <code>~/.config/md-preview/notifications</code> に残るので、ウィンドウを閉じても次に開いたときに並んでいます。持つのは新しい順に 100 件までです。
   </p>
 
+  <h2>設定</h2>
+  <p>
+    タブバーの右端、ベルの隣の歯車か <kbd>⌘,</kbd> で、設定がタブとして開きます。左で「テーマ」と「ウィンドウ」を切り替えます。
+    保存ボタンはなく、変えたらその場で保存されます。閉じるのは普通のタブと同じく <kbd>⌘W</kbd>。
+  </p>
+  <div class="flist">
+    <div class="fitem">
+      <div class="fname">テーマ</div>
+      <div class="fdesc">配色の見本が付いたカードを押すと、その場で窓全体がそのテーマに変わります。端末で <code>md theme &lt;名前&gt;</code> を打っても、開いている窓にそのまま反映されます。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">窓の初期サイズ</div>
+      <div class="fdesc">幅と高さを打ち込むか、「いまの大きさに設定する」でいまの窓の大きさを入れます。<kbd>⌘Q</kbd> で終了した後、次に開く窓からその大きさになります（<kbd>⌘W</kbd> で閉じた窓は、閉じたときの大きさのまま出直します）。</div>
+    </div>
+  </div>
+  <p class="note">
+    設定は <code>~/.config/md-preview/settings</code> に <code>key=value</code> で残ります。手で開いて書き換えても構いません。
+  </p>
+
   <h2>相対パスの基準</h2>
   <p>
     画像（<code>![](fig.png)</code>）もリンク（<code>[b](./b.md)</code>）も、開いているフォルダではなく

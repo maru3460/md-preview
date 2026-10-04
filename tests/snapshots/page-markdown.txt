@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>kitchen-sink.md</title>
 <style>…</style>
-<style>…</style>
+<style id="md-theme">…</style>
 <style>…</style>
 <script>…</script>
 <script>…</script>

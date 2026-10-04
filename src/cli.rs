@@ -208,6 +208,15 @@ pub fn run_theme_command(rest: &[String]) {
                 eprintln!("md: テーマを保存できませんでした: {}", e);
                 std::process::exit(1);
             }
+            // 動いている md の窓にも効かせる（#38）。窓はプロセスごと ⌘Q まで生き続ける
+            // （#49）ので、知らせないと次に起動し直すまで古いテーマのまま残る。
+            // 届かなくても（誰も居ない）保存は済んでいるので、黙って続ける。
+            //
+            // ⚠️ `theme=` を知らない古い md が相手の穴は、`main.rs` の
+            // `message_to_forward` に並べてある（⌘Q すれば消える）。
+            if let Some(ep) = crate::instance::Endpoint::user_default() {
+                let _ = crate::instance::try_send(&ep, &crate::instance::Message::theme_changed());
+            }
             println!("テーマを '{}' に切り替えました", name);
         }
         _ => {

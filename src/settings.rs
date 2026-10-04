@@ -31,6 +31,9 @@ const LEGACY_THEME_FILE: &str = "active-theme";
 /// Why not 機能側が `"theme"` と直に書く: 読む側と書く側で綴りがずれても誰も落ちない。
 pub const THEME: &str = "theme";
 
+/// 窓の初期サイズ（#42）。`1440x900` の形で、意味の解釈は [`crate::app_config`] が持つ。
+pub const WINDOW_SIZE: &str = "window-size";
+
 /// ファイルの 1 行。
 #[derive(Debug, PartialEq, Eq)]
 enum Line {

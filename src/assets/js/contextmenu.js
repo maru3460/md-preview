@@ -32,6 +32,10 @@
     // タブを右クリック → そのタブが対象（開閉の操作が増える）。
     var tab = e.target.closest && e.target.closest('.md-tab');
     if (tab && tab.dataset && tab.dataset.path) {
+      // 設定タブ（#38）はファイルではない。開閉の操作だけを出し、パス系は灰色にする。
+      if (window.MdSettings && MdSettings.isTab(tab.dataset.path)) {
+        return { id: '', relOk: false, has: false, tab: tab.dataset.path };
+      }
       return { id: tab.dataset.path, relOk: true, has: true, tab: tab.dataset.path };
     }
     // サイドバーのヘッダ（フォルダ名）→ いまの root が対象（#34）。パスのコピーや

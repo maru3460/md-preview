@@ -45,7 +45,7 @@ https://github.com/user-attachments/assets/f34e4e47-6218-4da9-ae91-5455e4401185
 
 ## テーマ
 
-`md theme` コマンドで配色を丸ごと切り替えられます。
+`md theme` コマンドか、窓の ⌘,（設定）で配色を丸ごと切り替えられます。
 
 ```bash
 md theme # テーマ一覧を表示

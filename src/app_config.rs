@@ -24,6 +24,54 @@ pub const WINDOW_WIDTH: f64 = 1280.0;
 /// ウィンドウの高さ。
 pub const WINDOW_HEIGHT: f64 = 700.0;
 
+/// 初期サイズの下限。ツリーとタブバーが潰れずに出る大きさ。
+const MIN_WINDOW_WIDTH: u32 = 480;
+const MIN_WINDOW_HEIGHT: u32 = 320;
+
+/// これを超える値は書き損じとして読まない（`14400x900` のような桁の打ち間違い）。
+/// 画面より大きいだけの値は、窓を作るときに画面へ収める（`main.rs`）。
+const MAX_WINDOW_SIDE: u32 = 16384;
+
+/// `settings` の `window-size=`（#42）の値を幅と高さ（論理ポイント）へ。
+///
+/// 書いていない・読めないなら既定の [`WINDOW_WIDTH`] × [`WINDOW_HEIGHT`]。
+/// 小さすぎる値は下限まで持ち上げる。
+///
+/// Why not 小さすぎる値も書き損じとして既定へ戻す: 手で `400x300` と書いた人は
+/// 「小さめにしたい」という意図を持っている。下限で受ける方がその意図に近い。
+pub fn window_size(value: Option<&str>) -> (f64, f64) {
+    match value.and_then(parse_window_size) {
+        Some((w, h)) => {
+            let (w, h) = raise_to_min(w, h);
+            (w as f64, h as f64)
+        }
+        None => (WINDOW_WIDTH, WINDOW_HEIGHT),
+    }
+}
+
+/// 下限まで持ち上げる。読むとき（[`window_size`]）と、設定タブから保存するときの
+/// 両方が通る——保存する側が通さないと、欄には `100` と出ているのに次の窓は 480 で
+/// 開く、という食い違いになる。
+pub fn raise_to_min(w: u32, h: u32) -> (u32, u32) {
+    (w.max(MIN_WINDOW_WIDTH), h.max(MIN_WINDOW_HEIGHT))
+}
+
+/// `1440x900` → `(1440, 900)`。区切りは `x` だけを受ける（`×` は手で打ちにくい）。
+pub fn parse_window_size(s: &str) -> Option<(u32, u32)> {
+    let (w, h) = s.trim().split_once('x')?;
+    let w: u32 = w.trim().parse().ok()?;
+    let h: u32 = h.trim().parse().ok()?;
+    if w == 0 || h == 0 || w > MAX_WINDOW_SIDE || h > MAX_WINDOW_SIDE {
+        return None;
+    }
+    Some((w, h))
+}
+
+/// 保存する綴り。[`parse_window_size`] と対。
+pub fn format_window_size(w: u32, h: u32) -> String {
+    format!("{w}x{h}")
+}
+
 /// ウィンドウ起動に必要な、入力から決まる設定一式。
 pub struct AppConfig {
     pub title: String,
@@ -368,6 +416,48 @@ fn canonical(p: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_window_size_is_read_back_as_logical_points() {
+        assert_eq!(window_size(Some("1440x900")), (1440.0, 900.0));
+        assert_eq!(parse_window_size(&format_window_size(1512, 945)), Some((1512, 945)));
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_window_size_falls_back_to_the_default() {
+        let default = (WINDOW_WIDTH, WINDOW_HEIGHT);
+        assert_eq!(window_size(None), default);
+        // 「既定に戻す」は空の値を書く。
+        assert_eq!(window_size(Some("")), default);
+        assert_eq!(window_size(Some("1440")), default);
+        assert_eq!(window_size(Some("1440×900")), default);
+        assert_eq!(window_size(Some("0x900")), default);
+        assert_eq!(window_size(Some("-1x900")), default);
+        // 桁の打ち間違いは画面へ収めるより、書き損じとして読まない方が害が小さい。
+        assert_eq!(window_size(Some("144000x900")), default);
+    }
+
+    #[test]
+    fn a_too_small_window_size_is_raised_to_the_minimum() {
+        assert_eq!(
+            window_size(Some("100x100")),
+            (MIN_WINDOW_WIDTH as f64, MIN_WINDOW_HEIGHT as f64)
+        );
+    }
+
+    /// 設定タブから保存するときも下限を通す。通さないと、欄には 100 と出ているのに
+    /// 次の窓は 480 で開く。
+    #[test]
+    fn saving_raises_a_too_small_size_to_the_minimum_as_reading_does() {
+        assert_eq!(raise_to_min(100, 1000), (MIN_WINDOW_WIDTH, 1000));
+        let (w, h) = raise_to_min(100, 100);
+        assert_eq!(window_size(Some(&format_window_size(w, h))), (w as f64, h as f64));
+    }
+
+    #[test]
+    fn spaces_around_the_numbers_are_tolerated() {
+        assert_eq!(window_size(Some(" 1440 x 900 ")), (1440.0, 900.0));
+    }
 
     fn paths(list: &[&str]) -> Vec<PathBuf> {
         list.iter().map(PathBuf::from).collect()

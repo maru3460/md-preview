@@ -37,7 +37,10 @@
   // タブに出す名前は識別子ではなく表示名（root を剥いだ形）から作る。root 直下の
   // ファイルに親ディレクトリ名（＝ root のフォルダ名）が付かないのは、それが
   // どのタブにも同じように付いて区別の役に立たないため。
+  // 設定タブ（#38）はファイルではない。名前をパスから作らず「設定」と出す。
+  function isSettings(p) { return !!(window.MdSettings && MdSettings.isTab(p)); }
   function displayOf(p) {
+    if (isSettings(p)) return '設定';
     return (window.MdCommon && MdCommon.idToDisplay) ? MdCommon.idToDisplay(p) : String(p);
   }
   function baseName(p) {
@@ -196,7 +199,10 @@
   function reportClosed(closed) {
     if (!window.ipc) return;
     for (var i = 0; i < closed.length; i++) {
-      if (closed[i] && closed[i].path) ipc.postMessage('closed:' + closed[i].path);
+      // 設定タブは一時ファイルを持たないので知らせない。
+      if (closed[i] && closed[i].path && !isSettings(closed[i].path)) {
+        ipc.postMessage('closed:' + closed[i].path);
+      }
     }
   }
 

@@ -885,6 +885,10 @@ body.folder-mode {
     gap: 6px;
     flex-shrink: 0;
     height: calc(var(--md-tabbar-h) - var(--md-sb-w));
+    /* 下限は `sample.md` のタブの外寸（実測 107px）。「設定」や `a.md` のような短い名前の
+       タブが、押しにくいほど細くならないように。content-box なので、左右の余白（20px）と
+       右の罫（1px）を引いた中身の幅で書く。 */
+    min-width: 86px;
     max-width: 220px;
     padding: 0 8px 0 12px;
     font-size: 12.5px;
@@ -920,7 +924,10 @@ body.folder-mode {
 
 /* 閉じるボタンは常時出すと賑やかなので、hover と現在タブだけに出す。
    場所は空けたままにする（出た瞬間に文字が詰まって見えるのを防ぐ）。 */
+/* 名前が下限の幅より短いときも、× をタブの右端に揃える。名前の側を伸ばすと、
+   同名タブに添える親フォルダ名（.md-tab-dir）まで × の側へ押される。 */
 .md-tab-close {
+    margin-left: auto;
     flex-shrink: 0;
     width: 16px;
     height: 16px;
@@ -1034,7 +1041,9 @@ body.folder-mode {
    currentColor と --md-accent の混色で組む。未読の丸を赤にしないのはそのため——
    赤はテーマが持っていない色で、1 つ足すと「ベルのためだけの色」が 13 テーマに要る。
    アクセントで塗りつぶせば、地色が明るくても暗くても目に入る。 */
-#tabbar-bell {
+/* 歯車（#38）も同じ形のボタンなので、ここで一緒に組む。 */
+#tabbar-bell,
+#tabbar-gear {
     position: relative;
     display: flex;
     align-items: center;
@@ -1053,7 +1062,8 @@ body.folder-mode {
 }
 
 #tabbar-bell:hover,
-#tabbar-bell.is-open {
+#tabbar-bell.is-open,
+#tabbar-gear:hover {
     opacity: 1;
     background: color-mix(in srgb, currentColor 12%, transparent);
 }
@@ -2461,4 +2471,232 @@ body.md-cmt-mode .source-main .copy-btn {
     gap: 8px;
     padding: 9px 11px;
     border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+
+/* ── 設定タブ（#38）──────────────────────────────────────────────
+   本体の窓のタブの 1 枚として、本文ペイン（#preview-pane）の中に描く。
+   **色の本家はテーマ側**——テーマの CSS が `body` の地色・文字色と `--md-accent` を
+   塗るので、ここはそれを currentColor と --md-accent から混ぜて使うだけにする。
+   テーマを切り替えると、この画面もその場で塗り替わる。 */
+
+.st-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+    /* 本文（読み物）と違って行の長さを抑える理由が無いので、幅は広く取る。
+       カードの組（ライト・ダークとも 6 枚）が既定の窓で 1 段に並ぶ幅が要る。 */
+    max-width: 1120px;
+    margin: 0 auto;
+    /* 本文の読み物向けの大きさ（17px）と書体は持ち込まない。設定は UI。 */
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+/* 本文ペインの余白は読み物向け（--md-pad）で、設定画面には広すぎる。既定の窓で
+   カードの組を 1 段に並べる幅を取るために、設定タブを描いている間だけ詰める。
+   Why not JS でペインに class を付け外しする: 別のタブへ移ったとき、本文を差し替える
+   経路（loadPreview・clearPreview・raw / diff）の全部で外す必要がある。中身を見て
+   決めれば、外し忘れる場所ができない。 */
+#preview-pane:has(> .st-layout) {
+    padding: 16px 24px;
+}
+
+/* ── 左のナビ ── */
+/* 右のペインを読み進めても見えている位置に留める（本文ペインがスクローラ）。 */
+.st-nav {
+    position: sticky;
+    top: 0;
+    width: 176px;
+    flex: 0 0 auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 10px;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    user-select: none;
+}
+
+.st-nav button {
+    all: unset;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.st-nav button:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+
+.st-nav button.is-on {
+    background: color-mix(in srgb, var(--md-accent, Highlight) 16%, transparent);
+    color: color-mix(in srgb, var(--md-accent, Highlight) 70%, currentColor);
+    font-weight: 600;
+}
+
+.st-nav svg { width: 16px; height: 16px; flex: 0 0 auto; }
+
+/* ── 右のペイン ── */
+.st-pane { flex: 1; min-width: 0; padding: 4px 0 28px; }
+
+/* 文字はどれも同じ濃さで書く（薄くすると読みにくい）。段の区切りは濃淡ではなく、
+   ペインの見出しの下の線で付ける。 */
+.st-title {
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.st-item { padding: 6px 0 12px; }
+
+.st-label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 15px; }
+
+.st-desc { margin: 0 0 12px; font-size: 13.5px; }
+
+.st-group { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
+
+/* ── テーマのカード ── */
+.st-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 10px;
+}
+
+.st-card {
+    all: unset;
+    position: relative;
+    cursor: pointer;
+    border-radius: 9px;
+    padding: 6px;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.st-card:hover { border-color: color-mix(in srgb, currentColor 30%, transparent); }
+
+.st-card.is-on {
+    border-color: var(--md-accent, Highlight);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 35%, transparent);
+}
+
+.st-sw {
+    height: 58px;
+    border-radius: 6px;
+    padding: 8px 9px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px solid rgba(127, 127, 127, .18);
+}
+
+.st-sw .aa { font: 600 15px/1 Georgia, "Hiragino Mincho ProN", serif; }
+.st-sw .dots { display: flex; gap: 4px; }
+.st-sw .dots i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+/* ユーザーテーマは配色を持たない（theme.rs の swatch は同梱テーマにしか無い）。 */
+.st-sw.is-unknown {
+    border-style: dashed;
+    background: repeating-linear-gradient(45deg, transparent 0 6px, rgba(127, 127, 127, .12) 6px 12px);
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    opacity: .8;
+}
+
+.st-card .name {
+    margin-top: 6px;
+    padding: 0 4px;
+    font-size: 13.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 印は見本の右上に重ねる。名前の前に置くと、その幅のぶん長い名前（solarized-light）が
+   既定の窓で切れる。地が明暗どちらでも見えるよう、アクセントの丸に白抜きで置く。 */
+.st-card .chk {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--md-accent, Highlight);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    visibility: hidden;
+}
+.st-card.is-on .chk { visibility: visible; }
+
+/* ── 既定に戻す ── */
+.st-reset { margin-top: 12px; font-size: 13px; }
+
+.st-link {
+    all: unset;
+    cursor: pointer;
+    color: var(--md-accent, LinkText);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.st-note { margin: 0 0 12px; font-size: 13px; }
+
+/* ── 初期サイズ ── */
+.st-dims { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+
+.st-field label { display: block; font-size: 13px; margin-bottom: 3px; }
+
+.st-num {
+    display: flex;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, currentColor 3%, transparent);
+    padding: 0 8px 0 0;
+}
+
+.st-num input {
+    all: unset;
+    width: 70px;
+    padding: 5px 8px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    user-select: text;
+}
+
+.st-num span { font-size: 12.5px; }
+
+.st-num:focus-within {
+    border-color: var(--md-accent, Highlight);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 30%, transparent);
+}
+
+.st-times { padding-bottom: 6px; }
+
+.st-btn {
+    all: unset;
+    cursor: pointer;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.st-btn:hover { background: color-mix(in srgb, currentColor 11%, transparent); }
+
+.st-when {
+    margin-top: 12px;
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-size: 13px;
+    background: color-mix(in srgb, var(--md-accent, Highlight) 9%, transparent);
 }

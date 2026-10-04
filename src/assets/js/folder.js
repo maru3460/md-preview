@@ -293,6 +293,7 @@
   // 開いているファイルが 1 つも無い状態（ツリーだけがある `md .` の起動直後と同じ）
   // へ戻す。loadPreview が「現在のファイル」に紐付けたものを、同じ並びで解く。
   function clearPreview() {
+    if (window.MdSettings) MdSettings.flush();
     var pane = document.getElementById('preview-pane');
     currentFilePath = null;
     bodyPath = null;
@@ -319,7 +320,47 @@
     focusPreview();
   }
 
+  // 設定タブ（#38）を前に出す。設定はファイルではないので、まず「何も開いていない
+  // 状態」（clearPreview と同じ）にしてから本文ペインに設定画面を描かせる。
+  // raw / diff・ホットリロード・コメントの付け先・右クリックのパス系は、どれも
+  // `currentFilePath` が無い経路で既に黙るので、個別に除外を書かなくて済む。
+  //
+  // Why not `currentFilePath` に設定タブの識別子を入れる: 上の機能がそれをファイルと
+  // 思って `/?raw=md:settings` のような要求を投げる。除外を各所に撒くことになる。
+  function showSettings(id, preserveScroll) {
+    var pane = document.getElementById('preview-pane');
+    if (!preserveScroll && window.MdTabs) MdTabs.onOpen(id);
+    var savedScroll = preserveScroll ? MdCommon.readScroll()
+      : (window.MdTabs ? MdTabs.scrollFor(id) : 0);
+    currentFilePath = null;
+    bodyPath = null;
+    // 進行中の本文フェッチを無効にする。設定タブへ移った直後に前のファイルの
+    // 応答が届いて、設定画面を本文で上書きしないように。
+    reqSeq++;
+    document.querySelectorAll('.tree-item.active').forEach(function(el) {
+      el.classList.remove('active');
+    });
+    if (window.MdMenu) window.MdMenu.setCurrentFile(null);
+    if (window.MdSearch) window.MdSearch.reset();
+    if (window.MdViewModes) window.MdViewModes.restore(null);
+    // raw / diff のボタンも隠す。押しても対象が無い。
+    if (window.MdRaw) window.MdRaw.setAvailable(false);
+    if (window.MdDiff) {
+      window.MdDiff.setAvailable(false);
+      window.MdDiff.refreshStat();
+    }
+    if (pane) {
+      window.MdSettings.mount(pane);
+      MdCommon.restoreScroll(savedScroll);
+    }
+    if (window.MdToc) window.MdToc.refresh();
+    if (!preserveScroll) focusPreview();
+  }
+
   function loadPreview(id, preserveScroll) {
+    // 設定タブを離れる前に、打ちかけの値を確定させる（理由は settings.js の flush）。
+    if (window.MdSettings) MdSettings.flush();
+    if (window.MdSettings && MdSettings.isTab(id)) { showSettings(id, preserveScroll); return; }
     var pane = document.getElementById('preview-pane');
     // タブ（tabs.js）はこの関数を唯一の入口として状態を持つ。ホットリロードは
     // ファイル切替ではないので通さない（タブが増えたり読み位置が動いたりしない）。
@@ -345,6 +386,8 @@
     // それ以外は通常表示が既にソースなので raw は無効化（トグルを隠す）。raw 表示中に
     // 無効ファイルへ切り替えたら setAvailable(false) が状態を畳むので通常フェッチに落ちる。
     if (window.MdRaw) window.MdRaw.setAvailable(isRenderablePath(id));
+    // diff はどのファイルでも出せる。設定タブ（showSettings）が隠したぶんを戻す。
+    if (window.MdDiff) window.MdDiff.setAvailable(true);
 
     // raw / diff はモードとして維持する。ON のまま別ファイルへ移ったら、そのファイルの
     // ソース / 差分を表示する（本文レンダリングには戻さない）。
@@ -420,6 +463,12 @@
     // 飛ばしたぶんは、進行中のフェッチが持ってくるか、次の保存で拾う。
     if (bodyPath !== currentFilePath) return;
     loadPreview(currentFilePath, true);
+  };
+
+  // テーマが変わった（#38）ときに、いま見ている本文を描き直す。mermaid の図は描いた
+  // ときの配色で固まっているので、読み直す以外に新しいテーマへ追従させる道が無い。
+  window.MdRerender = function() {
+    if (currentFilePath) window.MdReload(currentFilePath);
   };
 
   // 別プロセスの md から転送されてきたファイル（#31）を開く唯一の入口。
@@ -1041,6 +1090,8 @@
     // タブの一覧を持っているのはページなので、再登録はここから送る。
     if (window.ipc && window.MdTabs && MdTabs.ids) {
       MdTabs.ids().forEach(function(id) {
+        // 設定タブ（#38）はファイルではないので監視しない。
+        if (window.MdSettings && MdSettings.isTab(id)) return;
         if (MdCommon.isOutsideRoot(id)) window.ipc.postMessage('watch:' + id);
       });
     }
@@ -1194,6 +1245,11 @@
       // 通知ベル（#32）。押したら通常のファイル切替と同じ経路で開く。
       // 一覧は Rust 側が `MdNotify.push` で渡してくる（起動スクリプトには焼かない）。
       window.MdNotify.init({ openFile: function(id) { loadPreview(id); } });
+    }
+    if (window.MdSettings) {
+      // 設定タブ（#38）。開くのは通常のファイル切替と同じ経路（loadPreview が
+      // 識別子を見て設定画面へ振り分ける）。
+      window.MdSettings.init({ openFile: function(id) { loadPreview(id); } });
     }
     if (window.MdPalette) {
       // ファイル検索（⌘P）。選んだら通常のファイル切替と同じ経路で開く。

@@ -76,7 +76,7 @@ fn parse(records: Vec<Vec<String>>) -> Vec<Entry> {
 fn save(dir: &Path, list: &[Entry]) {
     let records: Vec<Vec<String>> = list.iter().map(record).collect();
     // 書けなくても窓は動き続ける（次の起動で前の内容に戻るだけ）。窓の中に出す
-    // 手段を持たないので、ここで握りつぶす。設定画面（#38）ができたら知らせ先ができる。
+    // 手段を持たないので、ここで握りつぶす。
     let _ = crate::store::write(dir, FILE, &records);
 }
 
