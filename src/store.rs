@@ -22,6 +22,10 @@
 
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// 同じプロセスの中でも temp の名前が衝突しないようにする連番。
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// フィールドの区切り。パスに含まれうるので、値の側でエスケープする
 /// （[`escape`] の対象から外すと、区切りが値に混ざって読めなくなる）。
@@ -41,6 +45,10 @@ pub fn read(dir: &Path, name: &str) -> Vec<Vec<String>> {
 
 /// `<dir>/<name>` へ書く。temp へ書いてから rename するので、途中で落ちても
 /// 中途半端な内容が残らない（次の起動が読むのは前の完全な内容）。
+///
+/// ⚠️ **temp の名前は書き手ごとに変える。** 固定名にすると、A が temp へ書いている
+/// 最中に B が同じ temp を rename してしまい、A の続きが live のファイルを直接
+/// 書き換える。rename 自体が原子でも、そこで壊れる。
 pub fn write(dir: &Path, name: &str, records: &[Vec<String>]) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
 
@@ -57,9 +65,20 @@ pub fn write(dir: &Path, name: &str, records: &[Vec<String>]) -> io::Result<()> 
 
     // temp は同じディレクトリに置く。別のファイルシステム（/tmp）へ置くと
     // rename が EXDEV で落ちる。
-    let tmp = dir.join(format!("{name}.tmp"));
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, dir.join(name))
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!("{name}.tmp.{}.{seq}", std::process::id()));
+    // 名前を一意にしたぶん、失敗した残骸は上書きされずに溜まる。どちらの失敗でも畳む。
+    // Why not 掃除を別に持つ: 残りうるのは SIGKILL と電源断で死んだときだけになり、
+    // そのために設定ディレクトリを走査する口を増やす方が高くつく。
+    if let Err(e) = std::fs::write(&tmp, text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, dir.join(name)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// 区切りと行末を値の中から追い出す。`\` 自身も対象（でないと `a\` ＋ 区切り が
@@ -147,11 +166,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn names_in(dir: &PathBuf) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// 書き終わったディレクトリに残るのは本物 1 つだけ。temp の名前が書き手ごとに
+    /// 変わるので、決め打ちの `list.tmp` を見るだけでは番人にならない。
     #[test]
     fn writing_leaves_no_temp_file_behind() {
         let dir = temp("tmp");
         write(&dir, "list", &records(&[&["/a", "dir"]])).unwrap();
-        assert!(!dir.join("list.tmp").exists());
+        assert_eq!(names_in(&dir), vec!["list".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 置き換えに失敗したぶんの一時ファイルを残さないこと。名前を一意にしたので、
+    /// 畳まないと失敗のたびに溜まる（固定名のころは次の書き込みが上書きしていた）。
+    #[test]
+    fn a_failed_replace_leaves_no_temp_file_behind() {
+        let dir = temp("rename-fails");
+        // 行き先をディレクトリにして rename を失敗させる。
+        std::fs::create_dir_all(dir.join("list").join("blocker")).unwrap();
+        assert!(write(&dir, "list", &records(&[&["/a", "dir"]])).is_err(), "失敗するはずが通っている");
+
+        let leftovers: Vec<String> =
+            names_in(&dir).into_iter().filter(|n| n.contains(".tmp.")).collect();
+        assert!(leftovers.is_empty(), "一時ファイルが残っている: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同じファイルを同時に書いても、読んだ側が途中の状態を見ないこと。
+    #[test]
+    fn writers_racing_on_one_file_never_leave_a_half_written_state() {
+        let dir = temp("concurrent");
+        let long: Vec<Vec<String>> = (0..2000).map(|i| vec![format!("/pad/{i}")]).collect();
+        write(&dir, "list", &long).unwrap();
+
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                s.spawn(|| {
+                    for _ in 0..20 {
+                        write(&dir, "list", &long).unwrap();
+                    }
+                });
+            }
+            s.spawn(|| {
+                for _ in 0..200 {
+                    let got = read(&dir, "list");
+                    assert_eq!(got.len(), long.len(), "途中まで書かれたファイルを読んだ");
+                }
+            });
+        });
         let _ = std::fs::remove_dir_all(&dir);
     }
 
