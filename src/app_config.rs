@@ -354,7 +354,7 @@ fn stdin_root(doc: &Path, current_dir: &Option<PathBuf>) -> PathBuf {
 ///
 /// `STDIN_FILE_ENV` は環境変数なので、外から任意の場所を指せる。`doc` の親を
 /// 無条件に消すと `MD_STDIN_FILE=/etc/hosts` で `/etc` が飛ぶので、
-/// 自分が掘る形（`$TMPDIR/md-stdin-<pid>/`）に一致するものだけを対象にする。
+/// 自分が掘る形（`$TMPDIR/md-stdin-<時刻>/`）に一致するものだけを対象にする。
 ///
 /// 転送（#31）で受け側が所有権を引き取るときも**この同じ門を通す**。ワイヤから来た
 /// 値を信用して消すと、同じ穴が env から socket へ移るだけになる。
@@ -393,13 +393,37 @@ pub fn spool_stdin() -> PathBuf {
     write_spool(&markdown)
 }
 
-/// 一時ファイルへ書き出す。プロセス専用のディレクトリを掘るのは、このファイルを
+/// 一時ファイルへ書き出す。専用のディレクトリを掘るのは、このファイルを
 /// 「root の外のファイル」として監視へ足すとき、監視対象が $TMPDIR 全体ではなく
 /// この 1 ファイルだけで済むため（後片付けの範囲も同じ理由で絞れる）。
+///
+/// ディレクトリは**新しく作れたものだけ**を使う（`create_dir` は既にあれば失敗する）。
+/// 同じパスを 2 回使うと、ベルの台帳に残った死んだ行（#36）が後から来た別の
+/// パイプ入力の中身で開けてしまうし、引き取ったまま開いていない通知のファイルを
+/// 上書きもする。
+///
+/// Why not 名前を pid にする: pid は使い回されるので、上の衝突が時間をまたいで起きる。
+/// 名前は時刻から取り、重なったら数を進めて作り直す。名前の一意さに頼らず、
+/// 排他は作るときに取る。
 fn write_spool(markdown: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("{}{}", STDIN_DIR_PREFIX, std::process::id()));
+    let tmp = std::env::temp_dir();
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = loop {
+        let dir = tmp.join(format!("{}{}", STDIN_DIR_PREFIX, seed));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => seed += 1,
+            Err(e) => {
+                eprintln!("md: 標準入力を一時ファイルへ書き出せませんでした: {}", e);
+                std::process::exit(1);
+            }
+        }
+    };
     let path = dir.join("stdin.md");
-    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, markdown)) {
+    if let Err(e) = std::fs::write(&path, markdown) {
         eprintln!("md: 標準入力を一時ファイルへ書き出せませんでした: {}", e);
         std::process::exit(1);
     }
@@ -601,6 +625,19 @@ mod tests {
         let dir = owned_stdin_dir(&doc);
         assert_eq!(dir.as_deref(), doc.parent(), "自分が掘った場所を片付け対象にできていない");
         let _ = std::fs::remove_dir_all(dir.unwrap());
+    }
+
+    #[test]
+    fn each_spool_gets_its_own_dir_and_never_overwrites_an_earlier_one() {
+        // 同じプロセスから続けて書いても、前の中身は残ったまま別の場所に書かれる。
+        let first = write_spool("# first\n");
+        let second = write_spool("# second\n");
+        assert_ne!(first.parent(), second.parent());
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "# first\n");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "# second\n");
+        for doc in [first, second] {
+            let _ = std::fs::remove_dir_all(owned_stdin_dir(&doc).unwrap());
+        }
     }
 
     #[test]
