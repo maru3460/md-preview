@@ -248,6 +248,9 @@ fn message_to_forward(
     //   だけでフォルダが変わらない**
     // - `notify=`（#36）— 同じく捨てられて**普通の転送になる**。タブが開き、窓が
     //   前に出る。積むだけのはずが作業を中断させる側に化けるので体感はこちらが悪い
+    //   - パイプ入力の `--notify` では、古い受け側は `own=` を引き取る前に `notify` の
+    //     分岐で抜けるので、**一時ディレクトリを誰も消さない**（⌘Q でも残る）。
+    //     `$TMPDIR` に小さなゴミが残るだけなので、ほかと同じく引き受ける
     // - `theme=`（#38。送るのはここではなく `md theme` の `cli::run_theme_command`）—
     //   捨てられて「ファイルの無い普通の転送」になる。アプリは前面化されない
     //   （`activate=0` は古い受け側も解す）が、**⌘W で隠した窓が出てくる**。
@@ -258,17 +261,21 @@ fn message_to_forward(
     // 大きいと見た。⌘Q すれば消えるので、`plan.md` 4.5 の「入れ替えの前に ⌘Q」で
     // 引き受けている。
     let mut root = None;
-    let ids = if flags.notify {
-        // `--notify` はファイルを並べるだけのフラグ。フォルダは積む対象ではないので
-        // ここで弾かれ、パイプ入力は main の入口で落としてあるのでここへ来ない。
-        app_config::notify_ids(targets)
-    } else if stdin_mode {
+    let ids = if stdin_mode {
         // パイプ入力も `md file.md` と同じ経路に乗せる。実体化は main の頭で済んで
-        // いるので、ここはそのパスを識別子にするだけ。
+        // いるので、ここはそのパスを識別子にするだけ。`--notify` でも同じで、積むか
+        // 開くかは下の `Message::notification` が分ける。
+        //
+        // `flags.notify` より先に見る。パイプ入力のときは `targets` が空なので、
+        // 先に `notify_ids` へ回すと識別子が 0 個になり、転送されずに窓が開く。
         let doc = PathBuf::from(std::env::var_os(app_config::STDIN_FILE_ENV)?)
             .canonicalize()
             .ok()?;
         vec![request::file_id(&doc)]
+    } else if flags.notify {
+        // `--notify` はファイルを並べるだけのフラグ。フォルダは積む対象ではないので
+        // ここで弾かれる。
+        app_config::notify_ids(targets)
     } else if let Some(dir) = single_dir_arg(targets) {
         // フォルダ指定は「ツリーの頂点を張り替えろ」という要求として転送する（#34）。
         // タブは 1 枚も増えないので `files` は空のまま。
@@ -536,14 +543,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // `--notify` にパイプ入力は積めない（#36）。実体化した一時ファイルはタブと同じ
-    // 寿命（#49）なので、積んだ行は**閉じた時点で死んだパスを指す**。押して初めて
-    // 「開けません」と言う行を台帳に残すより、ここで断る方が筋が通る。
-    if open_flags.notify && stdin_mode {
-        eprintln!("md: --notify にはファイルを指定してください（パイプ入力は積めません）");
-        std::process::exit(2);
-    }
-
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
     // 標準入力は一度しか読めない。転送に回すのか、子へ渡すのか、前景で開くのかを
@@ -553,7 +552,20 @@ fn main() {
     //
     // まだスレッドを 1 つも立てていないので set_var は安全。
     if stdin_mode && std::env::var_os(app_config::STDIN_FILE_ENV).is_none() {
-        std::env::set_var(app_config::STDIN_FILE_ENV, app_config::spool_stdin());
+        let spooled = app_config::spool_stdin();
+        // 空のパイプ入力は積まずに断る。`md --notify $OUT` の変数が空だった、のような
+        // 引数の取りこぼしは stdin が端末でない環境（エージェントのコマンド実行）だと
+        // パイプ入力に化け、中身の無い `stdin.md` を積んで成功で返ってしまう。
+        // Why not 素の `md` でも断る: あちらは空のタブが目の前に開くので取りこぼしに
+        // 気づける。黙って積む `--notify` だけが気づく機会を持たない。
+        if open_flags.notify && std::fs::metadata(&spooled).map(|m| m.len() == 0).unwrap_or(false) {
+            if let Some(dir) = app_config::owned_stdin_dir(&spooled) {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+            eprintln!("md: --notify にファイルが渡されず、パイプ入力も空でした");
+            std::process::exit(2);
+        }
+        std::env::set_var(app_config::STDIN_FILE_ENV, spooled);
     }
 
     // ── 転送（#31 の層1）───────────────────────────────────────
@@ -851,7 +863,8 @@ fn main() {
 
     // 掃除を約束した一時ディレクトリ。自分の stdin と、転送で所有権を引き取った
     // ぶんが混ざって溜まる。**持ち主はタブ**で、閉じられた時点で `drop_owned_for` が
-    // 消す。ここに残るのは開いたままのタブのぶんだけで、それは終了時に消える。
+    // 消す。ここに残るのは開いたままのタブのぶんと、`--notify` で積んだだけで
+    // まだ開かれていないパイプ入力のぶんで、どちらも終了時に消える。
     let mut owned_dirs: Vec<PathBuf> = stdin_dir.into_iter().collect();
 
     // 閉じる処理の進み具合（#59）。全画面のときだけ「抜け終わるのを待つ」状態を挟む。
@@ -1050,6 +1063,22 @@ fn main() {
                     }
                     return;
                 }
+                // 掃除の約束はワイヤから来た値を信用せず、送り側と同じ門に通してから
+                // 引き取る（信用した時点で `own=/etc` が通る道ができる）。
+                // 載っているのは実体化したファイルのパスで、門が消してよい親を返す。
+                //
+                // 下の `--notify` の分岐より前に置く。パイプ入力を積んだだけの通知でも
+                // 一時ファイルは届いているので、ここで引き取らないと誰も消さない。
+                // 引き取ったものは、ベルから開いたタブを閉じたとき（`drop_owned_for`）か
+                // 終了時（`drop_owned`）に消える。パイプ入力は短命と決めてあるので、
+                // ⌘Q の後に台帳へ残った行は「開けません」になる。
+                for doc in &msg.own {
+                    if let Some(dir) = app_config::owned_stdin_dir(Path::new(doc)) {
+                        if !owned_dirs.contains(&dir) {
+                            owned_dirs.push(dir);
+                        }
+                    }
+                }
                 // `--notify` は開かずに積むだけ（#36）。窓は前に出ないし、隠して
                 // あるなら隠れたまま、閉じかけているなら閉じ切る。下の作法（隠すのを
                 // やめる・戻り先の付け替え・窓を持ち上げる・タブを開く）は全部
@@ -1083,16 +1112,6 @@ fn main() {
                 if let Some(pid) = msg.launcher_pid {
                     if pid != std::process::id() as i32 {
                         launcher_pid = Some(pid);
-                    }
-                }
-                // 掃除の約束はワイヤから来た値を信用せず、送り側と同じ門に通してから
-                // 引き取る（信用した時点で `own=/etc` が通る道ができる）。
-                // 載っているのは実体化したファイルのパスで、門が消してよい親を返す。
-                for doc in &msg.own {
-                    if let Some(dir) = app_config::owned_stdin_dir(Path::new(doc)) {
-                        if !owned_dirs.contains(&dir) {
-                            owned_dirs.push(dir);
-                        }
                     }
                 }
                 // アプリを前面に出すのは送り側の仕事（`platform::activate_other`）だが、
@@ -1256,6 +1275,10 @@ fn hide_window(window: &tao::window::Window, closing: &mut Closing, launcher_pid
 /// 窓を閉じてもプロセスが生き続けるようになったので、終了まで持つと**パイプで
 /// 開くたびに $TMPDIR へ積み上がる**。持ち主はタブなので、タブと寿命を揃える。
 ///
+/// 例外は `--notify` で積んだだけのパイプ入力で、開かれるまでタブが無いので終了まで
+/// 持つ。積み上がるのは承知の上で、パイプ入力は短命と決めて引き受けた（ベルの行を
+/// 生かすために消さずに置く）。これを見て「積み上がるからタブと同じに」と直さないこと。
+///
 /// 識別子はページから来る（＝ワイヤ越しの値と同じ扱い）。消してよい親を導くのは
 /// `owned_stdin_dir` の門で、さらに**自分が引き取ったものだけ**に絞る。門を通った
 /// だけの偽の識別子を投げられても、`owned_dirs` に無ければ何も消えない。
@@ -1274,7 +1297,7 @@ fn drop_owned_for(dirs: &mut Vec<PathBuf>, id: &str) {
 /// 掃除を約束した一時ディレクトリを消す。**プロセスが終わるときに呼ぶもの**で、
 /// 呼ぶのは [`finish_and_exit`] だけ。タブを閉じて消えたぶんは既に
 /// [`drop_owned_for`] が持っていっているので、ここへ残るのは開いたままのタブの
-/// ぶんだけ。
+/// ぶんと、`--notify` で積んだだけのパイプ入力のぶん。
 fn drop_owned(dirs: &mut Vec<PathBuf>) {
     for dir in dirs.drain(..) {
         let _ = std::fs::remove_dir_all(dir);
