@@ -761,7 +761,10 @@ body:has(> .html-page),
 }
 
 /* 同名のファイルが別のリポジトリから 2 つ並ぶので、親フォルダを添える。
-   幅が足りなければこちらから先に削られる（min-width:0 + 縮む側）。 */
+   幅が足りなければこちらから先に削られる。基準幅を 0 にして名前が取った残りの幅を埋めさせ、
+   名前の幅決めに一切加わらないようにする。flex-shrink を大きくして縮みを寄せる案は
+   採らない——比例配分なので名前にも 1/64px 程度の縮みが残り、それだけで ellipsis が
+   出て `memo…` になる。 */
 .qa-parent {
     margin-left: 6px;
     font-size: 11px;
@@ -769,6 +772,7 @@ body:has(> .html-page),
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+    flex: 1 1 0;
 }
 
 /* 登録済みを示す★。押せる的は #sidebar-header button が持つので、ここは色だけ。 */
