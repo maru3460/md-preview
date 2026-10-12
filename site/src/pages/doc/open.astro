@@ -1,5 +1,7 @@
 ---
 import DocLayout from '../../layouts/DocLayout.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <DocLayout slug="open" title="開く" description="ファイル・ディレクトリ・標準入力の 3 通りの開き方と、ルートの決まり方。">
   <p>
@@ -107,6 +109,7 @@ md --notify docs/*.md                   # まとめて積む`}</pre>
 
   <p>
     複数ファイルをまとめて渡すなどの細かい指定は <code>md --help</code> にあります。
-    Claude Code から使う場合は、同梱のスキルが状況に応じて使い分けます。
+    Claude Code から使う場合は、<a href={`${base}/doc/plugin/`}>プラグイン</a>を 2 つから選べます
+    （開いて見せる <code>md-preview-open</code>、ベルに積む <code>md-preview-notify</code>）。
   </p>
 </DocLayout>

@@ -1,0 +1,8 @@
+{
+  "name": "md-preview-open",
+  "description": "md-preview(mdコマンド)の使い方。使うたびに窓を開いて閉じる使い方向け",
+  "version": "0.3.0",
+  "author": { "name": "maru3460" },
+  "repository": "https://github.com/maru3460/md-preview",
+  "license": "MIT"
+}

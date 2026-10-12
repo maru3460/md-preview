@@ -57,19 +57,20 @@ md theme nord # テーマを切り替える
 ## Claude Code プラグイン
 
 このリポジトリは [Claude Code](https://claude.com/claude-code) のプラグインとしても配布しています。
-詳しくは[README](skills/README.md)を見てください。
+詳しくは[README](plugins/README.md)を見てください。
+使い方に合わせて `md-preview-open`（その都度開く）と `md-preview-notify`（窓を開いたままにしてベルに積む）の 2 つがあり、どちらか片方を入れます。
 
 インストール
 
 ```
 /plugin marketplace add maru3460/md-preview
-/plugin install md-preview@md-preview
+/plugin install md-preview-open@md-preview     # または md-preview-notify@md-preview
 ```
 
 アンインストール
 
 ```
-/plugin uninstall md-preview@md-preview
+/plugin uninstall md-preview-open@md-preview   # 入れている方
 /plugin marketplace remove md-preview   # 登録ごと消す場合
 ```
 

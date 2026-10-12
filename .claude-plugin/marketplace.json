@@ -3,13 +3,18 @@
   "owner": { "name": "maru3460" },
   "metadata": {
     "description": "md-preview（GitHub風Markdownビューア）のプラグイン配布用マーケットプレイス",
-    "version": "0.1.7"
+    "version": "0.3.0"
   },
   "plugins": [
     {
-      "name": "md-preview",
-      "description": "GitHub風Markdownビューア md コマンドの使い方スキル",
-      "source": "."
+      "name": "md-preview-open",
+      "description": "md / html を書いたら md コマンドで開いて見せるスキル。使うたびに窓を開いて閉じる使い方向け",
+      "source": "./plugins/md-preview-open"
+    },
+    {
+      "name": "md-preview-notify",
+      "description": "md / html を書いたら md --notify でベルに積むスキル。md の窓を開いたままにしておく使い方向け",
+      "source": "./plugins/md-preview-notify"
     }
   ]
 }

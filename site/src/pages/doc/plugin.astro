@@ -12,13 +12,29 @@ import DocLayout from '../../layouts/DocLayout.astro';
     <code>md</code> を使うようになります。
   </p>
 
+  <h2>どちらを入れるか</h2>
+  <p>
+    <code>md</code> の使い方に合わせて 2 種類あります。<strong>どちらか片方</strong>を入れてください。
+    両方入れると同じ場面で両方が呼ばれ、指示がぶつかります。
+  </p>
+  <ul>
+    <li>
+      <code>md-preview-open</code> … 見せたいときに窓を開き、読んだら閉じる使い方向け。
+      Claude Code は書き終えたら <code>md</code> で開いて見せます。
+    </li>
+    <li>
+      <code>md-preview-notify</code> … <code>md</code> の窓を開いたままにしておく使い方向け。
+      Claude Code は書き終えたら <code>md --notify</code> でベルに積み、窓を前に出しません。
+    </li>
+  </ul>
+
   <div class="codebox">
     <div class="codebox-head">
       <span>Claude Code の中で実行</span>
       <button class="copy" type="button" data-copy="/plugin marketplace add maru3460/md-preview">コピー</button>
     </div>
     <pre>{`/plugin marketplace add maru3460/md-preview
-/plugin install md-preview@md-preview`}</pre>
+/plugin install md-preview-open@md-preview     # または md-preview-notify@md-preview`}</pre>
   </div>
 
   <p class="note">
@@ -36,7 +52,7 @@ import DocLayout from '../../layouts/DocLayout.astro';
       <button class="copy" type="button" data-copy="/plugin marketplace update md-preview">コピー</button>
     </div>
     <pre>{`/plugin marketplace update md-preview
-/plugin install md-preview@md-preview`}</pre>
+/plugin install md-preview-open@md-preview     # 入れている方`}</pre>
   </div>
   <p>
     反映されたかは <code>/plugin list</code>、または <code>/plugin</code> → <strong>Installed</strong> タブの
@@ -50,13 +66,27 @@ import DocLayout from '../../layouts/DocLayout.astro';
     <strong>Enable auto-update</strong> で有効にすると、起動時に最新版へ更新されます。
   </p>
 
+  <h2>乗り換える</h2>
+  <p>
+    もう片方へ移るときは、外してから入れ直します。
+    0.1 系の <code>md-preview@md-preview</code> を入れている場合も同じです。
+  </p>
+  <div class="codebox">
+    <div class="codebox-head">
+      <span>Claude Code の中で実行</span>
+      <button class="copy" type="button" data-copy="/plugin uninstall md-preview-open@md-preview">コピー</button>
+    </div>
+    <pre>{`/plugin uninstall md-preview-open@md-preview
+/plugin install md-preview-notify@md-preview`}</pre>
+  </div>
+
   <h2>外す</h2>
   <div class="codebox">
     <div class="codebox-head">
       <span>Claude Code の中で実行</span>
-      <button class="copy" type="button" data-copy="/plugin uninstall md-preview@md-preview">コピー</button>
+      <button class="copy" type="button" data-copy="/plugin uninstall md-preview-open@md-preview">コピー</button>
     </div>
-    <pre>{`/plugin uninstall md-preview@md-preview
-/plugin marketplace remove md-preview   # 登録ごと消す場合`}</pre>
+    <pre>{`/plugin uninstall md-preview-open@md-preview   # 入れている方
+/plugin marketplace remove md-preview          # 登録ごと消す場合`}</pre>
   </div>
 </DocLayout>

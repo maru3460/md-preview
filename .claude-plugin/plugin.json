@@ -1,8 +1,0 @@
-{
-  "name": "md-preview",
-  "description": "GitHub風Markdownビューア md コマンドの使い方スキル",
-  "version": "0.1.51",
-  "author": { "name": "maru3460" },
-  "repository": "https://github.com/maru3460/md-preview",
-  "license": "MIT"
-}
