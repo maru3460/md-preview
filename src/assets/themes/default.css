@@ -417,6 +417,12 @@ mark.md-search-hit-current {
     .md-toc-list .lvl-5 > a,
     .md-toc-list .lvl-6 > a { color: #8b949e; }
     .md-toc-empty { color: #8b949e; }
+    .md-bell-panel {
+        background-color: #0d1117;
+        border-color: #30363d;
+        color: #e6edf3;
+    }
+    .md-bell-title { color: #8b949e; }
 }
 
 /* ── Mermaid ────────────────────────────────────────────────── */
