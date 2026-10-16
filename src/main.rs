@@ -62,7 +62,9 @@ enum AppEvent {
     /// ページの `notify:` を**その場で処理せずここまで運ぶ**のは、保存ファイルを
     /// 書く場所を 1 か所に寄せるため。受信（`Open` の腕の `notifications::add`）と
     /// 既読はどちらも「読んで・変えて・書き戻す」なので、別々の場所から呼ぶと
-    /// 割り込まないことがコードを追わないと分からなくなる。Quick Access
+    /// 割り込まないことがコードを追わないと分からなくなる。例外は起動時の
+    /// `notifications::add_read`（#68）で、イベントループより前、まだ受信も既読も
+    /// 起きない時点で書くので、ここを通さない。Quick Access
     /// （`quick:`）が IPC ハンドラで直に書いているのと形が揃わないのは承知の上で、
     /// あちらは**並びの持ち主がページ**で Rust は写しているだけ、という違いがある。
     NotifyRead(Option<String>),
@@ -255,6 +257,8 @@ fn message_to_forward(
     //   捨てられて「ファイルの無い普通の転送」になる。アプリは前面化されない
     //   （`activate=0` は古い受け側も解す）が、**⌘W で隠した窓が出てくる**。
     //   テーマは次の起動まで変わらない
+    // - `title=` / `description=` / `note=`（#68）— 捨てられて、**名乗りの無い転送になる**。
+    //   タブは `stdin.md` のまま、ベルの行にも帯にも何も出ない。開く・積むは変わらない
     //
     // Why not 挨拶に「このキーを解せる」印を足して、無ければ転送しない: #31 が決めた
     // 「未知のキーは無視。キーを足してもバージョンは上げない」に手を入れる対価の方が
@@ -291,6 +295,7 @@ fn message_to_forward(
     // 「積むだけ」の 2 つ（タブを増やすな・前に出すな）を対で立てるのは
     // `Message::notification` の仕事。ここでばらさない。
     let mut msg = if flags.notify { Message::notification(ids) } else { Message::new(ids) };
+    msg.origin = flags.origin.clone();
     msg.root = root;
     msg.cwd = current_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     msg.sender_pid = Some(std::process::id() as i32);
@@ -543,6 +548,11 @@ fn main() {
         std::process::exit(1);
     }
 
+    // 名乗り（#68）を出す場所があるのはパイプ入力と `--notify` だけ。それ以外は黙って
+    // 捨てる（理由は cli.rs）。転送にも載せないので、受け取る窓が気にしなくてよい。
+    let mut open_flags = open_flags;
+    open_flags.drop_origin_unless_shown(stdin_mode);
+
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
 
     // 標準入力は一度しか読めない。転送に回すのか、子へ渡すのか、前景で開くのかを
@@ -606,14 +616,26 @@ fn main() {
     let (theme_paint, appearance, mut active_theme) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
-    let config = if stdin_mode {
-        AppConfig::from_stdin(&theme_css, &custom_css, &current_dir)
+    let mut config = if stdin_mode {
+        AppConfig::from_stdin(&theme_css, &custom_css, &current_dir, &open_flags.origin)
     } else if open_flags.notify {
         // 受け取る md が居なかった `--notify`。積む先が無いので普通に開く（#36）。
         AppConfig::from_notify(&targets, &theme_css, &custom_css, &current_dir)
     } else {
         AppConfig::from_paths(&targets, &theme_css, &custom_css, &current_dir)
     };
+    // 積む先が無かった `--notify` も、ベルに既読の行として残し、開くタブを「ベルから
+    // 開いた」扱いにする（#68）。名乗りの出る場所はベルの行と、ベルから開いたタブの帯
+    // だけなので、どちらも無いと title も description も note もどこにも出ない。
+    // 台帳を書くのは「1 プロセスのイベントループスレッドだけ」の約束（notifications.rs）
+    // だが、座を取れたなら同じソケットで窓を持つ md は他に居ない（居れば転送している）。
+    // 座を取れずに開く経路（`MD_NO_IPC` など）では、窓を持つ md の書き込みと重なりうる
+    // ので書かない。ソケットを分けた md（`MD_SOCKET`、デバッグビルド）とは台帳を共有
+    // するので重なりうるが、それは開発中の検証でしか起きないので受け入れる。
+    if open_flags.notify && seat.is_some() {
+        md_preview::notifications::add_read(&config.initial_ids, &open_flags.origin);
+        config.bell_opened = config.initial_ids.clone();
+    }
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
     let init_script = format!(
@@ -626,6 +648,9 @@ fn main() {
         html_bytes,
         root_dir,
         stdin_dir,
+        origins: _,
+        initial_ids: _,
+        bell_opened: _,
     } = config;
 
     // 転送で開かれるたびに更新する（#49）ので mut。
@@ -854,6 +879,9 @@ fn main() {
     // evaluate_script は黙って落ちるので、`Ready` が来るまで溜めておく。
     let mut page_ready = false;
     let mut pending_opens: Vec<String> = Vec::new();
+    // `pending_opens` に結び付く名乗り（#68）。開くより先に流す必要があるので、
+    // 組み立て済みのスクリプトで持って `Ready` で先頭に流す。
+    let mut pending_origins = String::new();
     // 同じ理由で溜める root の張り替え（#34）。`MdSetRoot` は `folder.js` の中にあり
     // document-start で注入されるので**呼ぶだけなら窓を作った直後から通る**が、通ると
     // 壊れる。中で使う `MdCommon` は `<head>` のモジュールで folder.js より後に
@@ -1041,6 +1069,9 @@ fn main() {
                 if let Some(root) = pending_root.take() {
                     change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, root);
                 }
+                if !pending_origins.is_empty() {
+                    let _ = webview.evaluate_script(&std::mem::take(&mut pending_origins));
+                }
                 let script = md_preview::html::open_files_script(&pending_opens);
                 pending_opens.clear();
                 if !script.is_empty() {
@@ -1087,7 +1118,7 @@ fn main() {
                 // ここで台帳へ積む（見せるのは #32）。ページに持たせないのは、窓が
                 // `AppEvent::Ready` より前に届いたぶんを取りこぼすため。
                 if msg.notify {
-                    let list = md_preview::notifications::add(&msg.files);
+                    let list = md_preview::notifications::add(&msg.files, &msg.origin);
                     // ページがまだ描けていないなら渡さない。`AppEvent::Ready` の腕が
                     // 同じものを渡し直すので、取りこぼしにはならない。
                     if page_ready {
@@ -1149,9 +1180,14 @@ fn main() {
                 if ids.is_empty() {
                     return;
                 }
+                let origins = md_preview::html::origins_script(&ids, &msg.origin);
                 if !page_ready {
+                    pending_origins.push_str(&origins);
                     pending_opens.extend(ids);
                     return;
+                }
+                if !origins.is_empty() {
+                    let _ = webview.evaluate_script(&origins);
                 }
                 let _ = webview.evaluate_script(&md_preview::html::open_files_script(&ids));
             }

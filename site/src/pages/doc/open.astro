@@ -107,6 +107,33 @@ md --notify docs/*.md                   # まとめて積む`}</pre>
     あとで見返したいものはファイルに書いてから渡してください。
   </p>
 
+  <h2 id="origin">送り手を添える</h2>
+
+  <p>
+    パイプで渡したものはタブが全部 <code>stdin.md</code> になり、ベルに積んだものもどの作業から来たのか分かりません。
+    パイプと <code>--notify</code> には、<strong>送る側が名乗るためのフラグ</strong>を 3 つ付けられます。
+    description と note は出る場所が 1 か所ずつで、title だけは名前としてタブとベルの両方に出ます。
+  </p>
+
+  <div class="codebox">
+    <div class="codebox-head"><span>Terminal</span></div>
+    <pre>{`cat review.md | md --title 'PR #12 のレビュー' --note '気になったのは認証まわりの 2 か所'
+md --notify plan.md --title '移行計画' --description 'api: DB 移行の計画、判断待ち'`}</pre>
+  </div>
+
+  <ul>
+    <li><code>--title</code> は何の文書かです。パイプ入力のタブ名と、ベルの項目名になります。</li>
+    <li><code>--description</code> はどの作業の何かです。ベルの項目の 2 段目に出ます。</li>
+    <li><code>--note</code> は開いた人が読む補足です。タブの下の細い帯に出ます。</li>
+  </ul>
+
+  <p class="note">
+    何も付けなければ、これまでどおり何も出ません。md が自分で名前を補うことはしません。
+    ふつうのファイル（<code>md a.md</code>）に付けても無視します。ファイルは自分の名前を持っているからです。
+    <code>--notify</code> で送ったファイルは、開いたタブの名前は元のファイル名のままで、帯はベルから開いたタブにだけ出ます。
+    ウィンドウが無くてふつうに開いたときは、ベルに既読として残り、開いたタブもベルから開いたものとして扱います。
+  </p>
+
   <p>
     複数ファイルをまとめて渡すなどの細かい指定は <code>md --help</code> にあります。
     Claude Code から使う場合は、<a href={`${base}/doc/plugin/`}>プラグイン</a>を 2 つから選べます

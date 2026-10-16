@@ -440,13 +440,54 @@
     return !pre || !id || id.indexOf(pre) !== 0;
   }
 
+  // ── 送り手の名乗り（#68） ──────────────────────────────────────
+  // パイプ入力の識別子 → { title, description, note }。起動時のぶんは MD_ORIGINS、
+  // 転送で届いたぶんは Rust が開く直前に setOrigin で渡す。ベルの行も自分の名乗りを
+  // 持っていて、受け取った時にここへ写す（ベルから開いたパイプ入力のタブの名前）。
+  //
+  // 結び付けるのはパイプ入力だけ。`--notify` で届いた実ファイルの名乗りはベルの行が
+  // 持つ（MdNotify.originOf）——ファイルは自分の名前を持っていて、タブ名だけ
+  // 差し替えてもツリーから開き直せば元に戻る。帯の note はベルから開いたタブにだけ
+  // 出す（folder.js の renderOriginBand）。
+  var origins = {};
+
+  // パイプ入力を実体化した一時ファイルか。形は `$TMPDIR/md-stdin-<何か>/stdin.md`
+  // （Rust の `app_config::spool_stdin`）。親が `$TMPDIR` であることまで見るのは
+  // Rust の門（`owned_stdin_dir`）と揃えるため。名前の形だけで判定すると、
+  // `~/proj/md-stdin-old/stdin.md` という実ファイルが `stdin.md` と名乗り出す。
+  function isStdinId(id) {
+    var tmp = window.MD_STDIN_DIR;
+    var spool = window.MD_STDIN_PREFIX;
+    if (!tmp || !spool || !id) return false;
+    var head = tmp.replace(/\/$/, '') + '/';
+    if (String(id).indexOf(head) !== 0) return false;
+    var segs = String(id).slice(head.length).split('/');
+    return segs.length === 2 && segs[0].indexOf(spool) === 0 && segs[1] === 'stdin.md';
+  }
+
+  function setOrigin(ids, o) {
+    if (!o) return;
+    (ids || []).forEach(function(id) { if (isStdinId(id)) origins[id] = o; });
+  }
+
+  function originOf(id) { return (id && origins[id]) || null; }
+
+  (window.MD_ORIGINS || []).forEach(function(pair) { setOrigin([pair[0]], pair[1]); });
+
   // 識別子 → 画面に出す名前。root 配下なら root 相対、外なら絶対パスのまま。
+  // パイプ入力だけは別で、名乗った `--title`、無ければ `stdin.md` を返す。一時ファイルの
+  // 置き場所は窓が閉じれば消えるし、送り手はその存在を知らないので、どこに出しても
+  // 役に立たない（#68）。番号などを補って見分けを付けることはしない。
   // ⌘P の行・「相対パスをコピー」・コメントパネルのラベルがこれを通る。識別子そのものを
   // 出すと、どの行にも自分のホームパスが並び、あいまい検索がそこにヒットする。
   // Rust 側の対は `urlpath::display_id`。root 自身を渡されたときに空文字を返さない
   // のは、名前の無いラベルを画面に出さないため（Rust 側もそれに合わせてある）。
   function idToDisplay(id) {
     if (!id) return '';
+    if (isStdinId(id)) {
+      var o = originOf(id);
+      return (o && o.title) || 'stdin.md';
+    }
     if (isOutsideRoot(id)) return id;
     // root 自身を渡されると剥いだ残りが空になる。名前の無いラベルは画面に出せない
     // ので識別子のまま返す（Rust 側 `display_id` も同じ）。
@@ -1419,6 +1460,9 @@
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,
     idToDisplay: idToDisplay,
+    isStdinId: isStdinId,
+    setOrigin: setOrigin,
+    originOf: originOf,
     isOutsideRoot: isOutsideRoot,
     rootDir: rootDir,
     rootPrefix: rootPrefix,

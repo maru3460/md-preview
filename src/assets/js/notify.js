@@ -6,8 +6,9 @@
 // Rust へ要求を送り、返ってきた一覧で描き直す。持ち主を 2 つにすると、窓が
 // 描ける前に届いたぶん（Rust だけが知っている）と画面の中身がずれる。
 //
-// 渡ってくる 1 件は { path, at, read }。path は識別子（絶対パス）、at は届いた
-// 時刻（UNIX 秒）、read は既読か。並びは新しい順で、その順に描く。
+// 渡ってくる 1 件は { path, at, read, origin }。path は識別子（絶対パス）、at は届いた
+// 時刻（UNIX 秒）、read は既読か、origin は送り手の名乗り（#68。{ title, description, note }）。
+// 並びは新しい順で、その順に描く。
 //
 // ドロップダウンは開いている間だけ DOM にある（右クリックメニューと同じ作法）。
 //
@@ -25,7 +26,8 @@
   var cursor = -1;          // j/k のカーソル。-1 はどこにも居ない
 
   // 一度に見せる件数。上限 100 件を全部出すと画面の端まで届くので、ここで打ち切って
-  // 残りはスクロールさせる（#32 の決め）。1 件の高さ × この数が最大の高さになる。
+  // 残りはスクロールさせる（#32 の決め）。2 段の行の高さ × この数が最大の高さになる
+  // （description 付きの 3 段の行が混ざると、見える件数はこれより減る。base.css を参照）。
   var VISIBLE_ROWS = 7;
 
   function iconsEl() { return document.getElementById('tabbar-icons'); }
@@ -36,7 +38,11 @@
   function displayOf(p) {
     return (window.MdCommon && MdCommon.idToDisplay) ? MdCommon.idToDisplay(p) : String(p);
   }
+  // パイプ入力の表示名（`--title` か `stdin.md`）はパスではないので区切らない
+  // （tabs.js の同名の関数と同じ）。
+  function isStdin(p) { return !!(window.MdCommon && MdCommon.isStdinId && MdCommon.isStdinId(p)); }
   function baseName(p) {
+    if (isStdin(p)) return displayOf(p);
     var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
@@ -45,6 +51,7 @@
   // root 直下のファイルには付かない（表示名に区切りが無いため）。どの行にも同じ
   // 名前が付いて見分けの役に立たないので、それでよい——タブの見出しと同じ規則。
   function parentName(p) {
+    if (isStdin(p)) return '';
     var segs = displayOf(p).split('/');
     segs.pop();
     return segs.pop() || '';
@@ -235,17 +242,34 @@
     dot.className = 'md-bell-dot';
     row.appendChild(dot);
 
-    // 名前と「親フォルダ · 相対時刻」の 2 段。1 段に詰めると親フォルダの置き場所が
-    // 無くなる（`parentName` を参照）。
+    // 名前と「親フォルダ · 相対時刻」の 2 段（description があれば間に挟んで 3 段）。
+    // 1 段に詰めると親フォルダの置き場所が無くなる（`parentName` を参照）。
     var lines = document.createElement('span');
     lines.className = 'md-bell-lines';
+    var o = item.origin || {};
+    // 実ファイルに `--title` が付いていたら、名前の段は title にしてファイル名を
+    // 2 段目へ下ろす。パイプ入力は baseName がもう title を返す（MdCommon.idToDisplay）。
+    var titled = !!o.title && !isStdin(item.path);
     var name = document.createElement('span');
     name.className = 'md-bell-name';
-    name.textContent = baseName(item.path);
+    name.textContent = titled ? o.title : baseName(item.path);
     lines.appendChild(name);
+    // description（#68）は名前のすぐ下。開くかどうかを決める 1 行なので、場所や時刻より
+    // 先に読ませる。無い行は 2 段のまま（行の高さも変えない）。
+    if (o.description) {
+      var desc = document.createElement('span');
+      desc.className = 'md-bell-desc';
+      desc.textContent = o.description;
+      lines.appendChild(desc);
+      row.classList.add('has-desc');
+      row.title += '\n' + o.description;
+    }
     var sub = document.createElement('span');
     sub.className = 'md-bell-sub';
-    var parts = [parentName(item.path), relTime(item.at)].filter(Boolean);
+    var where = titled
+      ? [parentName(item.path), baseName(item.path)].filter(Boolean).join('/')
+      : parentName(item.path);
+    var parts = [where, relTime(item.at)].filter(Boolean);
     // 2 段目が空のまま残ると壊れて見える。root 直下のファイルで、かつ保存ファイルの
     // 時刻が読めなかった行だけがここに来る。
     sub.textContent = parts.length ? parts.join(' · ') : '時刻不明';
@@ -266,6 +290,8 @@
   function activate() {
     var item = list[cursor];
     if (!item) return;
+    // 印を先に付ける。開いた瞬間に帯（note）を描くので、後からだと出ない（#68）。
+    if (window.MdTabs && MdTabs.markFromBell) MdTabs.markFromBell(item.path);
     if (opts && opts.openFile) opts.openFile(item.path);
     send('read:' + item.path);
   }
@@ -324,6 +350,12 @@
         });
       }
     },
+    // その識別子のベルの行の名乗り（#68）。行が無ければ null。毎回まるごと置き換わる
+    // list から引くので、送り直しのたびに作り直したのと同じことになる。
+    originOf: function(path) {
+      var i = indexOfPath(path);
+      return i < 0 ? null : (list[i].origin || null);
+    },
     // Rust から全件を渡される唯一の口（#32）。差分ではないので、毎回まるごと置き換える。
     push: function(next) {
       // カーソルは添字で持っているが、**新着は先頭に差し込まれる**ので、
@@ -332,6 +364,17 @@
       // 置き直す基準はパス（並びが変わっても同じ行に留まる）。
       var was = list[cursor] ? list[cursor].path : null;
       list = Array.isArray(next) ? next : [];
+      // パイプ入力の行の名乗りを名前の表へ写す。ベルから開いたタブも、コメントの
+      // ラベルも、ここで渡した title で出る（#68）。
+      if (window.MdCommon && MdCommon.setOrigin) {
+        list.forEach(function(item) {
+          var o = item.origin;
+          if (o && (o.title || o.description || o.note)) MdCommon.setOrigin([item.path], o);
+        });
+      }
+      // 同じファイルが送り直されると名乗りも入れ替わる。開いているタブの帯も
+      // 新しい行から描き直す（note を外して送り直したら帯も消える）。
+      if (window.MdRefreshOriginBand) MdRefreshOriginBand();
       cursor = was ? indexOfPath(was) : -1;
       // 消えた行に居たとき、開いている最中に 0 件から増えたとき、どちらも先頭へ。
       // 開いていないなら -1 のまま（open() が置き直す）。

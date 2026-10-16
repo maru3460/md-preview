@@ -84,6 +84,15 @@ pub struct AppConfig {
     /// これは「自分が掘ったぶん」だけ。転送（#31）で他のプロセスから所有権を
     /// 引き取ったぶんと合流して、`main.rs` の `owned_dirs` がまとめて面倒を見る。
     pub stdin_dir: Option<PathBuf>,
+    /// 起動時に開くタブへ結び付ける名乗り（#68）。パイプ入力で `--title` などを
+    /// 渡されたときだけ中身を持つ。
+    pub origins: Vec<(String, crate::origin::Origin)>,
+    /// 起動時に開く識別子（`INITIAL_FILES` と同じ並び）。
+    pub initial_ids: Vec<String>,
+    /// 「ベルから開いた」扱いにする識別子（#68）。窓が無いときの `--notify` は積む先が
+    /// 無いので普通に開くが、ベルに既読の行を書いてこの印を付ける。印が無いと、
+    /// 帯の note がどこにも出ない（帯はベルから開いたタブにだけ出す）。
+    pub bell_opened: Vec<String>,
 }
 
 impl AppConfig {
@@ -98,9 +107,15 @@ impl AppConfig {
     ///                       名前を作るのと、本文の URL（root 相対）を識別子へ戻すのに
     ///                       要る。`MdCommon.idToDisplay` / `urlToId` の基準。
     /// - `MD_STDIN_PREFIX`   パイプ入力を実体化する一時ディレクトリの名前の頭。
-    ///                       定義元はこのモジュールの `STDIN_DIR_PREFIX`。タブが「同名なら親の名前を
-    ///                       添える」規則を、パイプの置き場所には当てないために要る。
+    ///                       定義元はこのモジュールの `STDIN_DIR_PREFIX`。ページがパイプ入力の
+    ///                       識別子を見分けるのに使う（`MdCommon.isStdinId`）。表示名を
+    ///                       置き場所ではなく `--title` / `stdin.md` にするため（#68）。
+    /// - `MD_STDIN_DIR`      その一時ディレクトリを掘る親（正規化した `$TMPDIR`）。`MD_STDIN_PREFIX`
+    ///                       と組んで、`owned_stdin_dir` と同じ形だけをパイプ入力と見なす。
     /// - `MD_QUICK_ACCESS`   Quick Access の並び（#35）。`[{path, dir}]` で、並びが表示順。
+    /// - `MD_ORIGINS`        起動時に開くタブの名乗り（#68）。`[[識別子, {title, description, note}]]`。
+    ///                       `INITIAL_FILES` より先に読める必要があるので、ここで渡す。
+    /// - `MD_BELL_OPENED`    起動時に「ベルから開いた」扱いにする識別子（#68。`bell_opened`）。
     ///
     /// `quick` を引数で受けるのは、これが AppConfig（起動の入力）ではなく
     /// **ユーザーの持ち物**だから。`~/.config` をここで読むと、`examples/serve.rs` で
@@ -116,12 +131,19 @@ impl AppConfig {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_QUICK_ACCESS = [{}];",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}];",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
             json_string(STDIN_DIR_PREFIX),
+            json_string(&canonical(std::env::temp_dir()).to_string_lossy()),
             quick_json(quick),
+            self.origins
+                .iter()
+                .map(|(id, o)| format!("[{},{}]", json_string(id), o.to_json()))
+                .collect::<Vec<_>>()
+                .join(","),
+            self.bell_opened.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
         )
     }
 
@@ -135,13 +157,23 @@ impl AppConfig {
             html_bytes: html.into_bytes(),
             root_dir: root,
             stdin_dir: None,
+            origins: Vec::new(),
+            initial_ids: initial_files.to_vec(),
+            bell_opened: Vec::new(),
         }
     }
 
     /// パイプで渡された markdown を一時ファイルへ書き出し、root（＝作業ディレクトリ）の
     /// 外にあるファイルとして開く。ツリーには出ないがタブには出る。
-    pub fn from_stdin(theme_css: &str, custom_css: &str, current_dir: &Option<PathBuf>) -> Self {
-        Self::stdin_doc(materialize_stdin(), theme_css, custom_css, current_dir)
+    ///
+    /// `origin` は `--title` などの名乗り（#68）。空なら何も結び付けない。
+    pub fn from_stdin(
+        theme_css: &str,
+        custom_css: &str,
+        current_dir: &Option<PathBuf>,
+        origin: &crate::origin::Origin,
+    ) -> Self {
+        Self::stdin_doc(materialize_stdin(), theme_css, custom_css, current_dir, origin)
     }
 
     /// 実体化した stdin のファイルから設定を組み立てる。root は作業ディレクトリなので、
@@ -152,16 +184,21 @@ impl AppConfig {
         theme_css: &str,
         custom_css: &str,
         current_dir: &Option<PathBuf>,
+        origin: &crate::origin::Origin,
     ) -> Self {
         let root = stdin_root(&doc, current_dir);
         let id = file_id(&doc);
-        let mut config = Self::folder(root, theme_css, custom_css, &[id]);
+        let mut config = Self::folder(root, theme_css, custom_css, std::slice::from_ref(&id));
         config.stdin_dir = owned_stdin_dir(&doc);
+        if !origin.is_empty() {
+            config.origins.push((id, origin.clone()));
+        }
         config
     }
 
     /// `--notify` を受け取る md が居なかったときの窓（#36）。渡されたファイルは
-    /// タブで開いた状態で始まり、**通知には積まない**（もう見えているので）。
+    /// タブで開いた状態で始まる。もう見えているので未読としては積まず、既読の行と
+    /// してだけ残す（呼ぶ側の main.rs、#68）。
     ///
     /// root は [`files_root`] を通さず**常に作業ディレクトリ**にする。別のツリーの
     /// ファイルを 2 つ渡されると共通の親が `/` まで広がり、ボリューム全体の再帰監視と
@@ -603,7 +640,8 @@ mod tests {
         // 乗ることと、片付け先のディレクトリを覚えていることを押さえる。
         let doc = spooled("test");
         let cwd = Some(PathBuf::from("/work"));
-        let config = AppConfig::stdin_doc(doc.clone(), "/* theme */", "/* custom */", &cwd);
+        let config =
+            AppConfig::stdin_doc(doc.clone(), "/* theme */", "/* custom */", &cwd, &Default::default());
 
         assert_eq!(config.root_dir, PathBuf::from("/work"));
         assert_eq!(config.title, "work", "タイトルは root（cwd）の名前");
@@ -613,6 +651,31 @@ mod tests {
             html.contains(&format!(r#"var INITIAL_FILES = ["{}"];"#, doc.to_string_lossy())),
             "stdin のファイルが絶対パスの識別子でタブに乗っていない: {html}"
         );
+    }
+
+    #[test]
+    fn a_named_pipe_input_hands_its_name_to_the_page() {
+        let doc = spooled("named");
+        let origin = crate::origin::Origin { title: Some("レビュー".into()), ..Default::default() };
+        let config = AppConfig::stdin_doc(doc.clone(), "", "", &None, &origin);
+        let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
+        let want = format!(r#"window.MD_ORIGINS = [["{}",{}]];"#, doc.to_string_lossy(), origin.to_json());
+        assert!(globals.contains(&want), "{globals}");
+    }
+
+    #[test]
+    fn tabs_marked_as_opened_from_the_bell_reach_the_page() {
+        let mut config = AppConfig::stdin_doc(spooled("bell"), "", "", &None, &Default::default());
+        config.bell_opened = config.initial_ids.clone();
+        let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
+        let want = format!(r#"window.MD_BELL_OPENED = ["{}"];"#, config.initial_ids[0]);
+        assert!(globals.contains(&want), "{globals}");
+    }
+
+    #[test]
+    fn an_unnamed_pipe_input_has_no_origins() {
+        let config = AppConfig::stdin_doc(spooled("plain"), "", "", &None, &Default::default());
+        assert!(config.page_globals(crate::theme::Appearance::Light, &[]).contains("window.MD_ORIGINS = [];"));
     }
 
     #[test]

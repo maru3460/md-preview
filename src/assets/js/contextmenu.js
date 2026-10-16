@@ -36,7 +36,7 @@
       if (window.MdSettings && MdSettings.isTab(tab.dataset.path)) {
         return { id: '', relOk: false, has: false, tab: tab.dataset.path };
       }
-      return { id: tab.dataset.path, relOk: true, has: true, tab: tab.dataset.path };
+      return { id: tab.dataset.path, relOk: relOk(tab.dataset.path), has: true, tab: tab.dataset.path };
     }
     // サイドバーのヘッダ（フォルダ名）→ いまの root が対象（#34）。パスのコピーや
     // Finder 表示を、ツリーに行が無い root 自身に対しても効かせる。
@@ -48,7 +48,7 @@
     if (ti && ti.dataset && ti.dataset.path) {
       return { id: ti.dataset.path, relOk: true, has: true, dir: ti.dataset.kind === 'dir' };
     }
-    if (currentId) return { id: currentId, relOk: true, has: true };
+    if (currentId) return { id: currentId, relOk: relOk(currentId), has: true };
     return { id: '', relOk: false, has: false };
   }
 
@@ -76,6 +76,10 @@
       priority: 40
     });
   }
+
+  // パイプ入力（#68）には相対パスが無い。表示名（`--title` か `stdin.md`）はパスでは
+  // ないので、「相対パスをコピー」で名前を渡すと、パスのつもりで貼った先で迷う。
+  function relOk(id) { return !(window.MdCommon && MdCommon.isStdinId && MdCommon.isStdinId(id)); }
 
   function dispatch(action, selection, ctx) {
     switch (action) {

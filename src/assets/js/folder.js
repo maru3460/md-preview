@@ -218,7 +218,9 @@
   // root の外のファイルはツリーに行が無いので、選択を外すだけにする
   // （居場所はタブが示す）。
   function revealFile(id) {
-    if (MdCommon.isOutsideRoot(id)) { updateActiveItem(id); return; }
+    // パイプ入力（#68）も同じ扱い。root が `$TMPDIR` を含む（`cd / && … | md`）と
+    // root の内側に入るが、表示名は `--title` なのでパスとして割れない。
+    if (MdCommon.isOutsideRoot(id) || MdCommon.isStdinId(id)) { updateActiveItem(id); return; }
     // 祖先はツリー行と同じ識別子（絶対パス）で組む。root 自身はツリーに行が無い
     // （サイドバーそのもの）ので含めない。
     var base = MdCommon.rootPrefix();
@@ -285,15 +287,46 @@
   }
 
   function showLoadError(pane, id) {
-    var name = (id || '').split('/').pop() || id || '';
+    // パイプ入力はタブと同じ名前（title か stdin.md）で出す。末尾を取ると、名乗りが
+    // あっても一時ファイルの stdin.md になってタブと食い違う。
+    var name = MdCommon.isStdinId(id) ? MdCommon.idToDisplay(id)
+      : ((id || '').split('/').pop() || id || '');
     showNotice(pane, 'このファイルは開けませんでした: ' + name
       + '（存在しないパス・権限・壊れたファイルなどの可能性）');
   }
+
+  // タブの下の帯に、送り手の名乗り（#68）の note を出す。出すのはパイプ入力のタブと、
+  // ベルから開いたタブだけ（MdTabs.isFromBell）。ふつうに開いた実ファイルには、ベルに
+  // 行が残っていても出さない——通知と関係なく開いたものに古い補足を付けないため。
+  // note が無ければ帯ごと隠す（名乗っていないタブの本文の位置を 1px も動かさない）。
+  // 値はテキストとして入れる（textContent）。送り手が書いた文字列で、HTML ではない。
+  function noteFor(id) {
+    if (!id) return null;
+    var own = MdCommon.originOf ? MdCommon.originOf(id) : null;
+    if (window.MdTabs && MdTabs.isFromBell && MdTabs.isFromBell(id) && window.MdNotify) {
+      var bell = MdNotify.originOf(id);
+      if (bell) return bell.note || null;
+    }
+    return (own && own.note) || null;
+  }
+
+  function renderOriginBand(id) {
+    var band = document.getElementById('origin-band');
+    if (!band) return;
+    var note = noteFor(id);
+    band.textContent = note || '';
+    band.title = note || '';
+    band.hidden = !note;
+  }
+
+  // ベルの行が入れ替わったとき（送り直し）に、いま見ているタブの帯を描き直す口。
+  window.MdRefreshOriginBand = function() { renderOriginBand(currentFilePath); };
 
   // 開いているファイルが 1 つも無い状態（ツリーだけがある `md .` の起動直後と同じ）
   // へ戻す。loadPreview が「現在のファイル」に紐付けたものを、同じ並びで解く。
   function clearPreview() {
     if (window.MdSettings) MdSettings.flush();
+    renderOriginBand(null);
     var pane = document.getElementById('preview-pane');
     currentFilePath = null;
     bodyPath = null;
@@ -329,6 +362,7 @@
   // 思って `/?raw=md:settings` のような要求を投げる。除外を各所に撒くことになる。
   function showSettings(id, preserveScroll) {
     var pane = document.getElementById('preview-pane');
+    renderOriginBand(null);
     if (!preserveScroll && window.MdTabs) MdTabs.onOpen(id);
     var savedScroll = preserveScroll ? MdCommon.readScroll()
       : (window.MdTabs ? MdTabs.scrollFor(id) : 0);
@@ -369,6 +403,7 @@
     var savedScroll = preserveScroll ? MdCommon.readScroll()
       : (window.MdTabs ? MdTabs.scrollFor(id) : 0);
     currentFilePath = id;
+    if (!preserveScroll) renderOriginBand(id);
     // root の外のファイルは root の再帰監視に載らないので、個別に監視を頼む。
     // 頼まないとホットリロードだけが効かない（開けるのに更新されない）状態になる。
     // 識別子は全部先頭が `/` なので、形ではなく root の内外で判定する。

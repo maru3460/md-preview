@@ -25,6 +25,16 @@
   // タブ操作から loadPreview を呼んでいる間だけ true。loadPreview は入口で
   // onOpen を呼ぶので、この印が無いと自分の呼び出しで状態を二重に書き換える。
   var switching = false;
+  // ベルから開いたタブの識別子（#68）。帯に note を出すのはこのタブだけで、ふつうの
+  // 作業で開いたもの（ツリー・⌘P・`md a.md`）とは混ぜない。タブを閉じるまで残し、
+  // ⌘R や保存での読み直しでは消さない。md を終了すれば消える（持ち越さない）。
+  //
+  // Why not タブのオブジェクトに印を持たせる: ベルの行を押した時点ではまだタブが
+  // 無いことがある（開くのはこの後の loadPreview）。識別子で持てば、タブができる前に
+  // 付けた印もそのまま効く。同じ識別子のタブは 1 枚しか無いので、タブごとに持つのと
+  // 同じ意味になる。
+  var fromBell = {};
+  (window.MD_BELL_OPENED || []).forEach(function(id) { fromBell[id] = true; });
 
   // #tabbar は外枠で、タブが並ぶのは内側のタブ帯。右隣にアイコン帯が居る。
   function tabsEl() { return document.getElementById('tabbar-tabs'); }
@@ -43,24 +53,26 @@
     if (isSettings(p)) return '設定';
     return (window.MdCommon && MdCommon.idToDisplay) ? MdCommon.idToDisplay(p) : String(p);
   }
+  // パイプ入力の表示名（`--title` か `stdin.md`）はパスではないので区切らない。
+  // `--title "api/review"` の `/` で割ると、名乗った名前の後ろ半分だけが出る。
+  function isStdin(p) { return !!(window.MdCommon && MdCommon.isStdinId && MdCommon.isStdinId(p)); }
   function baseName(p) {
+    if (isStdin(p)) return displayOf(p);
     var segs = displayOf(p).split('/');
     return segs[segs.length - 1] || p;
   }
   // 同名タブが並んだときに添える親ディレクトリ名。
   //
   // パイプ入力（`cat x.md | md`）の置き場所はここでは名前として使わない。実体化先は
-  // `$TMPDIR/md-stdin-<時刻>/stdin.md` で、転送で 2 本受けると `stdin.md` が 2 枚に
+  // `$TMPDIR/md-stdin-<何か>/stdin.md` で、転送で 2 本受けると `stdin.md` が 2 枚に
   // なり、この規則がそのまま `md-stdin-1791811651…` を並べてしまう。数字の羅列は見分けの
   // 役に立たないうえ、読んでいる人にとっては置き場所の都合でしかない。
-  // **見分けが付かないままにする**——パイプで渡したものは元の名前を持っていない。
+  // **見分けが付かないままにする**——見分けたいなら送り手が `--title` で名乗る（#68）。
   function parentName(p) {
+    if (isStdin(p)) return '';
     var segs = displayOf(p).split('/');
     if (segs.length < 2) return '';
-    var dir = segs[segs.length - 2];
-    var spool = window.MD_STDIN_PREFIX;
-    if (spool && dir.indexOf(spool) === 0) return '';
-    return dir;
+    return segs[segs.length - 2];
   }
 
   // 現在出ているビューモード（raw / diff、無ければ null）。
@@ -206,6 +218,14 @@
     }
   }
 
+  // タブを外したら、ベルから開いた印も外す。同じファイルを次にツリーから開いたとき、
+  // 帯を出さないため。
+  function forgetClosed(closed) {
+    for (var i = 0; i < closed.length; i++) {
+      if (closed[i] && closed[i].path) delete fromBell[closed[i].path];
+    }
+  }
+
   function closeAt(i) {
     // タブが 1 枚も無い（`md .` で起動してまだ何も開いていない）ときの ⌘W は
     // ウィンドウを閉じる。ここで抜けてしまうと、⌘W に割り当てられているのは
@@ -226,7 +246,9 @@
     // 分けるなら、ラベルから `(⌘W)` を外すのが先。
     if (tabs.length === 1) { closeWindow(); return; }
     var wasActive = (i === activeIdx);
-    reportClosed(tabs.splice(i, 1));
+    var gone = tabs.splice(i, 1);
+    forgetClosed(gone);
+    reportClosed(gone);
     if (wasActive) {
       // 右隣へ移る（右端だったら左隣）。
       activeIdx = Math.min(i, tabs.length - 1);
@@ -241,7 +263,9 @@
     var keep = tabs[indexOf(path)];
     if (!keep) return;
     var wasActive = (tabs[activeIdx] === keep);
-    reportClosed(tabs.filter(function(t) { return t !== keep; }));
+    var gone = tabs.filter(function(t) { return t !== keep; });
+    forgetClosed(gone);
+    reportClosed(gone);
     tabs = [keep];
     activeIdx = 0;
     if (wasActive) render();
@@ -254,6 +278,7 @@
   // 「片付けたら道具ごと消えた」になる。
   function closeAll() {
     if (!tabs.length) return;
+    forgetClosed(tabs);
     reportClosed(tabs);
     tabs = [];
     activeIdx = -1;
@@ -372,6 +397,8 @@
     openMany: openMany,
     scrollFor: scrollFor,
     closeByPath: function(path) { closeAt(indexOf(path)); },
+    markFromBell: function(path) { if (path) fromBell[path] = true; },
+    isFromBell: function(path) { return !!(path && fromBell[path]); },
     closeOthers: closeOthers,
     closeAll: closeAll,
     count: function() { return tabs.length; },

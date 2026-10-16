@@ -46,6 +46,7 @@
       <div id="tabbar-tabs"></div>
       <div id="tabbar-icons"></div>
     </div>
+    <div id="origin-band" hidden></div>
     <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
   </div>
 </div>

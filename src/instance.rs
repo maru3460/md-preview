@@ -203,6 +203,9 @@ pub struct Message {
     /// 送る。受け側は窓を出さず、タブも増やさない。対で立てるのは
     /// [`Message::theme_changed`] の仕事。
     pub theme: bool,
+    /// 送り手の名乗り（#68）。1 通に 1 組で、`files` の全部に掛かる。送り側は
+    /// パイプ入力か `--notify` のときしか載せない。
+    pub origin: crate::origin::Origin,
 }
 
 impl Message {
@@ -257,6 +260,15 @@ impl Message {
         for d in &self.own {
             push_token(&mut out, &format!("own={}", d));
         }
+        if let Some(t) = &self.origin.title {
+            push_token(&mut out, &format!("title={}", t));
+        }
+        if let Some(d) = &self.origin.description {
+            push_token(&mut out, &format!("description={}", d));
+        }
+        if let Some(n) = &self.origin.note {
+            push_token(&mut out, &format!("note={}", n));
+        }
         out
     }
 
@@ -284,6 +296,10 @@ impl Message {
                 "activate" => msg.activate = value != "0",
                 "notify" => msg.notify = value != "0",
                 "theme" => msg.theme = value != "0",
+                // ワイヤから来た値なので、CLI と同じ整え方をもう一度通す。
+                "title" => msg.origin.title = crate::origin::clean(value),
+                "description" => msg.origin.description = crate::origin::clean(value),
+                "note" => msg.origin.note = crate::origin::clean(value),
                 // 未知のキーは無視する。前方互換の約束そのものなので、ここで
                 // エラーにしてはいけない。
                 _ => {}

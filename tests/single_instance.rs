@@ -96,6 +96,32 @@ fn a_notification_travels_without_activation() {
 }
 
 #[test]
+fn the_sender_name_travels_with_the_message() {
+    // #68。値に `=` が入っても、キーとの区切りは最初の `=` だけ。
+    let mut msg = Message::notification(vec!["/tmp/md-stdin-1/stdin.md".into()]);
+    msg.origin.title = Some("PR #12 のレビュー".into());
+    msg.origin.description = Some("md-preview: PR #12 の差分".into());
+    msg.origin.note = Some("a=b".into());
+    assert_eq!(Message::decode(&msg.encode()), Some(msg));
+}
+
+#[test]
+fn a_sender_name_from_the_wire_is_cleaned_like_the_cli() {
+    let long = "あ".repeat(250);
+    let wire = format!("md-preview\x001\x00file=/a.md\x00title={long}\x00description=\x00note=a\nb\tc\x00\x00");
+    let origin = Message::decode(wire.as_bytes()).unwrap().origin;
+    assert_eq!(origin.title.as_ref().map(|t| t.chars().count()), Some(200), "長すぎる値は切られる");
+    assert_eq!(origin.description, None, "空の値は名乗り無し");
+    assert_eq!(origin.note.as_deref(), Some("a b c"), "改行とタブは空白になる");
+}
+
+#[test]
+fn a_message_from_an_older_sender_has_no_name() {
+    let wire = b"md-preview\x001\x00file=/a.md\x00\x00" as &[u8];
+    assert!(Message::decode(wire).unwrap().origin.is_empty());
+}
+
+#[test]
 fn a_theme_change_travels_without_files_or_activation() {
     let back = Message::decode(&Message::theme_changed().encode()).unwrap();
     assert!(back.theme);

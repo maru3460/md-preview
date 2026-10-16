@@ -34,6 +34,10 @@ md - 高速Markdownプレビュー
                       ウィンドウが無ければ、普通に開きます
                       パイプ入力も積めますが、md を終了するか、ベルから
                       開いたタブを閉じると開けなくなります
+  --title <名前>      パイプ入力のタブ名と、ベルの項目名にします
+  --description <文>  ベルの項目に添える 1 行です（ベルにだけ出ます）
+  --note <文>         タブの下の帯に出す補足です
+                      この 3 つが効くのはパイプ入力か --notify のときだけです
   --                  これ以降をフラグとして解釈しません（md -- -n.md）
   --sample            サンプルのMarkdownを標準出力に出します
   --help, -h          このヘルプを表示します
@@ -51,6 +55,24 @@ pub struct OpenFlags {
     /// あちらは逃げ道（前景デバッグ）なので断らない——切るために在るものを
     /// 「使い方が矛盾している」と拒むと、逃げ道が逃げ道でなくなる。
     pub notify: bool,
+    /// `--title` / `--description` / `--note`（#68）。パイプ入力と `--notify` のときだけ
+    /// 意味を持つ。それ以外では [`OpenFlags::drop_origin_unless_shown`] で捨てる。
+    pub origin: crate::origin::Origin,
+}
+
+impl OpenFlags {
+    /// 名乗りを出す場所が無い開き方（実ファイルを `--notify` 無しで開く）なら、名乗りを
+    /// 捨てる。パイプ入力かどうかは標準入力を見ないと決まらないので、呼ぶのは `main.rs`。
+    ///
+    /// Why not 断る: 名乗りはおまけなので、それで本体が開かないのは逆。断ると、エージェントは
+    /// `cat a.md | md --title …` へ逃げやすく、そうなると保存しても再読み込みされない。
+    /// Why not 受けてタブ名にする: ファイルは自分の名前を持っている。タブ名だけ差し替えても、
+    /// ツリーから開き直せば元の名前に戻る（#68 の「やらないこと」）。
+    pub fn drop_origin_unless_shown(&mut self, stdin_mode: bool) {
+        if !stdin_mode && !self.notify {
+            self.origin = Default::default();
+        }
+    }
 }
 
 /// 窓を開く経路の引数からフラグを剥がし、残りをパスとして返す。
@@ -74,12 +96,35 @@ pub struct OpenFlags {
 /// `uninstall::run` の完全一致も、ここからは独立して動いている。#31 が必要とするのは
 /// 「窓を開く経路でフラグとパスを混ぜられること」だけなので、その 1 点に絞ってある。
 pub fn split_open_flags(args: &[String]) -> Result<(OpenFlags, Vec<String>), String> {
-    let mut flags = OpenFlags { new_window: false, notify: false };
+    let mut flags = OpenFlags { new_window: false, notify: false, origin: Default::default() };
     let mut paths = Vec::new();
     let mut only_paths = false;
-    for arg in args {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
         if only_paths {
             paths.push(arg.clone());
+            continue;
+        }
+        // 値を取るフラグは `--title x` と `--title=x` のどちらでも受ける。
+        // 前者の値は `-` で始まっていても値として取る（`--title -draft-` を断らない）。
+        if let Some((name, inline)) = value_flag(arg) {
+            let value = match inline {
+                Some(v) => v.to_string(),
+                None => args
+                    .next()
+                    .ok_or_else(|| format!("md: {} に値がありません", name))?
+                    .clone(),
+            };
+            // 空の値は「名乗らなかった」として通す。`--note "$NOTE"` の変数が空だった
+            // だけで文書ごと届かなくなるのは、おまけのために本体を落とすことになる。
+            // 同じフラグが 2 回あれば後ろが勝つ（空の後ろも、前の値を消す）。
+            let v = crate::origin::clean(&value);
+            let o = &mut flags.origin;
+            match name {
+                "--title" => o.title = v,
+                "--description" => o.description = v,
+                _ => o.note = v,
+            }
             continue;
         }
         match arg.as_str() {
@@ -101,6 +146,19 @@ pub fn split_open_flags(args: &[String]) -> Result<(OpenFlags, Vec<String>), Str
         return Err("md: --notify と --new-window は一緒に使えません".to_string());
     }
     Ok((flags, paths))
+}
+
+/// 値を取るフラグ（#68）なら、その名前と `=` の後ろ（あれば）を返す。
+fn value_flag(arg: &str) -> Option<(&'static str, Option<&str>)> {
+    for name in ["--title", "--description", "--note"] {
+        if arg == name {
+            return Some((name, None));
+        }
+        if let Some(v) = arg.strip_prefix(name).and_then(|r| r.strip_prefix('=')) {
+            return Some((name, Some(v)));
+        }
+    }
+    None
 }
 
 fn hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
@@ -288,7 +346,10 @@ mod tests {
 
     #[test]
     fn usage_lists_every_subcommand() {
-        for flag in ["--sample", "--help", "--version", "theme", "uninstall", "--new-window", "--notify"] {
+        for flag in [
+            "--sample", "--help", "--version", "theme", "uninstall", "--new-window", "--notify", "--title",
+            "--description", "--note",
+        ] {
             assert!(USAGE.contains(flag), "{flag} が使い方に無い");
         }
     }
@@ -349,6 +410,70 @@ mod tests {
         // 実際の理由（そんなファイルは無い）から遠いメッセージが出る。
         let (_, paths) = split_open_flags(&own(&["-"])).unwrap();
         assert_eq!(paths, vec!["-"]);
+    }
+
+    #[test]
+    fn origin_flags_take_a_value_in_either_spelling() {
+        let args = own(&["--title", "PR #12", "--description=md-preview: 差分", "--note", "a=b"]);
+        let (flags, paths) = split_open_flags(&args).unwrap();
+        assert!(paths.is_empty());
+        assert_eq!(flags.origin.title.as_deref(), Some("PR #12"));
+        assert_eq!(flags.origin.description.as_deref(), Some("md-preview: 差分"));
+        assert_eq!(flags.origin.note.as_deref(), Some("a=b"));
+    }
+
+    #[test]
+    fn the_value_of_an_origin_flag_is_never_read_as_a_flag_or_a_path() {
+        let (flags, paths) = split_open_flags(&own(&["--title", "-n", "a.md"])).unwrap();
+        assert!(!flags.new_window);
+        assert_eq!(flags.origin.title.as_deref(), Some("-n"));
+        assert_eq!(paths, vec!["a.md"]);
+    }
+
+    #[test]
+    fn an_origin_flag_without_a_value_is_refused() {
+        assert!(split_open_flags(&own(&["--title"])).is_err());
+        assert!(split_open_flags(&own(&["--note"])).is_err());
+    }
+
+    #[test]
+    fn an_empty_origin_value_means_no_name() {
+        let (flags, _) = split_open_flags(&own(&["--title=", "--note", " "])).unwrap();
+        assert!(flags.origin.is_empty());
+    }
+
+    #[test]
+    fn a_name_given_to_a_plain_file_open_is_dropped_but_kept_for_a_pipe_or_a_notification() {
+        let named = |extra: &[&str]| {
+            let mut args = vec!["--title", "x", "--note", "n"];
+            args.extend_from_slice(extra);
+            split_open_flags(&own(&args)).unwrap().0
+        };
+        let mut plain = named(&["a.md"]);
+        plain.drop_origin_unless_shown(false);
+        assert!(plain.origin.is_empty(), "実ファイルをそのまま開く");
+
+        let mut pipe = named(&[]);
+        pipe.drop_origin_unless_shown(true);
+        assert_eq!(pipe.origin.title.as_deref(), Some("x"), "パイプ入力");
+
+        let mut notify = named(&["--notify", "a.md"]);
+        notify.drop_origin_unless_shown(false);
+        assert_eq!(notify.origin.note.as_deref(), Some("n"), "--notify");
+    }
+
+    #[test]
+    fn the_last_of_a_repeated_origin_flag_wins() {
+        let (flags, _) = split_open_flags(&own(&["--note=a", "--note=b", "--title=x", "--title="])).unwrap();
+        assert_eq!(flags.origin.note.as_deref(), Some("b"));
+        assert_eq!(flags.origin.title, None);
+    }
+
+    #[test]
+    fn a_file_named_like_an_origin_flag_is_reachable_through_the_terminator() {
+        let (flags, paths) = split_open_flags(&own(&["--", "--title"])).unwrap();
+        assert!(flags.origin.is_empty());
+        assert_eq!(paths, vec!["--title"]);
     }
 
     fn own(v: &[&str]) -> Vec<String> {

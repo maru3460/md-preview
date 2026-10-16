@@ -889,6 +889,7 @@ pub fn build_folder_html(
       <div id="tabbar-tabs"></div>
       <div id="tabbar-icons"></div>
     </div>
+    <div id="origin-band" hidden></div>
     <div id="preview-pane" tabindex="-1"><div class="markdown-body"></div></div>
   </div>
 </div>
@@ -924,11 +925,32 @@ pub fn notifications_script(list: &[crate::notifications::Entry]) -> String {
     let items = list
         .iter()
         .map(|e| {
-            format!("{{path:{},at:{},read:{}}}", json_string(&e.path), e.at, e.read)
+            format!(
+                "{{path:{},at:{},read:{},origin:{}}}",
+                json_string(&e.path),
+                e.at,
+                e.read,
+                e.origin.to_json()
+            )
         })
         .collect::<Vec<_>>()
         .join(",");
     format!("window.MdNotify && window.MdNotify.push([{}]);", items)
+}
+
+/// 送り手の名乗り（#68）を、これから開く識別子に結び付けるスクリプト。
+/// [`open_files_script`] より**先に**流すこと——タブは開いた瞬間に名前を決めるので、
+/// 後から渡すと一瞬 `stdin.md` と出てから書き換わる。名乗りが無ければ空文字。
+pub fn origins_script(ids: &[String], origin: &crate::origin::Origin) -> String {
+    if ids.is_empty() || origin.is_empty() {
+        return String::new();
+    }
+    let list = ids.iter().map(|s| json_string(s)).collect::<Vec<_>>().join(",");
+    format!(
+        "window.MdCommon && MdCommon.setOrigin && MdCommon.setOrigin([{}], {});",
+        list,
+        origin.to_json()
+    )
 }
 
 /// ツリーの頂点が動いたことをページへ伝えるスクリプト（#34）。
@@ -1073,6 +1095,19 @@ mod tests {
         assert_eq!(notifications_script(&[]), "window.MdNotify && window.MdNotify.push([]);");
     }
 
+    /// 名乗りが無ければ何も流さない。流すと、名乗っていないタブまで名前の表を通る。
+    #[test]
+    fn no_origin_script_without_a_name() {
+        assert_eq!(origins_script(&["/a.md".into()], &Default::default()), "");
+    }
+
+    #[test]
+    fn the_origin_script_binds_every_id_to_the_same_name() {
+        let o = crate::origin::Origin { title: Some("x</script>".into()), ..Default::default() };
+        let s = origins_script(&["/a.md".into(), "/b.md".into()], &o);
+        assert!(s.contains(r#"setOrigin(["/a.md","/b.md"], {"title":"x\u003c/script>""#), "{s}");
+    }
+
     /// パスに `"` や `\` が入っていても、ページ側の JSON が壊れないこと。
     #[test]
     fn a_path_with_quotes_survives_the_trip_to_the_page() {
@@ -1080,6 +1115,7 @@ mod tests {
             path: "/a/\"odd\"\\name.md".to_string(),
             at: 1_700_000_000,
             read: true,
+            origin: Default::default(),
         }];
         let script = notifications_script(&list);
         assert!(script.contains("at:1700000000"), "{script}");

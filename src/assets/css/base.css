@@ -14,6 +14,9 @@
        --html ダンプ）では 0 でなければならない。シェルは body.folder-mode で
        上書きする——あちらはタブが 0 枚でも帯を畳まない。 */
     --md-tabbar-h: 0px;
+    /* タブの下の帯（#68 の note）の高さ。出ていない間は 0 で、出ている間の値は
+       下の body:has(#origin-band…) が持つ。.html-frame の高さ計算がこれを引く。 */
+    --md-band-h: 0px;
     /* スクロールバーの太さ。タブとアイコン帯の高さもこの値から引くので、太さを
        変えるときはここだけ動かす（2 箇所に 2px を散らさない）。 */
     --md-sb-w: 2px;
@@ -471,7 +474,7 @@ body:has(> .html-page),
 .html-frame {
     display: block;
     width: 100%;
-    height: calc(100vh - var(--md-pad) * 2 - var(--md-tabbar-h));
+    height: calc(100vh - var(--md-pad) * 2 - var(--md-tabbar-h) - var(--md-band-h));
     border: 0;
     /* light dark と書いて、どちらに倒すかは外側（窓の外観）に委ねる。外観を固定した
        テーマでは窓ごとそちらへ倒れるので、html もアプリと同じ明暗で描かれる
@@ -824,6 +827,35 @@ body.sidebar-closed #resizer::before {
     flex-direction: column;
 }
 
+/* 送り手の名乗り（#68）の note を出す帯。タブバーと本文の間に 1 行だけ出す。溢れたら
+   省略記号で切り、全文は title（ホバー）で読む。色はタブバーと同じく currentColor の
+   混色で組む（テーマに色を増やさない）。
+   Why not 2 行まで折り返す: 帯の高さが note の長さで変わると、本文の頭の位置がタブ
+   ごとにずれる。 */
+#origin-band {
+    flex-shrink: 0;
+    height: var(--md-band-h);
+    line-height: var(--md-band-h);
+    padding: 0 12px;
+    font-size: 11.5px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    opacity: 0.8;
+    box-shadow: inset 0 -1px 0 color-mix(in srgb, currentColor 10%, transparent);
+    background: color-mix(in srgb, currentColor 3%, transparent);
+}
+
+#origin-band[hidden] {
+    display: none;
+}
+
+/* 帯が出ている間だけ高さを持たせる。html 表示の iframe（.html-frame）はこの変数を
+   引くので、帯のぶん窓の下へはみ出さない。 */
+body:has(#origin-band:not([hidden])) {
+    --md-band-h: 24px;
+}
+
 #preview-pane {
     flex: 1;
     min-height: 0;
@@ -1141,8 +1173,11 @@ body.folder-mode {
     cursor: pointer;
 }
 
-/* 1 件の高さ。ここを見せる件数に掛けて一覧の高さの上限を出す（notify.js）ので、
-   行の高さを変えるときはこの変数だけ動かす。2 段組みの実測値。 */
+/* 名乗りの無い 2 段の行の高さ。ここを見せる件数に掛けて一覧の高さの上限を出す
+   （notify.js）ので、行の高さを変えるときはこの変数だけ動かす。2 段組みの実測値。
+   description（#68）付きの 3 段の行はこれより高い（.has-desc）。上限は 2 段で数えた
+   ままなので、3 段の行が混ざると見える件数が減り、最後の行が途中で切れる——
+   スクロールできることの合図として、そのままにしている。 */
 .md-bell-list {
     --md-bell-row-h: 44px;
     overflow-y: auto;
@@ -1215,6 +1250,26 @@ body.folder-mode {
     margin-top: 1px;
     font-size: 11px;
     opacity: 0.6;
+}
+
+/* description（#68）が付いた行だけ 3 段にする。高さを固定のまま詰めると 2 段の行と
+   文字が重なるので、この行だけ中身に合わせて伸ばす（一覧の高さの上限は 2 段の行で
+   数えたままなので、見える件数がそのぶん減る）。 */
+.md-bell-row.has-desc {
+    height: auto;
+    min-height: var(--md-bell-row-h);
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+.md-bell-desc {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
+    font-size: 11.5px;
+    opacity: 0.85;
 }
 
 .md-bell-empty {

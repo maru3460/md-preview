@@ -340,7 +340,8 @@ test('パイプで受けた同名タブに、一時ディレクトリの名前�
   await page.evaluate((pre) => {
     // 実体化先と同じ形の識別子を 2 本。中身は取りに行けないが、タブの名前は
     // 識別子だけで決まるのでここで測れる。
-    window.MdOpenFiles(['/tmp/' + pre + '111/stdin.md', '/tmp/' + pre + '222/stdin.md']);
+    const tmp = window.MD_STDIN_DIR;
+    window.MdOpenFiles([tmp + '/' + pre + '111/stdin.md', tmp + '/' + pre + '222/stdin.md']);
   }, spool);
 
   await expect(tabNames(page)).toHaveText(['stdin.md', 'stdin.md']);

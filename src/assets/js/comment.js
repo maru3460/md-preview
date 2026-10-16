@@ -940,9 +940,11 @@
   // `abs` はクリップボードへ畳むとき。貼り先（人 / エージェント）は md を開いている
   // フォルダを知らないので、そこだけは識別子（絶対パス）のまま出す。
   // 画面のパネルは幅が狭く、隣のツリーが root 相対で並んでいるので表示名で出す。
+  // パイプ入力はコピーでも表示名（`--title` か `stdin.md`）にする（#68）。一時ファイルの
+  // 絶対パスは窓が閉じれば消えるし、送り手はその存在を知らないので、貼り先で読めない。
   function locLabel(c, abs) {
     var id = c.file || '';
-    var f = id ? (abs ? id : MdCommon.idToDisplay(id)) : '(no file)';
+    var f = id ? (abs && !MdCommon.isStdinId(id) ? id : MdCommon.idToDisplay(id)) : '(no file)';
     if (!c.startLine) return f;
     if (c.endLine && c.endLine !== c.startLine) return f + ':' + c.startLine + '-' + c.endLine;
     return f + ':' + c.startLine;
