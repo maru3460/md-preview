@@ -1,7 +1,7 @@
 ---
 name: md-preview
 description: md-preview(mdコマンド)の使い方
-argument-hint: [--pipe | -p]
+argument-hint: "[--stdin | -s] [--direct | -d]"
 ---
 
 # md-preview
@@ -12,30 +12,44 @@ Markdown, HTML をユーザーに見せる際に使う。
 ## 基本的な使い方
 
 ```bash
-md --notify path/to/document.md
-md --notify a.md a.html
+md --notify --title '<何の文書か>' --description '<どの作業の何か>' path/to/document.md
+md --notify --title '<何の文書か>' --description '<どの作業の何か>' a.md a.html
 ```
 
 上記によりmdに通知が送られ、通知を見たユーザーが非同期でファイルを閲覧する。
 複数ファイル作成した場合は一括で通知可能。
 
-## パイプ
+### 名乗る
 
-スキルが `--pipe` / `-p` 付きで呼ばれたら、標準入力で渡す
-
-適当な場所(scratchpad等)にマークダウンを作成した上で
+`--notify` には `--title` と `--description` を付けて、非同期でファイルを閲覧するユーザーに情報を渡す。
+開いたあとに読んでほしい補足があれば、`--note` も付ける。
 
 ```bash
-cat /path/to/file | md --notify
+md --notify plan.md --title '<何の文書か>' --description '<どの作業の何か>' --note '<補足>'
 ```
 
-もしくはマークダウンを作成せずに
+- `--title`：何の文書か。目安は10 字。
+- `--description`：どの作業の何か。目安は20 字。
+- `--note`：開いた人が読む補足。目安は50 字。
+
+## パイプ
+
+スキルが `--stdin` / `-s` 付きで呼ばれたら、標準入力で渡す
 
 ```bash
-md --notify <<'EOF'
+md --notify --title '<何の文書か>' --description '<どの作業の何か>' <<'EOF'
 # 見出し
 本文
 EOF
+```
+
+## 直接開く
+
+スキルが `--direct` / `-d` 付きで呼ばれたら、`--notify`をつけない。
+この時フォーカスがmd-previewのウィンドウに移る。
+
+```bash
+md path/to/document.md
 ```
 
 ## 注意事項

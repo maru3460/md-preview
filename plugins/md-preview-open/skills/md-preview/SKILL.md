@@ -1,7 +1,7 @@
 ---
 name: md-preview
 description: md-preview(mdコマンド)の使い方
-argument-hint: [--pipe | -p]
+argument-hint: "[--stdin | -s] [--notify | -n]"
 ---
 
 # md-preview
@@ -22,21 +22,22 @@ md a.md a.html
 
 ## パイプ
 
-スキルが `--pipe` / `-p` 付きで呼ばれたら、標準入力で渡す
-
-適当な場所(scratchpad等)にマークダウンを作成した上で
+スキルが `--stdin` / `-s` 付きで呼ばれたら、標準入力で渡す
 
 ```bash
-cat /path/to/file | md
-```
-
-もしくはマークダウンを作成せずに
-
-```bash
-md <<'EOF'
+md --title '<何の文書か>' <<'EOF'
 # 見出し
 本文
 EOF
+```
+
+## 通知
+
+スキルが `--notify` / `-n` 付きで呼ばれたら、`--notify`をつける
+`notify`をつける場合ユーザーがファイルを見るのは非同期なのでtitleとdescriptionをつける
+
+```bash
+md --notify --title '<何の文書か>' --description '<どの作業の何か>' path/to/document.md
 ```
 
 ## 注意事項

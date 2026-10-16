@@ -1,7 +1,7 @@
 {
   "name": "md-preview-notify",
   "description": "md-previewの使い方(mdコマンド)。md の窓を開いたままにしておく使い方向け",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": { "name": "maru3460" },
   "repository": "https://github.com/maru3460/md-preview",
   "license": "MIT"
