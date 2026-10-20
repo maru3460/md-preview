@@ -351,7 +351,12 @@
       if (!mermaid.__mdInit) {
         var ap = window.MD_APPEARANCE || 'auto';
         var dark = ap === 'dark' || (ap === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'loose' });
+        // strict: `click … call` を結び付けず、`click … href` の `javascript:` も落とし、
+        // 描いた SVG 全体をもう一度 DOMPurify に通す。loose だと、AI に書かせた図のクリック
+        // から文書の JS が動く（ラベルの HTML はどちらでも DOMPurify を通る）。図の側
+        // （`%%{init}%%` / frontmatter）からは mermaid が securityLevel の上書きを拒むので、
+        // ここで決めた値が最後まで効く。
+        mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict' });
         mermaid.__mdInit = true;
       }
       try { mermaid.run({ nodes: nodes }); } catch (e) {}
