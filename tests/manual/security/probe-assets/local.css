@@ -1,0 +1,3 @@
+/* probe.html が手元の CSS を読めているかの印。読めていれば緑の帯になる。 */
+.local-css-mark { background: #2e7d32; color: #fff; padding: 2px 8px; border-radius: 4px; }
+.local-css-mark::after { content: "（手元の CSS が効いている）"; }
