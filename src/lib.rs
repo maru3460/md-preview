@@ -10,6 +10,7 @@ pub mod cli;
 pub mod diff;
 pub mod embed;
 pub mod fsread;
+pub mod git;
 pub mod html;
 pub mod instance;
 pub mod notifications;

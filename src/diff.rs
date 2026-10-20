@@ -1,7 +1,7 @@
 use std::path::Path;
-use std::process::Command;
 
 use crate::fsread::{read_regular_string, too_large_message, ReadError, TEXT_MAX_BYTES};
+use crate::git::{self, GitError};
 use crate::html::html_escape;
 
 /// ファイルの `git diff HEAD`（最後のコミットからの変更）を、VSCode 風のインライン
@@ -22,8 +22,8 @@ pub fn render_diff_inner(file_path: &Path) -> String {
     let dir = file_path.parent().unwrap_or(Path::new("."));
 
     let old_src = match git_show_head(dir, file_path) {
-        Some(s) => s,
-        None => {
+        Head::Blob(s) => s,
+        Head::Absent => {
             if inside_work_tree(dir) {
                 // 未追跡 / まだコミット前: 差分の相手がいないので全行が追加。
                 String::new()
@@ -32,6 +32,9 @@ pub fn render_diff_inner(file_path: &Path) -> String {
                 new_src.clone()
             }
         }
+        // HEAD にはあるのに中身を取れなかった（部分クローンで取得を止めた・時間切れ）。
+        // 「未追跡」にすると全行が追加に見えて嘘になる。
+        Head::Unavailable => return message_html("差分を出せません（git から最後のコミットの内容を取れませんでした）"),
     };
 
     let inner = render_source_diff(&old_src, &new_src);
@@ -49,38 +52,41 @@ pub fn render_diff_inner(file_path: &Path) -> String {
     )
 }
 
-/// HEAD にあるそのファイルの内容を取り出す。未追跡 / リポジトリ外 / コミット前などで
-/// 取れなければ None。`HEAD:./<name>` は -C のディレクトリを prefix として解決される
-/// ので、サブディレクトリのファイルでも正しく引ける。
+/// [`git_show_head`] の答え。
+enum Head {
+    Blob(String),
+    /// HEAD にそのファイルが無い（未追跡・コミット前）か、リポジトリの外。
+    Absent,
+    /// HEAD にはあるが、中身を取れなかった。
+    Unavailable,
+}
+
+/// HEAD にあるそのファイルの内容を取り出す。`HEAD:./<name>` は -C のディレクトリを
+/// prefix として解決されるので、サブディレクトリのファイルでも正しく引ける。
 ///
-/// セキュリティ: 他人のリポジトリを開く脅威モデルでも、ここで使うのは blob ダンプ
-/// （`show <rev>:<path>`）と `rev-parse` のみで、いずれも .output()（パイプ）実行。
-/// pager は tty 時のみ・textconv/external diff・hooks は経由しないため、悪性 .git/config
-/// による既知ベクタは発火しない。将来 `git diff` 等へ広げる場合は要再評価。
-fn git_show_head(dir: &Path, file_path: &Path) -> Option<String> {
-    let name = file_path.file_name()?.to_str()?;
+/// 取れなかったときは `ls-tree` で HEAD の木に名前があるかを見て、「無い」と「取れない」を
+/// 分ける。部分クローンで取得を止めたとき（`GIT_NO_LAZY_FETCH`）も show は失敗するので、
+/// それを未追跡と取り違えないため。
+fn git_show_head(dir: &Path, file_path: &Path) -> Head {
+    let Some(name) = file_path.file_name().and_then(|n| n.to_str()) else { return Head::Absent };
     let spec = format!("HEAD:./{}", name);
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .arg("show")
-        .arg(&spec)
-        .output()
-        .ok()?;
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        None
+    match git::run(dir, &["show", "--no-textconv", &spec]) {
+        Ok(o) if o.success => return Head::Blob(o.stdout_str()),
+        Ok(_) => {}
+        Err(GitError::NotRepo) => return Head::Absent,
+        Err(_) => return Head::Unavailable,
+    }
+    let rel = format!("./{}", name);
+    match git::run(dir, &["ls-tree", "--name-only", "HEAD", "--", &rel]) {
+        Ok(o) if o.success && !o.stdout.is_empty() => Head::Unavailable,
+        Ok(_) | Err(GitError::NotRepo) => Head::Absent,
+        Err(_) => Head::Unavailable,
     }
 }
 
 fn inside_work_tree(dir: &Path) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+    git::run(dir, &["rev-parse", "--is-inside-work-tree"])
+        .map(|o| o.success && o.stdout_str().trim() == "true")
         .unwrap_or(false)
 }
 
@@ -89,20 +95,13 @@ fn message_html(msg: &str) -> String {
 }
 
 /// トグルボタンのバッジ用に、追加行数・削除行数だけを軽量に数える。差分本文は組まず
-/// `git diff --numstat` に任せる（未追跡ファイルは numstat に出ないので全行を追加として数える）。
+/// `git diff-index --numstat` に任せる（未追跡ファイルは numstat に出ないので全行を追加として数える）。
 pub fn diff_stat(file_path: &Path) -> (usize, usize) {
     let dir = file_path.parent().unwrap_or(Path::new("."));
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        // --no-ext-diff / --no-textconv の理由は changed_files のコメント参照。
-        .args(["diff", "--numstat", "--no-ext-diff", "--no-textconv", "HEAD", "--"])
-        .arg(file_path)
-        .output();
-
-    if let Ok(o) = output {
-        if o.status.success() {
-            let stdout = String::from_utf8_lossy(&o.stdout);
+    let Some(path) = file_path.to_str() else { return (0, 0) };
+    if let Ok(o) = git::run(dir, &[&DIFF_INDEX_NUMSTAT[..], &["HEAD", "--", path]].concat()) {
+        if o.success {
+            let stdout = o.stdout_str();
             if let Some(line) = stdout.lines().next() {
                 // 形式: "<added>\t<deleted>\t<path>"。バイナリは "-\t-\t..." で parse 失敗 → 0。
                 let mut fields = line.split('\t');
@@ -119,6 +118,15 @@ pub fn diff_stat(file_path: &Path) -> (usize, usize) {
     (0, 0)
 }
 
+/// 差分の行数を数えるときの共通の引数。
+///
+/// `git diff` ではなく plumbing の `diff-index` を使うのは、index を書き換えないため
+/// （`git diff` は統計情報を書き戻し、そのとき利用者の index と fsmonitor の状態も変わる）。
+/// `--no-ext-diff` / `--no-textconv` は、`.git/config`・`.gitattributes` 由来の外部コマンド
+/// （`diff.external`・`diff.<driver>.command`・`textconv`）を起動させないため。`git.rs` はこれらの
+/// 設定を上書きしないので、ここの引数が唯一の守り。
+const DIFF_INDEX_NUMSTAT: [&str; 5] = ["diff-index", "--numstat", "--no-ext-diff", "--no-textconv", "--no-color"];
+
 /// 変更のあるファイルを列挙する上限。⌘P の並べ替えに使うだけなので、巨大な変更セット
 /// （生成物を大量にコミットし直した時など）で git 出力の走査に時間を使わないよう打ち切る。
 const CHANGED_MAX: usize = 500;
@@ -130,20 +138,20 @@ const CHANGED_MAX: usize = 500;
 /// パスは識別子（絶対パス）。⌘P は `?files=1` の一覧と突き合わせるので、形を
 /// 揃えないとバッジが付かず、並べ替えも効かない。
 ///
-/// セキュリティ: 他人のリポジトリを開く脅威モデルなので、`--no-ext-diff` / `--no-textconv`
-/// で .git/config・.gitattributes 由来の外部コマンド実行経路を封じる（diff_stat も同様）。
+/// filter・fsmonitor・フックなどの守りは `git.rs` が全部の呼び出しに掛け、差分のドライバは
+/// [`DIFF_INDEX_NUMSTAT`] の引数で止める。サブモジュールは中の設定（filter など）までは
+/// 上書きできないので、`--ignore-submodules=all` で入らない。
 pub fn changed_files(root: &Path) -> Vec<(String, usize, usize)> {
     let mut out: Vec<(String, usize, usize)> = Vec::new();
 
     // 追跡済みの変更。`--relative` で root 相対のパスにする（root がリポジトリの
     // サブディレクトリでも正しい）。リネームは分解して出す（`old => new` を扱わない）。
-    if let Ok(o) = git_output(
-        root,
-        &[
-            "diff", "--numstat", "--relative", "--no-renames",
-            "--no-ext-diff", "--no-textconv", "HEAD", "--", ".",
-        ],
-    ) {
+    let tracked = [
+        &DIFF_INDEX_NUMSTAT[..],
+        &["--relative", "--no-renames", "--ignore-submodules=all", "HEAD", "--", "."],
+    ]
+    .concat();
+    if let Ok(o) = git_output(root, &tracked) {
         for line in o.lines() {
             if out.len() >= CHANGED_MAX {
                 return out;
@@ -172,20 +180,12 @@ pub fn changed_files(root: &Path) -> Vec<(String, usize, usize)> {
     out
 }
 
-/// core.quotepath=false で git を実行し、成功時のみ stdout を返す。マルチバイトの
-/// ファイル名を `\346\227\245` 形式にされると root 相対パスとして使えないため。
+/// git を実行し、成功時のみ stdout を返す。`core.quotepath=false` は `git.rs` が常に渡す
+/// （マルチバイトのファイル名を `\346\227\245` 形式にされると root 相対パスとして使えないため）。
 fn git_output(dir: &Path, args: &[&str]) -> Result<String, ()> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "core.quotepath=false"])
-        .args(args)
-        .output()
-        .map_err(|_| ())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(())
+    match git::run(dir, args) {
+        Ok(o) if o.success => Ok(o.stdout_str()),
+        _ => Err(()),
     }
 }
 
@@ -216,13 +216,9 @@ fn untracked_added_lines(path: &Path) -> usize {
 }
 
 fn is_tracked(dir: &Path, file_path: &Path) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["ls-files", "--error-unmatch", "--"])
-        .arg(file_path)
-        .output()
-        .map(|o| o.status.success())
+    let Some(path) = file_path.to_str() else { return false };
+    git::run(dir, &["ls-files", "--error-unmatch", "--", path])
+        .map(|o| o.success)
         .unwrap_or(false)
 }
 
@@ -472,6 +468,7 @@ fn row(cls: &str, old_ln: &str, new_ln: &str, sign: char, code_html: &str) -> St
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")

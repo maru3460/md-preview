@@ -107,16 +107,17 @@ fn files_over_the_limit_are_refused_without_reading_them() {
     assert!(body.contains("大きすぎる"), "差分に専用の文言が出ていない: {body}");
 }
 
-/// 素の読み込み（`std::fs::read` など）を、テストのモジュールを除く `src/` から探し、
-/// 例外の印の無いものを数える。
+/// 素の読み込み（`std::fs::read` など）と git の起動を、テストのモジュールを除く `src/` から
+/// 探し、例外の印の無いものを数える。
 ///
 /// - 読み込みの例外の印は、すぐ上の行の `// fsread を通さない: <理由>`。いまは設定ディレクトリなど、
 ///   アプリ自身の持ち物を読む箇所にだけ付いている
+/// - git の起動は `git.rs` の中だけ
 /// - テストのモジュールは `#[cfg(..test..)]` の次の行が `mod ` で始まるところから先。ファイルの途中の
 ///   `#[cfg(test)]` 付きの関数（`theme.rs` など）では止めない
 /// - `fs::{` は、`use std::fs::{read, …}` の後の素の `read(` を見落とさないため、import ごと拾う
 #[test]
-fn raw_reads_stay_in_fsread() {
+fn raw_reads_and_git_spawns_stay_in_their_modules() {
     const MARK: &str = "// fsread を通さない: ";
     const RAW_READS: &[&str] = &[
         "fs::read(", "fs::read_to_string(", "File::open(", "File::options(", "OpenOptions::new(",
@@ -134,6 +135,7 @@ fn raw_reads_stay_in_fsread() {
             if path.extension().is_none_or(|e| e != "rs") {
                 continue;
             }
+            let is_git_rs = path.file_name().is_some_and(|n| n == "git.rs");
             let text = std::fs::read_to_string(&path).unwrap();
             let lines: Vec<&str> = text.lines().collect();
             for (i, line) in lines.iter().enumerate() {
@@ -147,8 +149,11 @@ fn raw_reads_stay_in_fsread() {
                 if !marked && RAW_READS.iter().any(|p| line.contains(p)) {
                     offenders.push(format!("{}:{}: {}", path.display(), i + 1, t));
                 }
+                if !is_git_rs && line.contains(r#"Command::new("git")"#) {
+                    offenders.push(format!("{}:{}: {}", path.display(), i + 1, t));
+                }
             }
         }
     }
-    assert!(offenders.is_empty(), "印の無い素の読み込み:\n{}", offenders.join("\n"));
+    assert!(offenders.is_empty(), "印の無い素の読み込みか、git.rs の外の git の起動:\n{}", offenders.join("\n"));
 }
