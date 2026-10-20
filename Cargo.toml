@@ -18,6 +18,9 @@ wry = { version = "0.55", features = ["transparent"] }
 tao = "0.35"
 pulldown-cmark = "0.13"
 notify-debouncer-mini = "0.4"
+# fsread.rs が open の O_NONBLOCK / O_NOCTTY と fcntl を使う。
+# wry・tao・objc2 が既に引いている版なので、依存ツリーは増えない。
+libc = "0.2"
 
 [profile.dev]
 opt-level = 2

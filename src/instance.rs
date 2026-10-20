@@ -345,6 +345,7 @@ pub enum Claim {
 /// 受け側の座を取りに行く。**プロセスが生きている限りロックを手放さない**ので、
 /// 返ってきた [`Owner`] / [`Listening`] を drop してはいけない。
 pub fn claim(ep: &Endpoint) -> Claim {
+    // fsread を通さない: 単一インスタンスのロックファイル（自分で作る）
     let lock = match File::options().read(true).write(true).create(true).open(&ep.lock) {
         Ok(f) => f,
         Err(e) => return Claim::Failed(e),

@@ -116,6 +116,7 @@ fn user_css(name: &str) -> Option<String> {
         return None;
     }
     let dir = user_themes_dir()?;
+    // fsread を通さない: 設定ディレクトリのテーマ（name は valid_name を通っている）
     std::fs::read_to_string(dir.join(format!("{name}.css"))).ok()
 }
 

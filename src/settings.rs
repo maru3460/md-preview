@@ -149,6 +149,7 @@ fn load_at(dir: &Path) -> Settings {
 /// 旧ファイルの名前だけを持った、ディスクに触れていない設定。
 fn legacy_theme_only(dir: &Path) -> Settings {
     let mut settings = parse("");
+    // fsread を通さない: 設定ディレクトリ
     if let Ok(text) = std::fs::read_to_string(dir.join(LEGACY_THEME_FILE)) {
         let name = text.trim();
         if !name.is_empty() {
@@ -172,6 +173,7 @@ fn set_at(dir: &Path, key: &str, value: &str) -> io::Result<()> {
 /// 引数で受ける private 版が**同名の公開関数と衝突する**ものだけ（[`load`] / [`set`]）。
 /// 衝突しないものは `store::read` や `quick_access::save` と同じ無印に揃える。
 fn read_settings(dir: &Path) -> io::Result<Settings> {
+    // fsread を通さない: 設定ディレクトリ
     match std::fs::read_to_string(dir.join(FILE)) {
         Ok(text) => Ok(parse(&text)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(parse("")),
@@ -232,6 +234,7 @@ fn save(dir: &Path, settings: &Settings) -> io::Result<()> {
 /// 実際に nord が default に化けるのを再現した）。
 fn migrate_legacy_theme(dir: &Path, settings: &mut Settings) {
     let path = dir.join(LEGACY_THEME_FILE);
+    // fsread を通さない: 設定ディレクトリ
     let Ok(text) = std::fs::read_to_string(&path) else { return };
     let name = text.trim();
 

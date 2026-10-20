@@ -9,6 +9,7 @@ pub mod bundle;
 pub mod cli;
 pub mod diff;
 pub mod embed;
+pub mod fsread;
 pub mod html;
 pub mod instance;
 pub mod notifications;
@@ -34,6 +35,7 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
 /// base.css → テーマ → これ、の順に読み込まれる最後の層。
 pub fn user_style_css() -> String {
     config_dir()
+        // fsread を通さない: 設定ディレクトリの利用者の CSS
         .and_then(|d| std::fs::read_to_string(d.join("style.css")).ok())
         .unwrap_or_default()
 }

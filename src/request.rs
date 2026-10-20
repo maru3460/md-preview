@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
+use crate::fsread::{is_automount_path, read_regular, read_regular_string, too_large_message, ReadError, ASSET_MAX_BYTES, TEXT_MAX_BYTES};
 use crate::urlpath::{asset_url, display_id, DocBase, ABS_PREFIX};
 pub use crate::urlpath::{file_id, percent_decode};
 
@@ -509,18 +510,25 @@ pub fn render_file(path: &Path, root: &Path, mode: ViewMode) -> Option<RenderedF
         });
     }
 
-    let bytes = std::fs::read(path).ok()?;
-    let text = match String::from_utf8(bytes) {
-        Ok(text) => text,
-        // 非 UTF-8 は source-page 扱いに揃える。raw トグルの可否判定（JS 側は
+    let text = match read_regular_string(path, TEXT_MAX_BYTES) {
+        Ok(Some(text)) => text,
+        // 非 UTF-8 と大きすぎるものは source-page 扱いに揃える。raw トグルの可否判定（JS 側は
         // source-page の有無で見る）が経路によってブレないようにするため。
-        Err(_) => {
+        Ok(None) => {
             return Some(RenderedFile {
                 kind: ViewKind::Binary,
                 html: binary_notice(path),
                 body_class: "source-page",
             })
         }
+        Err(ReadError::TooLarge(size)) => {
+            return Some(RenderedFile {
+                kind: ViewKind::Binary,
+                html: notice_html(&too_large_message(path, size, TEXT_MAX_BYTES)),
+                body_class: "source-page",
+            })
+        }
+        Err(_) => return None,
     };
 
     Some(match kind {
@@ -666,7 +674,7 @@ fn handle_dir(id: &str, root_dir: &Path) -> Response {
 /// 画像は結局 root の外を引く）。信頼できない html を開かない、が前提。
 fn asset_path(url_path: &str, root_dir: &Path) -> Option<PathBuf> {
     match url_path.strip_prefix(ABS_PREFIX) {
-        Some(rest) => PathBuf::from(format!("/{}", rest)).canonicalize().ok(),
+        Some(rest) => resolve_abs(PathBuf::from(format!("/{}", rest))),
         None => safe_join(root_dir, url_path.strip_prefix('/').unwrap_or(url_path)),
     }
 }
@@ -687,12 +695,12 @@ fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &s
         // head 内 CSS が JS より先に適用されるようにする style-gate（`inject_style_gate`）。
         // 順序はどちらでもよい（差し込む文字列が互いのパターンを含まず、改行も足さない）。
         ViewKind::HtmlPage => {
-            let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
+            let Ok(bytes) = read_regular(&file_path, TEXT_MAX_BYTES) else { return not_found_response() };
             ok_response("text/html; charset=utf-8", inject_style_gate(inject_src_lines(bytes)))
         }
         // 画像・CSS・フォントなど。iframe 内の html から参照されるサブリソースを含む。
         _ => {
-            let Ok(bytes) = std::fs::read(&file_path) else { return not_found_response() };
+            let Ok(bytes) = read_regular(&file_path, ASSET_MAX_BYTES) else { return not_found_response() };
             ok_response(guess_mime(&file_path), bytes)
         }
     }
@@ -1113,7 +1121,16 @@ pub fn id_to_path(id: &str) -> Option<PathBuf> {
     if !id.starts_with('/') {
         return None;
     }
-    PathBuf::from(id).canonicalize().ok()
+    resolve_abs(PathBuf::from(id))
+}
+
+/// 絶対パスを実体へ解決する。自動マウントの下は、解決する前（canonicalize がマウントを
+/// 起こす）と後（シンボリックリンク越しに入った場合）の両方で断る。
+fn resolve_abs(path: PathBuf) -> Option<PathBuf> {
+    if is_automount_path(&path) {
+        return None;
+    }
+    path.canonicalize().ok().filter(|p| !is_automount_path(p))
 }
 
 /// 本文 HTML をプレビュー枠ごと差し替えるフラグメントにして返す。

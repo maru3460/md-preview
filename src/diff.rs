@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use crate::fsread::{read_regular_string, too_large_message, ReadError, TEXT_MAX_BYTES};
 use crate::html::html_escape;
 
 /// ファイルの `git diff HEAD`（最後のコミットからの変更）を、VSCode 風のインライン
@@ -12,11 +13,10 @@ use crate::html::html_escape;
 /// に対応する。変更が無ければハイライト無しでソースをそのまま出す（余計な通知は出さない）。
 /// 外部コマンド（git）実行のみで依存追加はしていない。
 pub fn render_diff_inner(file_path: &Path) -> String {
-    let new_src = match std::fs::read(file_path) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => return message_html("バイナリファイルは差分表示できません"),
-        },
+    let new_src = match read_regular_string(file_path, TEXT_MAX_BYTES) {
+        Ok(Some(s)) => s,
+        Ok(None) => return message_html("バイナリファイルは差分表示できません"),
+        Err(ReadError::TooLarge(size)) => return message_html(&too_large_message(file_path, size, TEXT_MAX_BYTES)),
         Err(_) => return message_html("ファイルを読み込めませんでした"),
     };
     let dir = file_path.parent().unwrap_or(Path::new("."));
@@ -227,9 +227,10 @@ fn is_tracked(dir: &Path, file_path: &Path) -> bool {
 }
 
 fn count_lines(file_path: &Path) -> usize {
-    std::fs::read_to_string(file_path)
-        .map(|s| s.lines().count())
-        .unwrap_or(0)
+    match read_regular_string(file_path, TEXT_MAX_BYTES) {
+        Ok(Some(s)) => s.lines().count(),
+        _ => 0,
+    }
 }
 
 /// 旧ソース・新ソースを行単位で diff し、インラインの行リスト HTML を組む。

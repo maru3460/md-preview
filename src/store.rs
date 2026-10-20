@@ -41,6 +41,7 @@ const SEP: char = '\t';
 /// Why not 壊れたファイルを検知して知らせる: 起動経路で呼ばれるので、ここで止まると
 /// 窓が出ない。**読めなければ空として起動する**方を選ぶ（issue #32 の決め）。
 pub fn read(dir: &Path, name: &str) -> Vec<Vec<String>> {
+    // fsread を通さない: 設定ディレクトリ
     let Ok(text) = std::fs::read_to_string(dir.join(name)) else { return Vec::new() };
     text.lines()
         .filter(|line| !line.is_empty())

@@ -140,6 +140,7 @@ fn visit_origins(dir: &Path, depth: usize, f: &mut impl FnMut(&[u8])) {
         if kind.is_dir() {
             visit_origins(&path, depth + 1, f);
         } else if kind.is_file() && path.file_name().map(|n| n == "origin").unwrap_or(false) {
+            // fsread を通さない: 自分のデータディレクトリの origin
             if let Ok(bytes) = std::fs::read(&path) {
                 f(&bytes);
             }

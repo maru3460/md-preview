@@ -299,6 +299,12 @@ fn resolve_file_args(args: &[String], dir_refusal: &str) -> Vec<PathBuf> {
             eprintln!("md: {}（'{}' はフォルダ）", dir_refusal, arg);
             std::process::exit(1);
         }
+        // `md /dev/stdin` や FIFO は窓が開いてから読めずに白紙になるので、ここで断る。
+        // パイプで渡したいなら `cmd | md` がある。
+        if !path.is_file() {
+            eprintln!("md: '{}' は通常のファイルではないので開けません（パイプは `… | md` で渡せます）", arg);
+            std::process::exit(1);
+        }
         // タブの識別子はパスなので、同じファイルを 2 回渡されても 1 枚にまとめる。
         if !paths.contains(&path) {
             paths.push(path);
@@ -367,6 +373,12 @@ fn common_ancestor(paths: &[PathBuf]) -> Option<PathBuf> {
 
 /// 引数のパスを絶対パスへ解決する。開けないパスはここで終わる。
 fn resolve_arg_path(arg: &str) -> PathBuf {
+    // 自動マウントの下は、canonicalize がマウントを起こす前に断る（fsread.rs と同じ線）。
+    let abs = std::env::current_dir().map(|d| d.join(arg)).unwrap_or_else(|_| PathBuf::from(arg));
+    if crate::fsread::is_automount_path(&abs) {
+        eprintln!("md: '{}' は自動マウントの下にあるので開けません", arg);
+        std::process::exit(1);
+    }
     Path::new(arg).canonicalize().unwrap_or_else(|e| {
         eprintln!("md: '{}' を開けませんでした: {}", arg, e);
         std::process::exit(1);
