@@ -105,6 +105,16 @@
 
   function renderItems(items, parentEl, depth) {
     items.forEach(function(item) {
+      // 1 つのフォルダに出す項目の上限で打ち切った印（request.rs の DIR_LIST_MAX）。行ではなく
+      // 注記なので `.tree-item` を着せない（j / k のカーソル・右クリック・巡回に乗らない）。
+      if (item.kind === 'more') {
+        var note = document.createElement('div');
+        note.className = 'tree-note';
+        note.style.paddingLeft = (8 + depth * 16) + 'px';
+        note.textContent = '項目が多いため ' + Number(item.limit).toLocaleString() + ' 件までを表示しています';
+        parentEl.appendChild(note);
+        return;
+      }
       var row = document.createElement('div');
       row.className = 'tree-item';
       row.style.paddingLeft = (8 + depth * 16) + 'px';
@@ -176,11 +186,11 @@
   }
 
   // パスと種別に一致するツリー行を、描画済みの中から探す。
-  // **`#sidebar` の中だけ**を見る。Quick Access の行も `.tree-item` を着ているので、
+  // **ツリー本体（`#sidebar`）の中だけ**を見る。Quick Access の行も `.tree-item` を着ているので、
   // 絞らないと `revealFile` が「まだ展開していない祖先」の代わりに枠の行を掴み、
   // `_expand` を持たないそれを見て「祖先が無い」と諦める。
   function findRow(path, kind) {
-    var rows = document.querySelectorAll('#sidebar .tree-item');
+    var rows = rowsIn(treeEl(), '.tree-item');
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].dataset.path === path &&
           (!kind || rows[i].dataset.kind === kind)) {
@@ -195,9 +205,7 @@
     // 非同期な reveal の完走中に別ファイルへ切り替わっていたら、現在の
     // ハイライトを壊さないよう何もしない。
     if (id !== currentFilePath) return;
-    document.querySelectorAll('.tree-item.active').forEach(function(el) {
-      el.classList.remove('active');
-    });
+    clearActiveRows();
     var row = findRow(id, 'file');
     if (row) {
       row.classList.add('active');
@@ -364,9 +372,7 @@
       pane.innerHTML = '';
       pane.appendChild(article);
     }
-    document.querySelectorAll('.tree-item.active').forEach(function(el) {
-      el.classList.remove('active');
-    });
+    clearActiveRows();
     if (window.MdMenu) window.MdMenu.setCurrentFile(null);
     if (window.MdSearch) window.MdSearch.reset();
     // raw / diff は現在のファイルに対する表示なので、対象が無くなったら畳む。
@@ -396,9 +402,7 @@
     // 進行中の本文フェッチを無効にする。設定タブへ移った直後に前のファイルの
     // 応答が届いて、設定画面を本文で上書きしないように。
     reqSeq++;
-    document.querySelectorAll('.tree-item.active').forEach(function(el) {
-      el.classList.remove('active');
-    });
+    clearActiveRows();
     if (window.MdMenu) window.MdMenu.setCurrentFile(null);
     if (window.MdSearch) window.MdSearch.reset();
     if (window.MdViewModes) window.MdViewModes.restore(null);
@@ -604,7 +608,7 @@
   // **Quick Access の行も含む**。j / k はツリーの末尾から枠へそのまま降りていく。
   function visibleRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('.tree-item'),
+      rowsIn(sidebarColEl(), '.tree-item'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -612,7 +616,7 @@
   // 枠の端ではない。
   function visibleTreeRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('#sidebar .tree-item'),
+      rowsIn(treeEl(), '.tree-item'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -621,7 +625,7 @@
   // Quick Access の行は木の一部ではない。
   function visibleFileRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('#sidebar .tree-item.md-file'),
+      rowsIn(treeEl(), '.tree-item.md-file'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -647,7 +651,7 @@
   }
 
   function focusTree() {
-    var sb = document.getElementById('sidebar');
+    var sb = treeEl();
     // 畳んでいる間は見えない行にカーソルを送らない（呼ぶ側が先に開くこと）。
     if (!sb || !sidebarOpen) return;
     sb.focus({ preventScroll: true });
@@ -656,7 +660,7 @@
     if (!cursorRow || cursorRow.offsetParent === null) {
       // 木の中の帯だけを見る。root の外のファイルを留めていると、帯が付くのは
       // Quick Access の行だけになり、Tab がカーソルを枠の底へ置いてしまう。
-      var active = document.querySelector('#sidebar .tree-item.active');
+      var active = rowsIn(treeEl(), '.tree-item.active')[0] || null;
       var rows = visibleRows();
       setCursor((active && active.offsetParent !== null) ? active : (rows[0] || null));
     } else {
@@ -769,7 +773,7 @@
   function gotoAdjacentFile(delta) {
     var files = visibleFileRows();
     if (!files.length) return;
-    var cur = document.querySelector('#sidebar .tree-item.active');
+    var cur = rowsIn(treeEl(), '.tree-item.active')[0] || null;
     var i = (cur && cur.offsetParent !== null) ? files.indexOf(cur) : -1;
     var ni;
     if (i === -1) {
@@ -874,7 +878,7 @@
   // 借りないのはフォルダの `›` だけ（開閉の合図なので、開かない行に着けると嘘になる）。
   var quick = (window.MD_QUICK_ACCESS || []).slice();
 
-  function quickListEl() { return document.getElementById('quick-access-list'); }
+  function quickListEl() { return regionsNow().quickList; }
 
   function quickIndex(path) {
     for (var i = 0; i < quick.length; i++) {
@@ -1022,7 +1026,25 @@
     toggle: quickToggle
   };
 
-  function treeEl() { return document.getElementById('sidebar'); }
+  // ツリー本体・サイドバーの列は、MdCommon が本文の入る前に取った参照（MdCommon.regions）で引く。
+  // 本文は同じ document にあるので、`#sidebar` や `.tree-item` を素で探すと、本文に
+  // `<div id="sidebar">` や `<div class="tree-item" data-path="…">` を書かれただけで、j / k の
+  // カーソルがそこへ乗り、Enter で任意のパスを開き、`x` で Quick Access に足せてしまう。
+  function regionsNow() {
+    return (window.MdCommon && MdCommon.regions) ? MdCommon.regions() : {};
+  }
+  function treeEl() { return regionsNow().tree || null; }
+  function sidebarColEl() { return regionsNow().sidebarCol || null; }
+  // root の中の selector に当たる要素。root が無ければ空。
+  function rowsIn(root, selector) {
+    return root ? root.querySelectorAll(selector) : [];
+  }
+  // ツリーと Quick Access の帯（.active）を外す。
+  function clearActiveRows() {
+    Array.prototype.forEach.call(rowsIn(sidebarColEl(), '.tree-item.active'), function(el) {
+      el.classList.remove('active');
+    });
+  }
 
   // 最初のツリーも root の識別子で聞く。`?dir=` に載るのは常に識別子、という契約を
   // 1 本にするため（空文字を「root の意味」にすると経路が 2 つになる）。
@@ -1081,7 +1103,7 @@
   // いま開いているフォルダの識別子。文書順＝浅い順で並ぶ。
   function openDirPaths() {
     return Array.prototype.map.call(
-      document.querySelectorAll('.tree-item.dir-open'),
+      rowsIn(treeEl(), '.tree-item.dir-open'),
       function(r) { return r.dataset.path; }
     );
   }

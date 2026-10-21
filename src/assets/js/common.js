@@ -929,9 +929,7 @@
   // scope 内の .html-frame を配線する。onload ごとに再バインドし、iframe 内遷移後も
   // ショートカット転送を効かせ続ける。要素単位でメモ化して二重登録を防ぐ。
   function wireHtmlFrames(scope, opts) {
-    var root = scope || document;
-    var frames = root.querySelectorAll('iframe.html-frame');
-    frames.forEach(function(frame) {
+    appHtmlFrames(scope).forEach(function(frame) {
       if (frame.__mdWired) return;
       frame.__mdWired = true;
       frame.addEventListener('load', function() { bindFrame(frame, opts); });
@@ -958,16 +956,29 @@
   // サイドバーの列・タブ帯・本文・仕切り。md の本文はアプリの UI と同じ document にあるので、
   // `#preview-pane` や `.tree-item` を素で探すと、本文に同じ id・クラスの要素を書かれただけで
   // そちらを拾う。参照は本文が入る前（DOMContentLoaded）に 1 回だけ取り、以後は id で
-  // 引き直さない。右クリックの対象探し（contextmenu.js）と文書の部品（parts.js）が使う。
+  // 引き直さない。右クリックの対象探し（contextmenu.js）・文書の部品（parts.js）・ツリーの
+  // キー操作（folder.js）・`.html` のプレビューの iframe の見分け（appHtmlFrames）が使う。
+  // tree はツリー本体（#sidebar）、quickList は Quick Access の一覧。どちらも sidebarCol の中。
   // 1 枚ページ（folder-mode でない）にはどれも無いので、取らずに null のままにする
   // （取りにいくと本文の同名の要素を拾う）。
-  var regions = { sidebarCol: null, tabbar: null, pane: null, resizer: null };
+  //
+  // ここ以外（folder.js・tabs.js・notify.js など）が後から id で引いているシェルの要素
+  // （`#preview-pane`・`#tabbar-tabs`・`#tabbar-icons`・`#origin-band`・`#root-*`）は、
+  // html.rs のシェルで本文ペインより前に置かれている。getElementById は文書順で最初の
+  // 要素を返すので、本文に同じ id を書かれてもシェルの方が勝つ。本文より後ろに足す要素
+  // （cornerStack の `#md-corner` など）はこの前提に乗れないので、作った参照を持っておく。
+  var regions = { sidebarCol: null, tabbar: null, pane: null, resizer: null, tree: null, quickList: null };
+  var regionsTaken = false;
   function captureRegions() {
+    if (regionsTaken) return;
     if (!document.body || !document.body.classList.contains('folder-mode')) return;
+    regionsTaken = true;
     regions.sidebarCol = document.getElementById('sidebar-col');
     regions.tabbar = document.getElementById('tabbar');
     regions.pane = document.getElementById('preview-pane');
     regions.resizer = document.getElementById('resizer');
+    regions.tree = document.getElementById('sidebar');
+    regions.quickList = document.getElementById('quick-access-list');
   }
   // md の `<style>` で position:fixed の透明な要素を置き、サイドバーやタブまで覆って
   // どこを押しても文書のリンクのクリックにする、を防ぐ。paint の封じ込めは固定配置の
@@ -990,8 +1001,40 @@
     setupRegions();
   }
   // 呼ぶ側が持ち替えても、ここの参照は変わらないよう写しを返す。
+  //
+  // まだ取っていなければここで取る。folder.js の初期化は起動スクリプト（common.js より先に
+  // 評価される）の DOMContentLoaded で走り、上の登録より先に呼ぶ。そこはまだ本文を入れる前
+  // （本文は初期化の後の fetch で入る）なので、取ってよい。
   function getRegions() {
-    return { sidebarCol: regions.sidebarCol, tabbar: regions.tabbar, pane: regions.pane, resizer: regions.resizer };
+    if (!regionsTaken && document.readyState !== 'loading') setupRegions();
+    return {
+      sidebarCol: regions.sidebarCol, tabbar: regions.tabbar, pane: regions.pane,
+      resizer: regions.resizer, tree: regions.tree, quickList: regions.quickList
+    };
+  }
+
+  // サーバが作った `.html` のプレビューの iframe か。`?file=` の応答は、`.html` のときだけ
+  // 本文ペインの直下に `.markdown-body.html-page` を置き、その中に iframe を 1 枚だけ入れる
+  // （request.rs の render_html_iframe と respond_fragment）。md の本文も同じ包み
+  // （`.markdown-body`）の中に入る。本文に余った `</div>` で包みを閉じて兄弟を作られても、
+  // MdDocGuard.fill がペインの直下を包み 1 つに畳むので、本文の要素はペインの最初の子には
+  // なれない。ここでも見るのはペインの最初の子の直下の iframe だけにする。
+  // Why not `iframe.html-frame` で探す: 本文に同じクラスの iframe を書かれると、そこへ
+  // ショートカットの転送や読み位置の預け先を配線してしまう。
+  // Why not 「ペインの直下の子」で足りるとする: fill を通らずに本文がペインへ入る経路が
+  // 増えたとき、2 つ目以降の子に作られた偽物まで通してしまう。
+  function isAppHtmlFrame(f) {
+    var page = f && f.parentElement;
+    var pane = regions.pane;
+    return !!(page && pane && page.parentElement === pane && pane.firstElementChild === page &&
+      page.classList.contains('html-page') && page.classList.contains('markdown-body') &&
+      f.tagName === 'IFRAME' && f.classList.contains('html-frame'));
+  }
+  // scope の中の、サーバが作った `.html` のプレビューの iframe（0 枚か 1 枚）。
+  function appHtmlFrames(scope) {
+    var root = scope || document;
+    if (!root.querySelectorAll) return [];
+    return Array.prototype.filter.call(root.querySelectorAll('iframe.html-frame'), isAppHtmlFrame);
   }
 
   // スクロール主体。シェルは #preview-pane、1 枚もの（md の直開き）は document。
@@ -1009,7 +1052,7 @@
 
   // いま出ている html の iframe。html 表示でなければ null。
   function htmlFrame() {
-    return document.querySelector('#preview-pane iframe.html-frame');
+    return appHtmlFrames(regions.pane)[0] || null;
   }
 
   // iframe の中のスクロール要素。本物の文書がまだ来ていない（挿入直後の
@@ -1309,8 +1352,9 @@
   }
 
   // ファイルツリー（サイドバー）にフォーカスがあるか。ツリー操作の起点判定。
+  // 本文に `id="sidebar"` を書かれても拾わないよう、起動時に取ったツリーの参照で見る。
   function isSidebarFocused() {
-    var s = document.getElementById('sidebar');
+    var s = regions.tree;
     return !!(s && s.contains(document.activeElement));
   }
 
@@ -1468,7 +1512,7 @@
     if (doc) return pick(doc);
     var own = pick(document);
     if (own) return own;
-    var frames = document.querySelectorAll('iframe.html-frame');
+    var frames = appHtmlFrames(regions.pane);
     for (var i = 0; i < frames.length; i++) {
       var fd;
       try { fd = frames[i].contentDocument; } catch (e) { continue; } // 外部遷移で cross-origin
@@ -1544,6 +1588,121 @@
     return false;
   }
 
+  // 選択の中の要素のうち、画面に文字が出ていないもの（寸法 0・切り抜く箱の外）。
+  // 本文の CSS で `font-size:0` や `position:absolute; left:-9999px` にした文字は、目では
+  // 選んでいないのに選択の文字列には入る。AI が書いた md に見えない指示を仕込まれると、
+  // 選択即コピーでそれがチャットへ貼られる。
+  //
+  // 返すのは、range.cloneContents() が作る複製の要素と同じ順（文書順）に並べた真偽値。
+  // 複製は「範囲に掛かる要素」を文書順に 1 つずつ写すので、元の要素を同じ順に集めれば
+  // 添字で対応が取れる（数が合わないときは呼ぶ側が使わない）。
+  //
+  // 見ないもの: 透明・文字色・clip-path・小さな overflow の箱で一部だけ隠したもの。どれも
+  // 見た目の判定で、取り違えると読めている文字をコピーから落とす。文書の部品（parts.js）の
+  // コピーは隠した文字を除こうとせず、写した中身を見せる形にしている。
+  function hiddenFlags(body, range) {
+    var anc = elOf(range.commonAncestorContainer);
+    if (!anc) return [];
+    var ctx = newHiddenCtx();
+    var out = [];
+    var broken = false;
+    // 範囲に掛からない要素は、その子孫も掛からないので枝ごと飛ばす（選択が 2 段落にまたがる
+    // だけで共通祖先が本文全体になるので、全部を歩くと重い）。
+    var walker = document.createTreeWalker(anc, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: function(n) {
+        try { return range.intersectsNode(n) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; }
+        catch (e) { broken = true; return NodeFilter.FILTER_REJECT; }
+      }
+    });
+    // 共通祖先そのものは複製に入らない（中身だけが写る）ので、子孫から数える。共通祖先と
+    // その上は hiddenAncestor が別に見る。
+    for (var el = walker.nextNode(); el; el = walker.nextNode()) out.push(isHiddenText(el, ctx));
+    return broken ? [] : out;
+  }
+
+  // 1 回の判定の中で使い回す、要素ごとの「切り抜く箱」の覚え。
+  function newHiddenCtx() {
+    return { clip: new Map() };
+  }
+
+  // el の文字を描ける範囲（ビューポート座標）。いちばん近い、中身を切り抜く祖先の箱で測る。
+  // スクロールする向きはスクロールで届く全長（横に長い表・コードの行の、スクロールで
+  // 隠れている側は読める）、`overflow:hidden` / `contain:paint` の向きは箱そのもの。
+  // 切り抜く祖先が無ければ文書全体（スクロールで届く範囲）。
+  // Why not 本文（.markdown-body）の箱で測る: `overflow:auto` の表やコードブロックの中で
+  // 横へはみ出した文字が本文の箱の外になり、読めるのにコピーから落ちる。
+  // Why not 切り抜く祖先をすべて重ねる: 絶対配置の要素は包含ブロックでない祖先の
+  // overflow をすり抜けるので、祖先を増やすほど見えている文字を落とす側へ倒れる。近い 1 つで
+  // 止め、その取りこぼし（すり抜けた先がさらに外の箱で切られているもの）は諦める。
+  function clipBox(ctx, el) {
+    if (!el || el === document.documentElement) {
+      var se = document.scrollingElement || document.documentElement;
+      var x0 = -(window.scrollX || 0), y0 = -(window.scrollY || 0);
+      return { left: x0, top: y0, right: x0 + se.scrollWidth, bottom: y0 + se.scrollHeight };
+    }
+    if (ctx.clip.has(el)) return ctx.clip.get(el);
+    var cs = getComputedStyle(el);
+    var paint = /\b(paint|strict|content)\b/.test(cs.contain || '');
+    var box;
+    if (cs.overflowX === 'visible' && cs.overflowY === 'visible' && !paint) {
+      box = clipBox(ctx, el.parentElement);
+    } else {
+      var r = el.getBoundingClientRect();
+      var scrollsX = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
+      var scrollsY = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
+      var sx = r.left + el.clientLeft - el.scrollLeft, sy = r.top + el.clientTop - el.scrollTop;
+      box = {
+        left: scrollsX ? sx : r.left,
+        right: scrollsX ? sx + el.scrollWidth : r.right,
+        top: scrollsY ? sy : r.top,
+        bottom: scrollsY ? sy + el.scrollHeight : r.bottom
+      };
+    }
+    ctx.clip.set(el, box);
+    return box;
+  }
+
+  function isHiddenText(el, ctx) {
+    var tag = el.tagName;
+    if (tag === 'BR' || tag === 'WBR') return false;
+    // 寸法を先に見る（レイアウトは 1 回で済み、ほとんどの要素はここで抜ける）。
+    var r = el.getBoundingClientRect();
+    var noWidth = r.width < 1, noHeight = r.height < 1;
+    // 切り抜く箱（clipBox）と重ならない。本文ペインは contain:paint なので、どの祖先も
+    // 切り抜かなくても、ペインの外へ追い出した文字は描かれない。
+    var c = clipBox(ctx, el.parentElement);
+    var outside = r.right <= c.left || r.left >= c.right || r.bottom <= c.top || r.top >= c.bottom;
+    if (!noWidth && !noHeight && !outside) return false;
+    if (!/\S/.test(el.textContent || '')) return false;
+    var cs = getComputedStyle(el);
+    // display:contents は箱を作らない（寸法 0 だが、子は見えている）。display:none は
+    // 選択の文字列にも innerText にも入らないので、ここで外さなくてよい。
+    if (cs.display === 'contents' || cs.display === 'none') return false;
+    if (noWidth && noHeight) return true;
+    // 片方だけ 0 の箱は、はみ出しが見えていれば中身が出ている（`height:0` に文字を入れた段落）。
+    var clips = cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
+    if ((noWidth || noHeight) && clips) return true;
+    return outside;
+  }
+
+  // 選択の共通祖先か、その上（本文まで）が画面に出ていないか。そうなら選択の中身はすべて
+  // 見えていない（`font-size:0` の span の中だけを選んだとき、共通祖先はその span になり、
+  // hiddenFlags の数える子孫には入らない）。
+  function hiddenAncestor(body, el) {
+    var ctx = newHiddenCtx();
+    for (; el && el !== body; el = el.parentElement) {
+      if (el.nodeType === 1 && isHiddenText(el, ctx)) return true;
+    }
+    return false;
+  }
+
+  // 選択の中に、画面に出ていない文字があるか（選択即コピーが写しを作るかの判断に使う）。
+  function hasHiddenText(body, range) {
+    var flags = hiddenFlags(body, range);
+    for (var i = 0; i < flags.length; i++) if (flags[i]) return true;
+    return false;
+  }
+
   function mirrorMarkdown(body, range) {
     var box = document.createElement('div');
     // 本文と同じ CSS（pre の white-space、リスト・表の箱）を継承させるため
@@ -1551,7 +1710,16 @@
     box.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + body.clientWidth + 'px;';
     box.setAttribute('aria-hidden', 'true');
     try {
+      var hidden = hiddenFlags(body, range);
       box.appendChild(range.cloneContents());
+      // 画面に文字が出ていない要素（hiddenFlags）。元と複製の数が合わなければ対応が
+      // 取れないので、外さずに進める（多く写す方へ倒す。外し違えると読めている文字が消える）。
+      var copies = box.querySelectorAll('*');
+      if (copies.length === hidden.length) {
+        for (var h = 0; h < copies.length; h++) {
+          if (hidden[h] && copies[h].parentNode) copies[h].parentNode.removeChild(copies[h]);
+        }
+      }
       // 本文ではないもの。Copy ボタンは user-select:none を持たないので、素のコピーだと
       // コードブロックの末尾に "Copy" の 4 文字が混ざる。
       box.querySelectorAll(NOT_BODY_TEXT).forEach(function(n) { n.remove(); });
@@ -1606,6 +1774,8 @@
     var body = host.closest('.markdown-body');
     // raw / diff 表示（.source-view）は既に原文そのもの。フェンスを足すと二重になる。
     if (!body || host.closest('.source-view')) return plain;
+    // 見えない箱の中だけを選んでいた。
+    if (hiddenAncestor(body, host)) return '';
 
     // 選択が 1 つの code の内側に収まっているとき。複製すると code 要素ごと範囲の外へ
     // 落ちて（部分選択の共通祖先はテキストノード）言語も分からなくなるので、素の
@@ -1615,10 +1785,15 @@
       return code.closest('pre') ? fencedCode(plain, fenceInfo(code)) : inlineCode(plain);
     }
 
-    // コードが混ざらない選択（＝普通の文章）は写しを作らずに返す。ここが大半の道で、
-    // 挙動もコストも従来と変わらない。
-    if (!hasCode(body, range) || plain.length > MIRROR_MAX) return plain;
-    return mirrorMarkdown(body, range) || plain;
+    // コードも見えない文字も混ざらない選択（＝普通の文章）は写しを作らずに返す。ここが大半の
+    // 道で、写しを作らないぶん軽い。見えない文字が混ざるときは、写しの側で外す。
+    if (plain.length > MIRROR_MAX) return plain;
+    var hidden = hasHiddenText(body, range);
+    if (!hasCode(body, range) && !hidden) return plain;
+    // 写しが空になるのは、見えている文字が無かったときと写しの組み立てに失敗したとき。
+    // 見えない文字が混ざっていたなら、どちらでも空を返す（素の文字列へ戻すと、外した文字が
+    // 戻ってくる）。呼ぶ側は空を「写すものが無い」として扱い、素の文字列で埋めない。
+    return mirrorMarkdown(body, range) || (hidden ? '' : plain);
   }
 
   // 短いフィードバックの浮遊トースト（操作の結果をボタン無しで返す）。
@@ -1648,14 +1823,17 @@
   // 右下フロートの共有スタック。diff / raw トグルとコメントパネル/ピルを 1 つの
   // flex コンテナに入れ、どれが在っても下から詰めて並ぶ（片方だけの時に隙間が出ない）。
   // 並び順は各要素の CSS `order` で決める（DOM 追加順に依存しない）。
+  //
+  // 作った要素を持っておき、id では引き直さない。スタックは body の末尾（本文ペインより後ろ）に
+  // 足すので、本文に `id="md-corner"` を書かれると getElementById は文書順で先に来るそちらを返す。
+  var cornerEl = null;
   function cornerStack() {
-    var el = document.getElementById('md-corner');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'md-corner';
-      document.body.appendChild(el);
+    if (!cornerEl) {
+      cornerEl = document.createElement('div');
+      cornerEl.id = 'md-corner';
+      document.body.appendChild(cornerEl);
     }
-    return el;
+    return cornerEl;
   }
 
   // 本文スクロールの素キー（vim/less 流）を、渡された scroller 1 つに適用する。
@@ -1715,6 +1893,8 @@
     runMermaid: runMermaid,
     runDrawio: runDrawio,
     wireHtmlFrames: wireHtmlFrames,
+    htmlFrame: htmlFrame,
+    appHtmlFrames: appHtmlFrames,
     getScroller: getScroller,
     regions: getRegions,
     readScroll: readScroll,

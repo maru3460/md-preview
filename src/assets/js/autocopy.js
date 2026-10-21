@@ -136,7 +136,11 @@
     // クリップボードへはマークダウンのソース寄りの形で入れる（`コード` のバッククォート・
     // コードブロックのフェンス）。見えている文字のままだと、貼った先でコードが地の文に
     // 化ける。本文以外（raw 表示・html フレーム）では plain がそのまま返る。
-    var text = MdCommon.selectionMarkdown(doc) || plain;
+    // 空が返るのは、画面に出ていない文字だけを選んでいたとき（common.js の
+    // selectionMarkdown）。何も入れず、合図も出さない。
+    // Why not `|| plain` で埋める: 埋めると、外したはずの見えない文字がそのまま入る。
+    var text = MdCommon.selectionMarkdown(doc);
+    if (!text) return;
 
     var x = e.clientX, y = e.clientY;
     if (frame) {

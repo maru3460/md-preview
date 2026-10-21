@@ -1051,6 +1051,12 @@ pub fn root_failed_script(id: &str) -> String {
     format!("window.MdRootFailed && window.MdRootFailed({});", json_string(id))
 }
 
+/// ページにトーストを出すスクリプト。アプリの操作の結果を知らせる（「デフォルトアプリで開く」を
+/// 断って Finder で表示したときの理由など）。
+pub fn toast_script(msg: &str) -> String {
+    format!("window.MdCommon && MdCommon.toast && MdCommon.toast({});", json_string(msg))
+}
+
 /// 設定タブ（#38）に映す状態。持ち主は Rust 側の `settings` で、ページは写しを
 /// 受けて描くだけ（ベルの一覧と同じ形）。
 pub struct SettingsView<'a> {
@@ -1695,6 +1701,13 @@ mod tests {
     fn root_failed_script_escapes_the_identifier() {
         let s = root_failed_script(r#"/tmp/a"b\c"#);
         assert_eq!(s, "window.MdRootFailed && window.MdRootFailed(\"/tmp/a\\\"b\\\\c\");");
+    }
+
+    #[test]
+    fn toast_script_passes_the_message_as_a_js_string() {
+        let s = toast_script("a\"</script>");
+        assert!(s.starts_with("window.MdCommon && MdCommon.toast && MdCommon.toast(\""), "{s}");
+        assert!(!s.contains("</script>"), "{s}");
     }
 
     #[test]

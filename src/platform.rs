@@ -27,10 +27,177 @@ pub fn reveal_in_finder(path: &Path) {
     std::process::Command::new("open").arg("-R").arg(path).spawn().ok();
 }
 
-/// 既定アプリでファイルを開く。実行系拡張子の弾きは呼び出し側で行う。
+/// 「デフォルトアプリで開く」の判定（`md_preview::open_with::decide`）に渡す事実。
+#[derive(Debug, Default)]
+pub struct OpenFacts {
+    pub kind: Option<md_preview::open_with::FileKind>,
+    pub executable: bool,
+    /// 中身の型（UTI）と、その型が準拠する型の全部。
+    pub content_types: Vec<String>,
+    /// 通常ファイルの先頭がテキストに見えるか（`md_preview::open_with::looks_like_text`）。
+    pub looks_text: bool,
+    pub handler: Option<HandlerInfo>,
+}
+
+/// 担当アプリ（LaunchServices が既定で開くアプリ）。
+#[derive(Debug)]
+pub struct HandlerInfo {
+    /// アプリのバンドルの URL。開くときはこれを指定する（判定した後で担当が変わっても、
+    /// 判定したアプリでしか開かない）。
+    #[cfg(target_os = "macos")]
+    pub app: objc2::rc::Retained<objc2_foundation::NSURL>,
+    pub bundle_id: Option<String>,
+    pub name: String,
+    pub opens_executables: bool,
+}
+
+/// `path`（canonicalize 済み）の事実を LaunchServices から集める。
+///
+/// 型は `NSURLContentTypeKey` の UTType から、その型と準拠する型（`supertypes`）の識別子を読む。
+/// UTType は objc2 の型を持たない（objc2-uniform-type-identifiers を足すと依存が増える）ので、
+/// クラスを名前で引いて公開のメソッドを `msg_send!` で呼ぶ。
+///
+/// 読めなかったものは閉じる側に倒す: 種類が分からなければ None（判定は開かない）、
+/// 実行ファイルを開けるアプリの一覧が引けなければ担当アプリを「開ける」とみなす。
 #[cfg(target_os = "macos")]
-pub fn open_default(path: &Path) {
-    std::process::Command::new("open").arg(path).spawn().ok();
+pub fn open_facts(path: &Path) -> OpenFacts {
+    use md_preview::open_with::FileKind;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::msg_send;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{
+        NSArray, NSBundle, NSNumber, NSString, NSURL, NSURLContentTypeKey, NSURLIsAliasFileKey,
+        NSURLIsPackageKey, NSURLResourceKey,
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut facts = OpenFacts::default();
+    let Ok(meta) = std::fs::metadata(path) else { return facts };
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+
+    // SAFETY: 値は AnyObject で受け取り、使う前に型を確かめる（真偽値の鍵は NSNumber へ
+    // downcast、型の鍵は UTType のクラスかを isKindOfClass: で見てからメソッドを呼ぶ）。
+    let resource = |key: &NSURLResourceKey| -> Option<Retained<AnyObject>> {
+        let mut value: Option<Retained<AnyObject>> = None;
+        unsafe { url.getResourceValue_forKey_error(&mut value, key) }.ok()?;
+        value
+    };
+    let flag = |key: &NSURLResourceKey| -> bool {
+        resource(key)
+            .and_then(|v| v.downcast::<NSNumber>().ok())
+            .is_some_and(|n| n.boolValue())
+    };
+
+    // SAFETY: どれも Foundation が定義する定数。
+    let (alias_key, package_key, type_key) = unsafe { (NSURLIsAliasFileKey, NSURLIsPackageKey, NSURLContentTypeKey) };
+    // エイリアスの鍵はシンボリックリンクでも真になるが、呼ぶ側が canonicalize で解いてある。
+    facts.kind = Some(if flag(alias_key) {
+        FileKind::Alias
+    } else if meta.is_dir() {
+        if flag(package_key) { FileKind::Package } else { FileKind::Folder }
+    } else if meta.is_file() {
+        FileKind::Regular
+    } else {
+        FileKind::Other
+    });
+    facts.executable = meta.permissions().mode() & 0o111 != 0;
+    if meta.is_file() {
+        facts.looks_text = read_head(path, md_preview::open_with::TEXT_SNIFF_BYTES)
+            .is_some_and(|head| md_preview::open_with::looks_like_text(&head));
+    }
+
+    let ut_class = AnyClass::get(c"UTType");
+    // SAFETY: isKindOfClass: は NSObject のメソッドで、どのオブジェクトにも送れる。
+    let is_ut = |o: &AnyObject| -> bool { ut_class.is_some_and(|c| unsafe { msg_send![o, isKindOfClass: c] }) };
+    if let Some(ut) = resource(type_key).filter(|u| is_ut(u)) {
+        // SAFETY: ut は UTType（上で確かめた）。-[UTType identifier] は NSString を返す。
+        let id: Option<Retained<NSString>> = unsafe { msg_send![&*ut, identifier] };
+        if let Some(id) = id {
+            facts.content_types.push(id.to_string());
+        }
+        // SAFETY: -[UTType supertypes] は NSSet<UTType *> を返す。allObjects で配列にして読み、
+        // 要素も UTType かを確かめてから identifier を呼ぶ。
+        let supers: Option<Retained<AnyObject>> = unsafe { msg_send![&*ut, supertypes] };
+        if let Some(supers) = supers {
+            let all: Retained<NSArray<AnyObject>> = unsafe { msg_send![&*supers, allObjects] };
+            for t in all.iter().filter(|t| is_ut(t)) {
+                let id: Option<Retained<NSString>> = unsafe { msg_send![&*t, identifier] };
+                if let Some(id) = id {
+                    facts.content_types.push(id.to_string());
+                }
+            }
+        }
+    }
+
+    let ws = NSWorkspace::sharedWorkspace();
+    let Some(app) = ws.URLForApplicationToOpenURL(&url) else { return facts };
+    let bundle_id = NSBundle::bundleWithURL(&app)
+        .and_then(|b| b.bundleIdentifier())
+        .map(|s| s.to_string());
+    let name = app
+        .URLByDeletingPathExtension()
+        .and_then(|u| u.lastPathComponent())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    // 実行ファイル（public.unix-executable）を開けると名乗るアプリの一覧に、担当アプリが居るか。
+    // 比べるのはバンドルの標準化したパスと、バンドル ID。パスは同じアプリでも書き方が違う
+    // ことがあり（`/Applications` と `/System/Volumes/Data/Applications`、末尾の `/`）、
+    // バンドル ID は同じアプリの別の置き場所（コピーや版違い）を同じものとして拾える。
+    let opens_executables = (|| -> Option<bool> {
+        let cls = ut_class?;
+        let exe: Option<Retained<AnyObject>> =
+            unsafe { msg_send![cls, typeWithIdentifier: &*NSString::from_str("public.unix-executable")] };
+        let exe = exe?;
+        // -[NSWorkspace URLsForApplicationsToOpenContentType:] は macOS 12 からの口。無い OS で
+        // 送ると例外で落ちるので、先に確かめる（無ければ None で「開ける」に倒れる）。
+        let sel = objc2::sel!(URLsForApplicationsToOpenContentType:);
+        let responds: bool = unsafe { msg_send![&*ws, respondsToSelector: sel] };
+        if !responds {
+            return None;
+        }
+        // SAFETY: 上で口があることを確かめた。objc2-app-kit は UTType の feature でしか
+        // 生やさないので、名前で呼ぶ。
+        let apps: Retained<NSArray<NSURL>> = unsafe { msg_send![&*ws, URLsForApplicationsToOpenContentType: &*exe] };
+        let std_path = |u: &NSURL| u.URLByStandardizingPath().and_then(|s| s.path()).map(|p| p.to_string());
+        let mine = std_path(&app)?;
+        Some(apps.iter().any(|a| {
+            std_path(&a).is_some_and(|p| p == mine)
+                || bundle_id.as_deref().is_some_and(|id| {
+                    NSBundle::bundleWithURL(&a)
+                        .and_then(|b| b.bundleIdentifier())
+                        .is_some_and(|other| other.to_string() == id)
+                })
+        }))
+    })()
+    .unwrap_or(true);
+    facts.handler = Some(HandlerInfo { app, bundle_id, name, opens_executables });
+    facts
+}
+
+/// 通常ファイルの先頭を最大 `n` バイト読む。読めなければ None。開くのは fsread の口
+/// （FIFO やデバイスに差し替えられても open で止まらない）で、大きさの上限は掛けない
+/// （先頭しか読まないので、大きいファイルでも判定できる）。
+#[cfg(target_os = "macos")]
+fn read_head(path: &Path, n: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let (file, _) = md_preview::fsread::open_regular(path, u64::MAX).ok()?;
+    let mut buf = Vec::with_capacity(n);
+    file.take(n as u64).read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// 判定した担当アプリを指定してファイルを開く（`NSWorkspace.open(_:withApplicationAt:)`）。
+#[cfg(target_os = "macos")]
+pub fn open_with_app(path: &Path, app: &objc2_foundation::NSURL) {
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceOpenConfiguration};
+    use objc2_foundation::{NSArray, NSString, NSURL};
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    let urls = NSArray::from_retained_slice(&[url]);
+    let config = NSWorkspaceOpenConfiguration::new();
+    NSWorkspace::sharedWorkspace().openURLs_withApplicationAtURL_configuration_completionHandler(
+        &urls, app, &config, None,
+    );
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -40,7 +207,9 @@ pub fn copy_to_clipboard(_text: &str) {}
 pub fn reveal_in_finder(_path: &Path) {}
 
 #[cfg(not(target_os = "macos"))]
-pub fn open_default(_path: &Path) {}
+pub fn open_facts(_path: &Path) -> OpenFacts {
+    OpenFacts::default()
+}
 
 /// OS がダークモードか。テーマが OS 追従（[`md_preview::theme::Appearance::Auto`]）の
 /// ときだけ、窓の下地色をどちらへ寄せるかの判断に使う。

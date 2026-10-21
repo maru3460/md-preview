@@ -115,12 +115,29 @@ pub fn extension_to_hljs_lang(path: &Path) -> &'static str {
     }
 }
 
+/// ツリーの 1 つのフォルダに出す項目の上限。超えたぶんは読まずに打ち切り、末尾に
+/// `"kind":"more"` の項目（`limit` に上限）を足して知らせる（folder.js が注記の行にする）。
+///
+/// 読みながら打ち切るので、数千万の項目を持つフォルダでもメモリと並べ替えはこの件数で済む。
+/// 引き換えに、打ち切ったフォルダでは「名前順で最初の N 件」ではなく「読んだ順の N 件を
+/// 名前順に並べたもの」になる（全部を読まないと名前順の先頭は決まらない）。
+const DIR_LIST_MAX: usize = 10_000;
+
 pub fn list_dir_json(dir: &Path) -> Vec<u8> {
+    list_dir_json_capped(dir, DIR_LIST_MAX)
+}
+
+fn list_dir_json_capped(dir: &Path, max: usize) -> Vec<u8> {
     let mut dirs: Vec<(String, String)> = Vec::new();
     let mut files: Vec<(String, String)> = Vec::new();
+    let mut truncated = false;
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
+            if dirs.len() + files.len() >= max {
+                truncated = true;
+                break;
+            }
             let name = entry.file_name().to_string_lossy().into_owned();
             let entry_path = entry.path();
             let id = file_id(&entry_path);
@@ -142,6 +159,9 @@ pub fn list_dir_json(dir: &Path) -> Vec<u8> {
     }
     for (name, path) in files {
         items.push(format!(r#"{{"name":{},"path":{},"kind":"file"}}"#, json_string(&name), json_string(&path)));
+    }
+    if truncated {
+        items.push(format!(r#"{{"kind":"more","limit":{}}}"#, max));
     }
 
     format!("[{}]", items.join(",")).into_bytes()
@@ -227,29 +247,59 @@ enum Truncation {
 /// 各階層は「ファイル（名前順）→ サブディレクトリ（名前順）」の順に処理する。
 /// シンボリックリンクのディレクトリは辿らない（`file_type()` はリンクを追わないので
 /// `is_dir()` が false になる）。循環でハングするのを構造的に防ぐため。
+///
+/// 1 つのディレクトリの中も、上限まで読んだところで打ち切る（数千万の項目を持つディレクトリを
+/// 全部読んで並べてから切ると、メモリと並べ替えの時間がそのぶん伸びる）。打ち切った階層は
+/// 「読んだ順の一部を名前順に並べたもの」になる。
 fn collect_files(root: &Path, out: &mut Vec<String>) -> Option<Truncation> {
+    collect_files_capped(root, out, FILE_LIST_MAX, FILE_LIST_MAX_DIRS)
+}
+
+/// [`collect_files`] の中身。上限を引数で受けるのは、テストで数万のファイルを作らずに
+/// 打ち切りを確かめるため。
+fn collect_files_capped(root: &Path, out: &mut Vec<String>, max_files: usize, max_dirs: usize) -> Option<Truncation> {
     // (ディレクトリ, 深さ)。pop_front / push_back で階層順に処理する。
     let mut queue: std::collections::VecDeque<(PathBuf, usize)> = std::collections::VecDeque::new();
     queue.push_back((root.to_path_buf(), 0));
     let mut visited_dirs = 0usize;
     // 深さ上限で刈った枝があったか。刈っても探索は続くので、最後まで回ってから報告する。
     let mut deep_skipped = false;
+    // 積めなかったサブディレクトリがあったか。積めなかった枝は読まないが、探索は続ける
+    // （深さの刈り込みと同じく、最後まで回ってから報告する）。
+    let mut dirs_dropped = false;
 
     while let Some((dir, depth)) = queue.pop_front() {
-        if out.len() >= FILE_LIST_MAX {
+        if out.len() >= max_files {
             return Some(Truncation::Files);
         }
         // ファイルが少なくディレクトリだけが膨大な木で、キューと read_dir が
         // 際限なく増えるのを防ぐ（ファイル件数の上限だけでは止まらないため）。
         visited_dirs += 1;
-        if visited_dirs > FILE_LIST_MAX_DIRS {
+        if visited_dirs > max_dirs {
             return Some(Truncation::Dirs);
         }
 
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         let mut files: Vec<String> = Vec::new();
         let mut subdirs: Vec<PathBuf> = Vec::new();
-        for entry in entries.flatten() {
+        // この階層で受け取れる数。ファイルは一覧の残り、サブディレクトリは「この先 read_dir
+        // できる残り」（キューに積んであるぶんを引く）。超えたぶんは持たない。
+        let files_left = max_files - out.len();
+        let dirs_left = max_dirs.saturating_sub(visited_dirs + queue.len());
+        // 持たずに読み飛ばすだけでも、項目が数千万あれば時間は掛かる。1 つの階層で読む数にも
+        // 上限を掛ける。除外や深さで捨てた項目も数えるので、まだ持てるファイルが残っていても
+        // 打ち切ることがある（そのときは「ディレクトリの上限」として報告する）。
+        let read_max = files_left + dirs_left;
+        let mut files_cut = false;
+        for (read, entry) in entries.flatten().enumerate() {
+            if files.len() >= files_left {
+                files_cut = true;
+                break;
+            }
+            if read >= read_max {
+                dirs_dropped = true;
+                break;
+            }
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             if is_dir {
@@ -262,6 +312,10 @@ fn collect_files(root: &Path, out: &mut Vec<String>) -> Option<Truncation> {
                     deep_skipped = true;
                     continue;
                 }
+                if subdirs.len() >= dirs_left {
+                    dirs_dropped = true;
+                    continue;
+                }
                 subdirs.push(entry.path());
             } else {
                 files.push(name);
@@ -271,16 +325,18 @@ fn collect_files(root: &Path, out: &mut Vec<String>) -> Option<Truncation> {
         subdirs.sort();
 
         for name in files {
-            if out.len() >= FILE_LIST_MAX {
-                return Some(Truncation::Files);
-            }
             out.push(file_id(&dir.join(name)));
+        }
+        if files_cut {
+            return Some(Truncation::Files);
         }
         for sub in subdirs {
             queue.push_back((sub, depth + 1));
         }
     }
-    if deep_skipped {
+    if dirs_dropped {
+        Some(Truncation::Dirs)
+    } else if deep_skipped {
         Some(Truncation::Depth)
     } else {
         None
@@ -1964,6 +2020,77 @@ mod tests {
         assert!(body.starts_with(r#"{"files":["#), "{body}");
         assert!(body.contains(r#""truncated":false"#), "{body}");
         assert!(body.contains(&json_string(&root.join("sub/deep/d.md").to_string_lossy())), "{body}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_list_stops_reading_a_huge_directory_at_the_cap() {
+        let root = std::env::temp_dir().join("md-filelist-cap-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        for i in 0..30 {
+            std::fs::write(root.join(format!("f{i:02}.md")), "x").unwrap();
+        }
+        std::fs::write(root.join("sub/deep.md"), "x").unwrap();
+
+        let mut out = Vec::new();
+        assert_eq!(collect_files_capped(&root, &mut out, 10, 100), Some(Truncation::Files));
+        assert_eq!(out.len(), 10, "{out:?}");
+        // 読んだ分は名前順に並ぶ。
+        let mut sorted = out.clone();
+        sorted.sort();
+        assert_eq!(out, sorted);
+        assert!(!out.iter().any(|p| p.ends_with("deep.md")), "{out:?}");
+
+        // 上限ちょうどなら打ち切りではない。
+        let mut out = Vec::new();
+        assert_eq!(collect_files_capped(&root, &mut out, 31, 100), None);
+        assert_eq!(out.len(), 31);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_list_drops_subdirectories_beyond_the_directory_cap_but_keeps_files() {
+        let root = std::env::temp_dir().join("md-filelist-dircap-test");
+        let _ = std::fs::remove_dir_all(&root);
+        for i in 0..20 {
+            std::fs::create_dir_all(root.join(format!("d{i:02}"))).unwrap();
+            std::fs::write(root.join(format!("d{i:02}/x.md")), "x").unwrap();
+        }
+        std::fs::write(root.join("top.md"), "x").unwrap();
+
+        let mut out = Vec::new();
+        // root 自身と、あと 4 つのディレクトリまで。
+        assert_eq!(collect_files_capped(&root, &mut out, 1000, 5), Some(Truncation::Dirs));
+        assert!(out.contains(&file_id(&root.join("top.md"))), "{out:?}");
+        let nested = out.iter().filter(|p| p.ends_with("/x.md")).count();
+        assert_eq!(nested, 4, "{out:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tree_listing_reads_up_to_the_cap_and_marks_the_rest() {
+        let root = std::env::temp_dir().join("md-dirlist-cap-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..12 {
+            std::fs::write(root.join(format!("f{i:02}.md")), "x").unwrap();
+        }
+
+        let body = String::from_utf8(list_dir_json_capped(&root, 5)).unwrap();
+        assert_eq!(body.matches(r#""kind":"file""#).count(), 5, "{body}");
+        assert!(body.ends_with(r#"{"kind":"more","limit":5}]"#), "{body}");
+
+        // 上限に届かなければ印は付かず、全部が名前順に並ぶ。
+        let body = String::from_utf8(list_dir_json_capped(&root, 12)).unwrap();
+        assert_eq!(body.matches(r#""kind":"file""#).count(), 12, "{body}");
+        assert!(!body.contains(r#""more""#), "{body}");
+        let f00 = body.find("f00.md").unwrap();
+        let f11 = body.find("f11.md").unwrap();
+        assert!(f00 < f11, "{body}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

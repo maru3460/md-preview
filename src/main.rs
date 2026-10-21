@@ -80,6 +80,9 @@ enum AppEvent {
     /// IPC ハンドラで直に書かないのは、テーマの切り替えが窓と webview と
     /// 配信の文脈を触るから。どれもイベントループの持ち物である。
     Settings(SettingsRequest),
+    /// ページにトーストで出す文言。内線の受け口（webview のデリゲートの中）から webview を
+    /// 触らずに、イベントループで `evaluate_script` する。
+    Toast(String),
 }
 
 /// [`AppEvent::Settings`] の中身。
@@ -838,7 +841,9 @@ fn main() {
             _ => {
                 if let Some(rest) = body.strip_prefix("menu:") {
                     let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
-                    handle_menu(verb, payload);
+                    if let Some(msg) = handle_menu(verb, payload) {
+                        let _ = proxy.send_event(AppEvent::Toast(msg));
+                    }
                 } else if let Some(id) = body.strip_prefix("watch:") {
                     // 識別子は `id_to_path` を通す。ここだけ素通しにすると
                     // 「識別子とファイルの唯一の関門」が嘘になり、次に触る者が
@@ -1085,6 +1090,9 @@ fn main() {
                 if !change_root(&ctx, &watcher, &watcher_proxy, &window, &webview, path) {
                     let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
                 }
+            }
+            Event::UserEvent(AppEvent::Toast(msg)) => {
+                let _ = webview.evaluate_script(&md_preview::html::toast_script(&msg));
             }
             Event::UserEvent(AppEvent::RootFailed(id)) => {
                 let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
@@ -1695,17 +1703,64 @@ fn window_bg_rgba(
 /// ここに来るのは絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つ——
 /// いずれも payload が「パス」なので、`resolve_target` で解決してから触る。
 /// 任意テキストのクリップボード書き込みはパス解決を通さない別の口（`copy:`）。
-fn handle_menu(verb: &str, payload: &str) {
-    let Some(path) = resolve_target(payload) else { return };
+///
+/// 返すのはページにトーストで出す文言（既定アプリで開かずに Finder で表示したときの理由）。
+fn handle_menu(verb: &str, payload: &str) -> Option<String> {
+    // `resolve_target` は canonicalize するので、シンボリックリンクはここで解けている
+    // （開く判定はリンク先の実体で見る）。
+    let Some(path) = resolve_target(payload) else {
+        // 開く操作は黙らせない。メニューを開いた後でファイルが消えていると、押しても何も
+        // 起きないように見える。
+        if verb == "open" && !payload.trim().is_empty() {
+            return Some(md_preview::open_with::Refusal::Missing.message());
+        }
+        return None;
+    };
     match verb {
         "abs" => platform::copy_to_clipboard(&path.to_string_lossy()),
         "reveal" => platform::reveal_in_finder(&path),
-        "open" => {
-            if !is_blocked_ext(&path) {
-                platform::open_default(&path);
-            }
-        }
+        "open" => return open_checked(&path),
         _ => {}
+    }
+    None
+}
+
+/// 「デフォルトアプリで開く」。開いてよいかは `open_with::decide` が決める（規則はあちらの doc）。
+/// 開くときは判定したアプリを指定して開き、開かないときは Finder で表示して理由を返す。
+///
+/// 内線の口なので、設定で文書の JavaScript を動かすと文書の script からも叩ける。拡張子だけで
+/// 弾いていた頃は、拡張子の無い実行ファイルや `.inetloc` が素通りしていた。
+fn open_checked(path: &Path) -> Option<String> {
+    use md_preview::open_with::{self, Decision, FileFacts, Handler, Refusal};
+    let facts = platform::open_facts(path);
+    let Some(kind) = facts.kind else {
+        // 種類が分からないのは、ファイルの情報を読めなかったとき。メニューを開いてから押すまでに
+        // 消えていたなら、Finder で表示するものも無い。
+        if !path.exists() {
+            return Some(Refusal::Missing.message());
+        }
+        platform::reveal_in_finder(path);
+        return Some(Refusal::Unreadable.message());
+    };
+    let types: Vec<&str> = facts.content_types.iter().map(String::as_str).collect();
+    let file = FileFacts { kind, executable: facts.executable, content_types: &types, looks_text: facts.looks_text };
+    let handler = facts.handler.as_ref().map(|h| Handler {
+        bundle_id: h.bundle_id.as_deref(),
+        name: &h.name,
+        opens_executables: h.opens_executables,
+    });
+    match open_with::decide(path, &file, handler.as_ref()) {
+        Decision::Open => {
+            #[cfg(target_os = "macos")]
+            if let Some(h) = &facts.handler {
+                platform::open_with_app(path, &h.app);
+            }
+            None
+        }
+        Decision::Reveal(why) => {
+            platform::reveal_in_finder(path);
+            Some(why.message())
+        }
     }
 }
 
@@ -1784,28 +1839,6 @@ fn watch_extra(watcher: &SharedWatcher, file: &Path) {
     if let Some(d) = guard.as_mut() {
         let _ = d.watcher().watch(dir, RecursiveMode::NonRecursive);
     }
-}
-
-/// `open` で起動すると任意コード実行・任意URL遷移になりうる拡張子を弾く。
-/// 既定では文書の JS は CSP で止まっているが、設定で動かすと文書の script もこの IPC を
-/// 叩けるので、そのときはここが実行系に対する唯一のガードになる。
-/// （`open` はテキスト系拡張子を実行せず既定エディタで開くだけなので、ここでは
-/// 実際に「起動/遷移」しうる型だけを対象にする。）
-fn is_blocked_ext(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some(
-            "app" | "command" | "terminal" | "workflow" | "scpt" | "scptd" | "applescript"
-                | "osascript" | "action" | "webloc" | "url" | "fileloc" | "shortcut"
-                | "appex" | "xpc" | "prefpane" | "qlgenerator" | "vbs"
-                // Java 実行系。html を iframe 描画するようになり、悪意ある html が
-                // top.ipc 経由で menu:open を叩ける経路が増えたため実行系を塞いでおく。
-                | "jar" | "jnlp"
-        )
-    )
 }
 
 fn spawn_watcher(

@@ -257,7 +257,8 @@
 
     function frameEl() {
       var c = getContainer ? getContainer() : null;
-      return c ? c.querySelector('iframe.html-frame') : null;
+      // サーバが作った `.html` のプレビューの枠だけ（MdCommon.appHtmlFrames）。
+      return c ? (MdCommon.appHtmlFrames(c)[0] || null) : null;
     }
     // 外部サイトへ遷移した iframe は cross-origin で読めない。
     function doc() {

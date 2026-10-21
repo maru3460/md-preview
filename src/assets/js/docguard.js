@@ -26,6 +26,9 @@
   var removeEl = elProto.remove;
   var qsa = elProto.querySelectorAll;
   var replaceKids = elProto.replaceChildren;
+  var appendKids = elProto.append;
+  var prependKids = elProto.prepend;
+  var firstElGet = Object.getOwnPropertyDescriptor(elProto, 'firstElementChild').get;
   var textSet = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').set;
   var textGet = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get;
   var nsGet = Object.getOwnPropertyDescriptor(elProto, 'namespaceURI').get;
@@ -271,11 +274,28 @@
   // 本文の HTML を el の中身にする。繋がっていない要素で解析して塞いでから入れ替えるので、
   // 文書の `<style>` や `<meta>` は一度も document に繋がらない。解析は el.innerHTML と
   // 同じ文脈（同じ document の div の中）になる。
+  //
+  // サーバの応答は `<div class="markdown-body …">本文</div>` の 1 要素。本文に余った
+  // `</div>` があると包みがそこで閉じ、続きの本文が包みの兄弟として el の直下に並ぶ
+  // （`.markdown-body.html-page > iframe.html-frame` を el の直下に作れてしまう）。
+  // 先頭の要素を包みとみなし、それ以外のノードはすべて包みの中へ移して、el の直下を
+  // 常に 1 要素にする。
+  // Why not 余りを捨てる: 閉じ忘れや書き損じの文書でも、本文の続きが消えずに読める方を取る。
   function fill(el, html) {
     var box = document.createElement('div');
     box.innerHTML = html;
     guard(box);
-    replaceKids.apply(el, Array.prototype.slice.call(box.childNodes));
+    var nodes = Array.prototype.slice.call(box.childNodes);
+    var wrap = firstElGet.call(box);
+    if (wrap) {
+      var at = nodes.indexOf(wrap);
+      var before = nodes.slice(0, at), after = nodes.slice(at + 1);
+      // 包みの前に来るのは（応答の形からして）空白くらいだが、落とさずに先頭へ入れる。
+      if (before.length) prependKids.apply(wrap, before);
+      if (after.length) appendKids.apply(wrap, after);
+      nodes = [wrap];
+    }
+    replaceKids.apply(el, nodes);
   }
 
   window.MdDocGuard = {

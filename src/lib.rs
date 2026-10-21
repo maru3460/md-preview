@@ -17,6 +17,7 @@ pub mod html;
 pub mod instance;
 pub mod navigation;
 pub mod notifications;
+pub mod open_with;
 pub mod origin;
 pub mod quick_access;
 pub mod request;

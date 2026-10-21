@@ -54,11 +54,19 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSAppearance", "NSApplication", "NSEvent", "NSImage", "NSMenu",
     "NSMenuItem", "NSPasteboard", "NSRunningApplication", "NSWindow",
     "NSWorkspace",
+    # 「デフォルトアプリで開く」で、判定したアプリを指定して開く
+    # （openURLs:withApplicationAtURL:configuration:completionHandler:。platform.rs の open_with_app）。
+    # このメソッドは block2 の feature が揃わないと生えない。
+    "block2",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSArray", "NSData", "NSString",
     # 移動と内線の送り元の URL を読む（webview_delegate.rs）。
     "NSURL", "NSURLRequest",
+    # 「デフォルトアプリで開く」の判定の事実を集める（platform.rs の open_facts）。ファイルの
+    # 資源の値（getResourceValue:forKey:error: の NSError、真偽値の NSNumber は NSValue）と、
+    # 担当アプリのバンドル ID（NSBundle）。
+    "NSError", "NSValue", "NSBundle",
     # 全画面から抜け終わった合図（NSWindowDidExitFullScreenNotification）を受けるため。
     # addObserverForName:object:queue:usingBlock: は NSOperation と block2 も要求する。
     "NSNotification", "NSOperation", "block2",

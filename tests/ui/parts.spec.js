@@ -635,12 +635,17 @@ test('html: 名前がすり替わる要素が配線の前からあっても、�
     '<code id="copy-c">すり替えに負けない</code><button id="bc" data-md-copy="copy-c">写す</button>' +
     '<img id="cz" data-md-zoom width="40" height="20" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2220%22/%3E">';
   // 配線（bindFrame）の前から要素がある文書を作るため、srcdoc の iframe を足して配線させる。
+  // 配線されるのはサーバが作る形（本文ペインの直下の `.markdown-body.html-page` の中）だけなので、
+  // ペインの中身をその形に入れ替える。
   await page.evaluate((html) => {
     const f = document.createElement('iframe');
     f.className = 'html-frame';
     f.id = 'clob';
     f.srcdoc = '<!doctype html><body>' + html + '</body>';
-    document.querySelector('#preview-pane .markdown-body').appendChild(f);
+    const holder = document.createElement('div');
+    holder.className = 'markdown-body html-page';
+    holder.appendChild(f);
+    document.getElementById('preview-pane').replaceChildren(holder);
     MdCommon.wireHtmlFrames(document.getElementById('preview-pane'));
   }, html);
   // Playwright のロケータは form のすり替えに巻き込まれるので、押すのは素の click() で。

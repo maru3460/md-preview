@@ -16,6 +16,8 @@
 //! `/__lib/` を許す住所は、本番の `mdpreview://localhost` ではなく自分の origin
 //! （`http://127.0.0.1:<port>`）にする。
 //!
+//! `Host` が `127.0.0.1:<port>` か `localhost:<port>` でない要求には 403 を返す（理由は `host_allowed`）。
+//!
 //! ウィンドウ表示との違い:
 //!   - 起動スクリプト（`MD_*` グローバル＋ folder.js）は WKUserScript が無いので、
 //!     配信する index HTML の `<head>` 直後へ差し込む。CSP の meta より前に置くので、
@@ -72,7 +74,7 @@ fn main() {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let ctx = ctx.clone();
-        std::thread::spawn(move || serve_one(stream, &ctx));
+        std::thread::spawn(move || serve_one(stream, &ctx, port));
     }
 }
 
@@ -140,7 +142,20 @@ fn inject_boot_script(page: &[u8], boot: &str) -> Vec<u8> {
     html.replacen("<head>", &format!("<head>{}", tag), 1).into_bytes()
 }
 
-fn serve_one(mut stream: TcpStream, ctx: &RequestContext) {
+/// `Host` が自分（`127.0.0.1:<port>` か `localhost:<port>`）を指しているか。
+///
+/// 127.0.0.1 で待ち受けていても、ブラウザで開いた外のページは DNS の向け直し（DNS rebinding）で
+/// 自分の名前のまま 127.0.0.1 へ繋げ、同じ origin として応答を読める。このサーバは root の中を
+/// 何でも配り、`/__setroot` で root も動かせるので、名前の違う要求には答えない。
+/// Playwright とテストは `http://127.0.0.1:<port>` で叩くので通る。
+fn host_allowed(host: Option<&str>, port: u16) -> bool {
+    let Some(host) = host else { return false };
+    let host = host.trim();
+    host.eq_ignore_ascii_case(&format!("127.0.0.1:{port}"))
+        || host.eq_ignore_ascii_case(&format!("localhost:{port}"))
+}
+
+fn serve_one(mut stream: TcpStream, ctx: &RequestContext, port: u16) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -169,6 +184,19 @@ fn serve_one(mut stream: TcpStream, ctx: &RequestContext) {
             }
             Err(_) => return,
         }
+    }
+
+    let host = req_headers.get("host").and_then(|v| v.to_str().ok());
+    if !host_allowed(host, port) {
+        let body = "forbidden host";
+        let head = format!(
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes());
+        let _ = stream.write_all(body.as_bytes());
+        let _ = stream.flush();
+        return;
     }
 
     // "GET /path?query HTTP/1.1"
@@ -244,5 +272,23 @@ mod tests {
         let boot = out.find("<script>BOOT</script>").expect("差し込まれていない");
         let meta = out.find("Content-Security-Policy").unwrap();
         assert!(boot < meta, "起動用の script が meta より後ろにある");
+    }
+
+    #[test]
+    fn only_its_own_host_and_port_are_answered() {
+        assert!(host_allowed(Some("127.0.0.1:7878"), 7878));
+        assert!(host_allowed(Some("localhost:7878"), 7878));
+        assert!(host_allowed(Some("LocalHost:7878"), 7878));
+    }
+
+    #[test]
+    fn other_hosts_ports_and_a_missing_host_are_refused() {
+        assert!(!host_allowed(None, 7878));
+        assert!(!host_allowed(Some(""), 7878));
+        assert!(!host_allowed(Some("127.0.0.1"), 7878), "ポートが無い");
+        assert!(!host_allowed(Some("127.0.0.1:7879"), 7878), "別のポート");
+        assert!(!host_allowed(Some("evil.example:7878"), 7878), "DNS を向け直した名前");
+        assert!(!host_allowed(Some("127.0.0.1.evil.example:7878"), 7878));
+        assert!(!host_allowed(Some("[::1]:7878"), 7878), "待ち受けていない住所");
     }
 }

@@ -35,7 +35,8 @@
   // 本文が iframe の中にあるので、同じ契約の別実装へ渡す。
   function pickHost() {
     var c = opts && opts.getContainer ? opts.getContainer() : null;
-    var next = (c && c.querySelector('iframe.html-frame')) ? frameHost : domHost;
+    // 本文に同じクラスの iframe を書かれても FrameHost へ移らないよう、サーバが作った枠だけを見る。
+    var next = (c && MdCommon.appHtmlFrames(c).length) ? frameHost : domHost;
     if (next === host) return;
     // 前の相手に描いたものを消してから渡す。FrameHost の枠もバッジも親のレイヤに
     // 浮いていて、本文が md へ戻っても自分では消えない。この 2 行を渡す前に呼ぶ

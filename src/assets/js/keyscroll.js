@@ -12,9 +12,10 @@
   // まだ親にあるうち（開いた直後・iframe 外をクリックした後）は素キーが死んでしまう。
   // フォーカスが iframe 内にある場合はこのハンドラ自体が呼ばれず、iframe 側の
   // bindFrame が同じ applyScrollKey を呼ぶ（結果はどちらでも同じ）。
-  // html-frame は html ファイル表示のときだけ存在し、md 本文には現れない。
+  // 見るのはサーバが作った `.html` のプレビューの枠だけ（MdCommon.htmlFrame）。md の本文に
+  // `<iframe class="html-frame">` を書かれても、そちらをスクロールしない。
   function frameScroller() {
-    var f = document.querySelector('iframe.html-frame');
+    var f = MdCommon.htmlFrame();
     if (!f) return null;
     try {
       var d = f.contentDocument;

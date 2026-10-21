@@ -996,6 +996,16 @@ body.folder-mode {
     user-select: none;
 }
 
+/* フォルダの項目を上限で打ち切ったときの注記（folder.js の renderItems）。 */
+.tree-note {
+    padding: 4px 8px;
+    margin: 0 4px;
+    font-size: 0.85em;
+    opacity: 0.6;
+    white-space: normal;
+    user-select: none;
+}
+
 .tree-item .icon {
     margin-right: 5px;
     flex-shrink: 0;
