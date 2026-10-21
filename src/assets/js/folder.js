@@ -460,7 +460,8 @@
         // 下の `MdReload` のガードがこのファイルの再読込を**永久に**弾く（エディタの
         // atomic save の直後に開くと 404 を踏むので、その後 1 度も直らなくなる）。
         if (html == null) { bodyPath = id; showLoadError(pane, id); return; }
-        pane.innerHTML = html;
+        // 文書の `<style>` や `<meta>` を document に繋ぐ前に塞ぐ（docguard.js）。
+        MdDocGuard.fill(pane, html);
         bodyPath = id;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
         // （実際に戻すのは中身の load 後、common.js の bindFrame）。錨が効く md では

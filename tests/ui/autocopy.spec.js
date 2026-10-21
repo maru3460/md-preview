@@ -239,18 +239,18 @@ test('チェックは画面の端で内側へ折り返す', async ({ page }) => 
   expect(origin.top).toBeGreaterThanOrEqual(0);
 });
 
-test('NUL を含むテキストは黙って切らずに失敗として返す', async ({ page }) => {
+test('NUL を含むテキストは途中で切らず、NUL だけを落として入れる', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
 
-  // wry は IPC の本文を CStr で読むので、NUL 以降が落ちる。
-  // 一部だけ入れて成功と言うと、コピーできたつもりで貼りに行くことになる。
+  // wry は IPC の本文を CStr で読むので、NUL 以降が落ちる。copyText は見えない制御の
+  // 文字を入れる前に落とすので、NUL も落ちて前後は両方残る。
   await clearIpc(page);
   const outcome = await page.evaluate(() => new Promise((res) => {
     MdCommon.copyText('a' + String.fromCharCode(0) + 'b', () => res('done'), () => res('fail'));
   }));
-  expect(outcome).toBe('fail');
-  expect(await copies(page)).toHaveLength(0);
+  expect(outcome).toBe('done');
+  expect(await copies(page)).toEqual(['ab']);
 });
 
 // ── マークダウンの記法（バッククォート）を戻す ──────────────────────

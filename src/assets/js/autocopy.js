@@ -148,7 +148,9 @@
     MdCommon.copyText(
       text,
       function() { showTick(x, y); },
-      function() { MdCommon.toast('コピーに失敗しました'); }
+      // 見えない制御の文字だけをなぞったときは、落とすと何も残らない（'empty'）。
+      // 写すものが無かっただけなので、失敗とは言わない。
+      function(why) { if (why !== 'empty') MdCommon.toast('コピーに失敗しました'); }
     );
   }
 

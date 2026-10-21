@@ -31,6 +31,10 @@
 
   // 既存 id があればそれを返し、無ければスラグから一意な id を生成して付与する。
   // 同名見出しは -2 / -3 ... で一意化し、空スラグは 'h' にフォールバックする。
+  // 付けた id には AUTO_ID_ATTR の印を残す。書き手の id を探す側（parts.js の
+  // data-md-copy）が、見出しの文字から勝手にできた id（「Copy settings」→ copy-settings）を
+  // 拾わないため。
+  var AUTO_ID_ATTR = 'data-md-auto-id';
   function ensureHeadingId(h) {
     if (h.id) return h.id;
     var base = slugify(h.textContent);
@@ -41,6 +45,7 @@
       id = base + '-' + (n++);
     }
     h.id = id;
+    h.setAttribute(AUTO_ID_ATTR, '');
     return id;
   }
 
@@ -50,6 +55,12 @@
       ensureHeadingId(h);
     });
   }
+
+  // 本文の中に居るが、本文の文字ではないもの（アプリが足した UI）。コピーの写しから外す。
+  // 選択即コピー（mirrorMarkdown）・コードブロックの Copy・文書の部品のコピー（parts.js）で
+  // 共有する。ファイル名の行（.code-filename）は、mirrorMarkdown がフェンスの情報文字列を
+  // 読んでから自分で外すので、ここには入れない。
+  var NOT_BODY_TEXT = '.copy-btn, .md-cmt-badge, .md-cmt-embed, .md-cmt-badge-holder, .source-gutter';
 
   // 各コードブロックを .code-wrapper で包み Copy ボタンを差し込む。多重付与は防ぐ。
   function addCopyButtons(scope) {
@@ -77,8 +88,10 @@
         // 行構造）ので、複製から取り除いてから読む。行包みは textContent を不変に保つ
         // ため、コード本文はこれで元ソースのまま取れる。
         var clone = code.cloneNode(true);
-        clone.querySelectorAll('.md-cmt-badge, .md-cmt-embed, .md-cmt-badge-holder').forEach(function(n) { n.remove(); });
-        copyText(clone.textContent, function() {
+        clone.querySelectorAll(NOT_BODY_TEXT).forEach(function(n) { n.remove(); });
+        copyText(clone.textContent, function(copied) {
+          // 文書の部品のコピーと同じ合図も出す。ボタンの文言だけでは、何が写ったかが見えない。
+          if (buttonCopied) buttonCopied(copied);
           btn.textContent = 'Copied';
           btn.classList.add('copied');
           setTimeout(function() {
@@ -324,8 +337,13 @@
 
   function hydrate(scope, opts) {
     bodySwaps++;
+    // 拡大中の図は、差し替えで置き札ごと消える。重ねものに前のファイルの図を残さない。
+    if (window.MdParts) MdParts.reset();
     var o = opts || {};
     var root = scope || document;
+    // 本文を入れる経路は MdDocGuard.fill で入れて塞いである。fill を通らずに入った分の
+    // 受け皿で、塞ぎ済みの `<style>` は二重に包まない。
+    if (window.MdDocGuard) MdDocGuard.guard(root);
     ensureHeadingIds(root);
     highlightIn(root);
     wrapSourceLines(root);
@@ -356,10 +374,46 @@
         // から文書の JS が動く（ラベルの HTML はどちらでも DOMPurify を通る）。図の側
         // （`%%{init}%%` / frontmatter）からは mermaid が securityLevel の上書きを拒むので、
         // ここで決めた値が最後まで効く。
-        mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict' });
+        //
+        // secure に並べた鍵は、図の側から変えられない（mermaid が黙って捨てる）。既定の並び
+        // （先頭 6 つ）は渡すと置き換わるので書き直す。足したのは CSS の文字列をそのまま図の
+        // <style> へ流し込む鍵: themeCSS は規則ごと入る。fontFamily / altFontFamily は
+        // `:root { --mermaid-font-family: … }` の値の位置へ入り、mermaid は括弧の釣り合い
+        // しか見ないので、`x; @font-face { … }` と入れ子の at-rule を書ける（CSS を組む
+        // ときに外へ出される）。図の <style> は本文の CSS の組み直し（docguard.js）より
+        // 後に描かれるので、そこを通らない。@font-face を書かれると、アプリの UI の字形まで
+        // 差し替わる（fontFamily は実測で通った。altFontFamily は今の版では図の側から通らなかったが、
+        // 同じ形で CSS に入るので並べて止める）。
+        // Why not themeVariables も止める: 色やフォント名を図ごとに変える普通の使い道が
+        // あり、値は mermaid が英数字と少しの記号（括弧の { } を含まない）に絞るので、
+        // 規則は書けない。
+        mermaid.initialize({
+          startOnLoad: false, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict',
+          secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
+                   'themeCSS', 'fontFamily', 'altFontFamily']
+        });
         mermaid.__mdInit = true;
       }
-      try { mermaid.run({ nodes: nodes }); } catch (e) {}
+      // 図の <style> は classDef / style の文字列から組まれ、`&` を通じて図の外（サイドバーや
+      // タブ）を指す規則にもなる。差し込まれた直後（postRenderCallback は innerHTML の
+      // 代入と同じ同期の流れで呼ばれる）に、その図の SVG の中にだけ効くよう組み直す。
+      // 描き終わってからの見回りは、途中で投げて呼ばれなかった図の取りこぼし用。
+      // Why not 本文の枠（.markdown-body）に閉じる: 図の CSS が本文の他の要素や別の図に
+      // 効いてしまう。図ごとに閉じれば、図の見た目を変えられるのはその図の中だけになる。
+      // 描く途中（mermaid が寸法を測るために body の末尾へ仮に置く間）は閉じられない。
+      var scopeDiagrams = function(id) {
+        Array.prototype.forEach.call(nodes, function(node) {
+          var svg = node.querySelector(':scope > svg');
+          if (!svg || (id && svg.id !== id)) return;
+          // id の無い SVG は根を指せないので、scopeStyleTo が空にする。
+          var sel = svg.id ? '#' + CSS.escape(svg.id) : '';
+          svg.querySelectorAll('style').forEach(function(st) { MdDocGuard.scopeStyleTo(st, sel); });
+        });
+      };
+      var sweep = function() { scopeDiagrams(null); };
+      try {
+        Promise.resolve(mermaid.run({ nodes: nodes, postRenderCallback: scopeDiagrams })).then(sweep, sweep);
+      } catch (e) { sweep(); }
     }).catch(function() {});
   }
 
@@ -600,14 +654,23 @@
     });
   }
 
+  var boundFrameDocs = new WeakSet();
   function bindFrame(frame, opts) {
     var doc;
     try { doc = frame.contentDocument; } catch (e) { return; } // 外部遷移などで cross-origin
     if (!doc) return;
     // 同一文書への二重バインドを防ぐ（load と即時バインドの両方が走る窓があるため）。
-    // 文書が差し替われば(iframe内遷移)新しい doc にはフラグが無いので再バインドされる。
-    if (doc.__mdBound) return;
-    doc.__mdBound = true;
+    // 文書が差し替われば(iframe内遷移)新しい doc は集合に無いので再バインドされる。
+    // 印を doc のプロパティに置かないのは、`<img name=__mdBound>` で配線済みに見せかけ
+    // られるため。同じ理由で、doc へのリスナーは prototype の addEventListener で張る。
+    if (boundFrameDocs.has(doc)) return;
+    boundFrameDocs.add(doc);
+    var listen = function(type, fn, capture) {
+      EventTarget.prototype.addEventListener.call(doc, type, fn, capture);
+    };
+    // 文書の部品（コピーボタン・図の拡大）。クリックは iframe の中で受ける。下の配線が
+    // 文書の名前のすり替えで投げても、部品は動くよう先に張る。
+    if (window.MdParts) MdParts.bindDoc(doc, frame);
 
     // タブに残した読み位置へ戻す。ここまで待たないと中身の高さが決まらず、
     // clamp されて 0 に落ちる。実際に戻すのは restoreFrameScroll（数フレーム後）で、
@@ -618,10 +681,10 @@
     // iframe 内の mousedown / scroll は親 document には届かないので、contextmenu.js が
     // 「外側クリック / スクロールで閉じる」ために親へ張るリスナーが発火しない。
     // 開いたままになる右クリックメニューを、ここで明示的に閉じる（未オープン時は no-op）。
-    doc.addEventListener('mousedown', function() {
+    listen('mousedown', function() {
       if (window.MdMenu) MdMenu.close();
     }, true);
-    doc.addEventListener('scroll', function() {
+    listen('scroll', function() {
       if (window.MdMenu) MdMenu.close();
     }, true);
 
@@ -630,9 +693,10 @@
     // なので、この先で叩く window.ipc / navigator はトップフレームのものになる。
     // frame も渡す。iframe 内の座標はその文書のビューポート基準なので、合図を親の
     // 画面に出すには iframe の位置ぶん足す必要がある（右クリック転送と同じ換算）。
-    if (window.MdAutoCopy) MdAutoCopy.bindDoc(doc, frame);
+    // 文書の名前のすり替えで投げても、この先（キーの転送など）を止めない。
+    try { if (window.MdAutoCopy) MdAutoCopy.bindDoc(doc, frame); } catch (e) {}
 
-    doc.addEventListener('keydown', function(e) {
+    listen('keydown', function(e) {
       // アプリ自身の ⌘/Ctrl ショートカット(r=raw / d=diff / t=toc / p=ファイル検索 /
       // b=ファイルツリー開閉 / w=close / f=検索)だけ親へ委譲する。
       // ⌘A(全選択)・⌘C 等は iframe のネイティブ動作に任せる。
@@ -686,6 +750,10 @@
       //    ショートカットに使う生成 html は多く、ページ側のハンドラは先に登録されていて
       //    止められないので、転送すると「ページの検索 UI と親の検索バーが両方開く」二重
       //    状態になる。iframe 内から検索を開くのは ⌘F（ページ側と衝突しにくい）に絞る。
+      // オーバーレイが開いていても渡す。[ / ] / Tab は親の表（keymap.js の bare）が
+      // オーバーレイ中を弾くので、渡しても何も起きない。? は親でもオーバーレイ中に効く
+      // （開いたヘルプを ? で閉じるため）ので、ここで止めると iframe からだけ閉じられなくなる。
+      // 図の拡大の上にヘルプが開くのは、ヘルプの方が前面に出るので構わない。
       var isNav = bare && (k === '[' || k === ']' || e.key === 'Tab' || k === '?');
       // Escape は親のオーバーレイ（? で開いたヘルプ等）が開いている時と、コメントモード中
       // だけ転送する。? は iframe にフォーカスを残したまま開くので、これが無いと Esc で
@@ -706,7 +774,7 @@
     // 右クリック: iframe 内では WebKit 標準メニュー（"Open Frame in New Window" 等、
     // このアプリでは機能しない項目）が出てしまう。抑止して、親のカスタムメニューを
     // iframe の位置ぶんずらした座標で開く（キー転送と同じ「親へ委譲」方針）。
-    doc.addEventListener('contextmenu', function(e) {
+    listen('contextmenu', function(e) {
       e.preventDefault();
       var rect = frame.getBoundingClientRect();
       document.dispatchEvent(new MouseEvent('contextmenu', {
@@ -717,7 +785,7 @@
     });
 
     if (opts && typeof opts.onLinkClick === 'function') {
-      doc.addEventListener('click', function(e) {
+      listen('click', function(e) {
         var a = e.target && e.target.closest && e.target.closest('a[href]');
         if (!a) return;
         var href = a.getAttribute('href');
@@ -754,6 +822,46 @@
 
   // ── キーボードナビ用の共有述語（keyscroll.js と folder.js が同じ判定を使う） ──
   // 別実装にするとフォーカス判定がズレて二重発火/無反応が出るため、必ずここに一本化する。
+
+  // ── アプリの領域 ──────────────────────────────────────────────
+  // サイドバーの列・タブ帯・本文・仕切り。md の本文はアプリの UI と同じ document にあるので、
+  // `#preview-pane` や `.tree-item` を素で探すと、本文に同じ id・クラスの要素を書かれただけで
+  // そちらを拾う。参照は本文が入る前（DOMContentLoaded）に 1 回だけ取り、以後は id で
+  // 引き直さない。右クリックの対象探し（contextmenu.js）と文書の部品（parts.js）が使う。
+  // 1 枚ページ（folder-mode でない）にはどれも無いので、取らずに null のままにする
+  // （取りにいくと本文の同名の要素を拾う）。
+  var regions = { sidebarCol: null, tabbar: null, pane: null, resizer: null };
+  function captureRegions() {
+    if (!document.body || !document.body.classList.contains('folder-mode')) return;
+    regions.sidebarCol = document.getElementById('sidebar-col');
+    regions.tabbar = document.getElementById('tabbar');
+    regions.pane = document.getElementById('preview-pane');
+    regions.resizer = document.getElementById('resizer');
+  }
+  // md の `<style>` で position:fixed の透明な要素を置き、サイドバーやタブまで覆って
+  // どこを押しても文書のリンクのクリックにする、を防ぐ。paint の封じ込めは固定配置の
+  // 子の基準もこの箱にするので、本文の外へ出られない。インラインの !important は
+  // 本文の CSS から外せない。
+  // Why not captureRegions の中で済ませる: 参照を取るだけに見える所で枠の見た目を変えると、
+  // 読む人が封じ込めの出どころを見落とす。
+  function confinePane() {
+    if (regions.pane) regions.pane.style.setProperty('contain', 'paint', 'important');
+  }
+  function setupRegions() {
+    captureRegions();
+    confinePane();
+  }
+  // 他のモジュールの DOMContentLoaded より先に取れるよう、common.js の評価時に登録する
+  // （common.js は inline のスクリプトの先頭）。
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupRegions);
+  } else {
+    setupRegions();
+  }
+  // 呼ぶ側が持ち替えても、ここの参照は変わらないよう写しを返す。
+  function getRegions() {
+    return { sidebarCol: regions.sidebarCol, tabbar: regions.tabbar, pane: regions.pane, resizer: regions.resizer };
+  }
 
   // スクロール主体。シェルは #preview-pane、1 枚もの（md の直開き）は document。
   function getScroller() {
@@ -1147,8 +1255,39 @@
   }, true);
 
   // ── クリップボードとトースト ──────────────────────────────────
+  // クリップボードへ入れる前に落とす、見えない制御の文字。双方向の制御（文字の並びを
+  // 見た目と入れ替える）・ゼロ幅の文字・制御文字・タグ文字は、貼った先で別の意味になり
+  // うるのに画面では見えない。タブ・改行・改ページは残す。ゼロ幅接合子
+  // （U+200C / U+200D）は絵文字の並びやペルシア語・インド系の文字の一部なので残す。
+  // タグ文字のうち、黒旗（U+1F3F4）に続いて終わりの印（U+E007F）で閉じる並びは
+  // イングランド・スコットランド・ウェールズの旗の絵文字なので、並びごと残す。
+  // 双方向の制御のうち、向きの印（LRM / RLM / ALM。U+200E・U+200F・U+061C）は残す。
+  // アラビア語・ヘブライ語の文で数字や記号の並びを正しく見せるのに普通に使われ、落とすと
+  // 貼った先で並びが崩れる。並びを入れ替えられるのは埋め込み・上書き・分離の制御
+  // （U+202A〜202E・U+2066〜2069）の方なので、そちらは落とす。
+  var INVISIBLE_CHARS = /(\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F})|[\u0000-\u0008\u000B\u000E-\u001F\u007F-\u009F\u200B\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\u{E0000}-\u{E007F}]/gu;
+  // 改行は LF に揃える。CR だけの改行は、合図（white-space の表示）では改行に見えないのに
+  // 貼った先では改行になることがあり、見せたものと写したものが食い違う。
+  function cleanCopyText(text) {
+    return String(text || '').replace(/\r\n?/g, '\n')
+      .replace(INVISIBLE_CHARS, function(m, flag) { return flag || ''; });
+  }
+
+  // コードブロックの Copy が写した中身を見せる合図（parts.js の閉じた shadow root）。
+  // 受け口は最初の 1 回だけ取れる。parts.js は <head> の中で本文より先に取るので、
+  // 文書が後から偽の合図を出す口にはならない。
+  // ただしこれは文書の JS が止まっている（既定）ことが前提の守り。文書の JS を動かす設定に
+  // したなら、その文書は信じると決めたもので、MdCommon も合図も文書の JS から触れる。
+  // そこまでは請け負わない。
+  var buttonCopied = null;
+  function claimCopySignal(fn) {
+    if (buttonCopied || typeof fn !== 'function') return false;
+    buttonCopied = fn;
+    return true;
+  }
+
   // 書き込み口はここ 1 つに寄せる（コードブロックの Copy・右クリックの「コピー」・
-  // コメントの全部コピー・選択即コピーが全部ここを通る）。
+  // コメントの全部コピー・選択即コピー・文書の部品のコピーが全部ここを通る）。
   //
   // navigator.clipboard を先に試し、駄目なら Rust（NSPasteboard）へ回す。
   // 以前は隠し textarea + execCommand で代替していたが、あれは textarea を select()
@@ -1158,18 +1297,23 @@
   // 落ちるのは「ユーザー ジェスチャの外から呼ぶと NotAllowedError で reject」の方で、
   // IPC はその受け皿。死にコードではなく、ジェスチャの無いコピーが必ず通る道である。
   // IPC は投げっぱなしなので、その経路の done() は成功の確認ではなく送信の確認。
+  //
+  // 見えない制御の文字はここで落とす。書き込み口が 1 つなので、どの経路のコピーも漏れない。
+  // done には実際に入れた文字列を渡す（合図に出すのは落とした後のもの）。落とした結果が
+  // 空なら fail('empty')。
   function copyText(text, done, fail) {
-    if (!text) { if (fail) fail(); return; }
+    text = cleanCopyText(text);
+    if (!text) { if (fail) fail('empty'); return; }
     var viaIpc = function() {
       // wry は IPC の本文を CStr で読むので、NUL を含む文字列はそこで黙って切れる。
-      // 一部だけ入れて成功と言うより、失敗として返す（NUL 入りのテキストファイルを
-      // ソース表示でなぞると起こりうる）。
+      // NUL は上の cleanCopyText で落ちるので普段はここに来ないが、落とす文字の表を
+      // 変えたときに一部だけ入れて成功と言わないよう、失敗として返す守りは残す。
       if (!window.ipc || text.indexOf('\u0000') >= 0) { if (fail) fail(); return; }
       window.ipc.postMessage('copy:' + text);
-      if (done) done();
+      if (done) done(text);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function() { if (done) done(); }).catch(viaIpc);
+      navigator.clipboard.writeText(text).then(function() { if (done) done(text); }).catch(viaIpc);
     } else {
       viaIpc();
     }
@@ -1279,8 +1423,7 @@
       box.appendChild(range.cloneContents());
       // 本文ではないもの。Copy ボタンは user-select:none を持たないので、素のコピーだと
       // コードブロックの末尾に "Copy" の 4 文字が混ざる。
-      box.querySelectorAll('.copy-btn, .md-cmt-badge, .md-cmt-badge-holder, .source-gutter')
-        .forEach(function(n) { n.remove(); });
+      box.querySelectorAll(NOT_BODY_TEXT).forEach(function(n) { n.remove(); });
       // 画像・動画・draw.io の図は文字を持たない。写しに残すと、読み込みが走り直す分と
       // レイアウトの分だけ損をする。mermaid の svg はラベルが文字なので残す（素のコピーで
       // 入っていたものを、写しを経由したせいで落とさない）。
@@ -1442,6 +1585,7 @@
     runDrawio: runDrawio,
     wireHtmlFrames: wireHtmlFrames,
     getScroller: getScroller,
+    regions: getRegions,
     readScroll: readScroll,
     restoreScroll: restoreScroll,
     holdScroll: holdScroll,
@@ -1459,6 +1603,9 @@
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
     copyText: copyText,
+    claimCopySignal: claimCopySignal,
+    AUTO_ID_ATTR: AUTO_ID_ATTR,
+    NOT_BODY_TEXT: NOT_BODY_TEXT,
     selectionText: selectionText,
     selectionMarkdown: selectionMarkdown,
     toast: toast,

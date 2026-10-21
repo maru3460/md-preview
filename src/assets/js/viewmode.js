@@ -116,7 +116,8 @@
           // 応答が届くまでに OFF / 別ファイル / 別モードで無効化されていたら捨てる。
           if (myReq !== reqSeq || !isActive()) return;
           if (html == null) { fail(); return; }
-          el.innerHTML = html;
+          // 差分には文書の生 HTML が入るので、本文と同じく繋ぐ前に塞ぐ（docguard.js）。
+          MdDocGuard.fill(el, html);
           applyWidth(el);
           MdCommon.hydrate(el);
           // 錨れなかった（差分表示・巨大ソース）ならピクセルで妥協する。

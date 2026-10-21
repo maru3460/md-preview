@@ -28,21 +28,11 @@
   // アプリの領域（サイドバーの列・タブ帯・本文）。対象探しはこの中に縛る。
   // 本文は同じ document にあるので、`closest('#sidebar')` や `.tree-item` を素で探すと、
   // 本文に同じ id・クラスの要素を書かれただけで「サイドバーの項目」として通ってしまう。
-  // 参照は本文が入る前（DOMContentLoaded）に 1 回だけ取り、以後は id で引き直さない。
-  // 1 枚ページ（folder-mode でない）にはサイドバーもタブ帯も無いので、取らずに null のまま
-  // にする（取りにいくと本文の同名の要素を拾う）。
-  var regions = { sidebarCol: null, tabbar: null, pane: null, resizer: null };
-  function captureRegions() {
-    if (!document.body || !document.body.classList.contains('folder-mode')) return;
-    regions.sidebarCol = document.getElementById('sidebar-col');
-    regions.tabbar = document.getElementById('tabbar');
-    regions.pane = document.getElementById('preview-pane');
-    regions.resizer = document.getElementById('resizer');
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', captureRegions);
-  } else {
-    captureRegions();
+  // 参照は MdCommon が本文の入る前に取ったもの（1 枚ページではどれも null）。
+  function regionsNow() {
+    return (window.MdCommon && MdCommon.regions)
+      ? MdCommon.regions()
+      : { sidebarCol: null, tabbar: null, pane: null, resizer: null };
   }
 
   // `target` から `selector` を辿った要素が、`region` の中にあるときだけ返す。
@@ -59,6 +49,7 @@
   //   dir   … フォルダか（「ここを root にする」が意味を持つか）
   function resolveContext(e) {
     var t = e.target;
+    var regions = regionsNow();
     // 本文の中なら、何が書かれていても「今開いているファイル」。
     if (regions.pane && regions.pane.contains(t)) return currentContext();
     // タブを右クリック → そのタブが対象（開閉の操作が増える）。
@@ -286,7 +277,8 @@
     // ネイティブメニューは常に抑止する。
     e.preventDefault();
     // サイドバーのリサイザ上・ドラッグ中は出さない。
-    if (regions.resizer && regions.resizer.contains(e.target)) { close(); return; }
+    var resizer = regionsNow().resizer;
+    if (resizer && resizer.contains(e.target)) { close(); return; }
     if (document.body.style.cursor === 'col-resize') { close(); return; }
 
     // 選択テキストは発火時点で同期取得（後続の DOM 追加で消えないように）。

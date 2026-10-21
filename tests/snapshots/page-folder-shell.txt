@@ -23,6 +23,8 @@
 <script>…</script>
 <script>…</script>
 <script>…</script>
+<script>…</script>
+<script>…</script>
 </head>
 <body class="folder-mode">
 <div class="folder-layout">

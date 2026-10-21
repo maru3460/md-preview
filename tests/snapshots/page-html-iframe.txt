@@ -19,6 +19,8 @@
 <script>…</script>
 <script>…</script>
 <script>…</script>
+<script>…</script>
+<script>…</script>
 
 </head>
 <body>

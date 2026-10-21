@@ -122,6 +122,7 @@ pub const DRAWIO_JS: &str = include_str!("assets/vendor/drawio-viewer.min.js");
 /// 初期化スクリプトとして注入される。
 const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("keymap.js", include_str!("assets/js/keymap.js")),
+    ("docguard.js", include_str!("assets/js/docguard.js")),
     ("common.js", include_str!("assets/js/common.js")),
     ("highlight.min.js", include_str!("assets/vendor/highlight.min.js")),
     ("search.js", include_str!("assets/js/search.js")),
@@ -129,6 +130,7 @@ const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("toc.js", include_str!("assets/js/toc.js")),
     ("contextmenu.js", include_str!("assets/js/contextmenu.js")),
     ("autocopy.js", include_str!("assets/js/autocopy.js")),
+    ("parts.js", include_str!("assets/js/parts.js")),
     ("viewmode.js", include_str!("assets/js/viewmode.js")),
     ("help.js", include_str!("assets/js/help.js")),
     ("keyscroll.js", include_str!("assets/js/keyscroll.js")),
@@ -713,10 +715,11 @@ fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> Str
         .iter()
         .map(|(_name, src)| format!("<script>{}</script>\n", src))
         .collect();
-    // CSP は張らない（本文の <script> も外部リソースの埋め込みもそのまま動く）。
-    // Why not: `.html` は忠実描画のため sandbox 無しの同一オリジン iframe で JS ごと
-    // 動かしている。同じアプリで開く `.md` だけを締めても信頼境界にはならず、
-    // YouTube の埋め込み・Web フォント・外部 CSS を落とす代償の方が大きい。
+    // CSP はまだ張らない（後の段で入れる）。今は本文の <script> も iframe の埋め込みも動く。
+    // md の本文の `<link>` と `@import`・`@font-face` は CSP ではなく docguard.js が
+    // 差し込む前に落としているので、外部 CSS と Web フォントはもう効かない。
+    // `.html` は忠実描画のため sandbox 無しの同一オリジン iframe で JS ごと動かしており、
+    // docguard.js もそちらの中身には触らない。
     // IPC 側のガード（is_top_frame / id_to_path / is_blocked_ext）は CSP とは独立に残る。
     format!(
         r#"<meta charset="utf-8">
