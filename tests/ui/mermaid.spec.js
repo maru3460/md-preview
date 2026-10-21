@@ -127,3 +127,13 @@ for (const [type, lines] of Object.entries(STYLE_DIAGRAMS)) {
       .some((e) => getComputedStyle(e).fill === 'rgb(0, 255, 0)'))).toBe(true);
   });
 }
+
+test('図のラベルに書いた popover / popovertarget は、描いた後の図に残らない', async ({ page }) => {
+  await openFolder(page);
+  await renderMermaid(page, [
+    'flowchart LR',
+    '  A["<span popover=\'manual\' id=\'mpop\'>ポップ</span>"] --> B["<span popovertarget=\'mpop\' popovertargetaction=\'show\'>押す</span>"]',
+  ].join('\n'));
+  await expect(page.locator('#mermaid-probe .node')).toHaveCount(2);
+  await expect(page.locator('#mermaid-probe [popover], #mermaid-probe [popovertarget], #mermaid-probe [popovertargetaction]')).toHaveCount(0);
+});

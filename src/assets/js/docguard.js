@@ -302,6 +302,8 @@
     fill: fill,
     guard: guard,
     scopeStyleTo: scopeStyleTo,
+    // 外す属性の一覧（図の入れ物を見張る側が、変わったら掃除する属性として使う）。
+    DROP_ATTRS: DROP_ATTRS.slice(),
     __test: { scopeCss: scopeCss, rewriteSelector: rewriteSelector, rewriteLead: rewriteLead }
   };
 })();

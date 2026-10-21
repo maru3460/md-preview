@@ -135,28 +135,55 @@
 
   // ── ソースビューの 1 行 1 要素化 ──────────────────────────────
   // hljs は複数行にまたがる <span>（文字列・ブロックコメント）を出すので、出力を単純に
-  // \n で切ると開き/閉じタグの対応が壊れる。行末で開いているタグを全部閉じ、次の行頭で
-  // 同じタグを開き直す。hljs の出力は <span class="…"> / </span> / エスケープ済み
-  // テキストだけの安全なサブセットなので、正規表現トークナイザ + スタックで足りる。
-  function splitHighlightedLines(html) {
-    var lines = [];
-    var stack = [];   // 開いている <span …> の開きタグ文字列
-    var buf = '';
-    var re = /(<span[^>]*>)|(<\/span>)|(\n)|([^<\n]+)|(<)/g;
-    var m;
-    while ((m = re.exec(html)) !== null) {
-      if (m[1]) { stack.push(m[1]); buf += m[1]; }
-      else if (m[2]) { stack.pop(); buf += m[2]; }
-      else if (m[3]) {                              // 改行 = 行境界
-        buf += '</span>'.repeat(stack.length);      // 行末で全部閉じる
-        lines.push(buf);
-        buf = stack.join('');                       // 次の行頭で開き直す
+  // \n で切ると開き/閉じタグの対応が壊れる。行末で開いている <span> を全部閉じ、次の行頭で
+  // 同じ <span> を開き直す（浅い複製を入れ子に積み直す）。
+  //
+  // 文字列の HTML に直して innerHTML へ入れ直すことはしない。サーバのソースビューでも、
+  // 入れ直しはそれまでに塞いだもの（docguard.js）を経ずに要素を作り直す道になる。
+  // `<style>` の中身は直列化でエスケープされないので、CSS の文字列に書いた `\3c /style>` が
+  // 本物の `</style>` として読み直され、続きが `<link>` や popover の要素になる。
+  // 既にある節点を複製して並べ替えるだけなら、何も読み直さない。
+  // <span> 以外の要素は（サーバのソースビューには出ないが）包みを捨てて中の文字だけ残す。
+  function splitHighlightedRows(code) {
+    var rows = [];
+    var row = null;
+    var open = [];     // 元の <code> の中で、いま中にいる <span>（外側から）
+    var clones = [];   // 今の行に積んだ、open の浅い複製
+    function cur() { return clones.length ? clones[clones.length - 1] : row; }
+    function startRow() {
+      row = document.createElement('div');
+      rows.push(row);
+      clones = [];
+      for (var i = 0; i < open.length; i++) {
+        var c = open[i].cloneNode(false);
+        cur().appendChild(c);
+        clones.push(c);
       }
-      else buf += m[0];                             // テキスト（または裸の '<'）
     }
-    buf += '</span>'.repeat(stack.length);
-    lines.push(buf);
-    return lines;
+    function walk(node) {
+      for (var n = node.firstChild; n; n = n.nextSibling) {
+        if (n.nodeType === 3) {
+          var segs = n.data.split('\n');
+          for (var i = 0; i < segs.length; i++) {
+            if (i > 0) { row.appendChild(document.createTextNode('\n')); startRow(); }
+            if (segs[i]) cur().appendChild(document.createTextNode(segs[i]));
+          }
+        } else if (n.nodeType === 1 && n.localName === 'span') {
+          var c = n.cloneNode(false);
+          cur().appendChild(c);
+          open.push(n);
+          clones.push(c);
+          walk(n);
+          open.pop();
+          clones.pop();
+        } else if (n.nodeType === 1) {
+          walk(n);
+        }
+      }
+    }
+    startRow();
+    walk(code);
+    return rows;
   }
 
   // ソースビュー（raw トグル・非 md ファイル）の <code> を「1 行 = 1 <div>」に包み直す。
@@ -170,34 +197,53 @@
   //   不可）。閾値はサーバ（request.rs の HIGHLIGHT_MAX_LINES = 10,000）と同じ規模。
   //   バイト側の閾値はここには持ち込まない——1MB 超でも行数が少ないファイル（ログ等）は
   //   色なしで包めば行コメントできる。
+  // - 包むのはサーバが作ったソースビューだけ（isAppSourceMain）。md の本文に同じクラスの
+  //   入れ物を書かれても、行の包み直し・ガター・幅の観測の対象にしない。
   var SRC_WRAP_MAX_LINES = 10000;
+
+  // サーバが作ったソースビューの .source-main か。`?file=` / `?raw=` の応答でソースを出すときは、
+  // 包み（`.markdown-body.source-page`）の最初の子に `.source-view` を置き、その直下に
+  // `.source-main` を置く（request.rs の source_view_html）。包みは本文ペインの最初の子
+  // （MdDocGuard.fill が直下を 1 つに畳む）。md の本文は `source-page` の付かない包みに入るので、
+  // ここには当たらない。
+  // Why not `.source-main` で探す: 本文に同じクラスの入れ物と、hljs が済んだ印
+  // （data-highlighted）を付けた <code> を書かれると、文書の中身をアプリの処理に通してしまう。
+  function isAppSourceMain(main) {
+    var view = main && main.parentElement;
+    var page = view && view.parentElement;
+    var pane = getRegions().pane;
+    return !!(page && pane && page.parentElement === pane && pane.firstElementChild === page &&
+      page.firstElementChild === view && view.classList.contains('source-view') &&
+      page.classList.contains('source-page') && page.classList.contains('markdown-body') &&
+      main.classList.contains('source-main'));
+  }
 
   function wrapSourceLines(scope) {
     var root = scope || document;
     root.querySelectorAll('.source-main').forEach(function(main) {
-      var code = main.querySelector('pre code');
+      if (!isAppSourceMain(main)) return;
+      var code = main.querySelector(':scope > pre > code');
       if (!code || (code.dataset && code.dataset.srcWrapped)) return;
       var text = code.textContent;
       var hadTrailingNL = /\n$/.test(text);
-      // 行数の先読み。閾値超過なら innerHTML の分割ごとスキップする。
+      // 行数の先読み。閾値超過なら分割ごとスキップする。
       var count = 0;
       for (var p = -1; (p = text.indexOf('\n', p + 1)) !== -1;) count++;
       if (count + (hadTrailingNL ? 0 : 1) > SRC_WRAP_MAX_LINES) return;
-      var parts = splitHighlightedLines(code.innerHTML);
+      var rows = splitHighlightedRows(code);
       // 末尾改行の後ろの空要素は行ではない（ガターと同じ数え方に揃える）。
-      if (hadTrailingNL) parts.pop();
-      var out = [];
-      for (var i = 0; i < parts.length; i++) {
-        // 最終行の改行は元ソースにあった時だけ付ける（textContent 不変を守る）。
-        var nl = (i < parts.length - 1 || hadTrailingNL) ? '\n' : '';
-        out.push('<div class="md-src-row" data-src-line="' + (i + 1) + '">' + parts[i] + nl + '</div>');
+      // 最終行の改行は元ソースにあった時だけ付く（textContent 不変を守る）。
+      if (hadTrailingNL) rows.pop();
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].className = 'md-src-row';
+        rows[i].setAttribute('data-src-line', String(i + 1));
       }
-      code.innerHTML = out.join('');
+      code.replaceChildren.apply(code, rows);
       code.dataset.srcWrapped = '1';
       // 行番号の桁数を CSS 変数で渡す（ガターの幅がこれで決まる）。main に置くのは、
       // ガターが code の外（兄弟）にいて、code に置いた変数を読めないため。
-      main.style.setProperty('--md-gutter-ch', String(String(parts.length).length));
-      buildSrcGutter(main, parts.length);
+      main.style.setProperty('--md-gutter-ch', String(String(rows.length).length));
+      buildSrcGutter(main, rows.length);
       // 最長行の幅を配る。行の塗り・帯を全行この幅（min-width）に揃えるため——
       // CSS の 100% は可視幅（code = スクローラ）にしかならず、横スクロールすると
       // 短い行の塗りが途中で切れる。コンテンツ幅はフォント固定なのでリサイズ不変。
@@ -411,6 +457,10 @@
           // id の無い SVG は根を指せないので、scopeStyleTo が空にする。
           var sel = svg.id ? '#' + CSS.escape(svg.id) : '';
           svg.querySelectorAll('style').forEach(function(st) { MdDocGuard.scopeStyleTo(st, sel); });
+          // 描いた図には本文と同じ掃除もかける。図の要素は本文の掃除（hydrate の guard）より
+          // 後に作られるので、DOMPurify が残した popover などがそのまま入ってくる。
+          // `<style>` は上で図に閉じ済みなので、guard は二重に包まない。
+          MdDocGuard.guard(svg);
         });
       };
       var sweep = function() { scopeDiagrams(null); };
@@ -446,10 +496,28 @@
       }
       if (typeof GraphViewer !== 'undefined') GraphViewer.processElements();
     };
+    // 描いた図にも本文と同じ掃除をかける。drawio は図の XML のラベル（HTML 可）から要素を
+    // 作り、ページの切り替え・レイヤーの表示などで描き直すので、描き終わりの 1 回では
+    // 足りない。入れ物ごとに見張り、中身が変わるたびに掃除する。
+    Array.prototype.forEach.call(nodes, guardDrawio);
     loadLib('/__lib/drawio-viewer.min.js').then(function() {
       if (typeof GraphViewer === 'undefined') return;
       try { GraphViewer.processElements(); } catch (e) {}
+      Array.prototype.forEach.call(nodes, function(node) { MdDocGuard.guard(node); });
     }).catch(function() {});
+  }
+
+  // drawio の図の入れ物を見張り、足された要素と付いた属性を本文と同じく掃除する。
+  // MutationObserver の知らせはマイクロタスクで来るので、残った属性が押される前に外れる。
+  // 入れ物が本文の差し替えで外れれば、見張りごと捨てられる（入れ物しか掴んでいない）。
+  var drawioWatched = new WeakSet();
+  function guardDrawio(node) {
+    if (drawioWatched.has(node) || typeof MutationObserver === 'undefined') return;
+    drawioWatched.add(node);
+    new MutationObserver(function() { MdDocGuard.guard(node); }).observe(node, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: MdDocGuard.DROP_ATTRS.concat(['name', 'id'])
+    });
   }
 
   // ⌘A で本文（.markdown-body）だけを全選択する。ページ全体（サイドバーや

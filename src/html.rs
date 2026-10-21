@@ -128,13 +128,18 @@ pub const BUILTIN_LIBS: &[(&str, &str)] = &[
 /// 起動スクリプト（`FOLDER_JS`）はここには含めない。あちらは `<head>` ではなく
 /// 初期化スクリプトとして注入される。
 ///
-/// 各スクリプト（と `FOLDER_JS`・シェルの 3 本）は、先頭でトップのフレームでなければ何もせずに
-/// 抜ける。この抜け道は恒久のもので、サブフレームの移動を止める仕組みが入っても外さない。
-/// 文書の iframe の中で開かれうるのは次の 2 つで、抜けないとアプリの部品が文書の中で動き出す。
-///   - md の画面（`/`）… meta の CSP がハッシュで自前の script を許すので、設定に関係なく
-///                       常に効く。
-///   - md を直接開いた 1 枚ページ … 文書の JS を ON にしたとき（ヘッダの `script-src` が
-///                       緩む）に効く。OFF ではヘッダの `script-src 'none'` で何も動かない。
+/// 自前の各スクリプト（と `FOLDER_JS`・シェルの 3 本）は、先頭でトップのフレームでなければ
+/// 何もせずに抜ける（`highlight.min.js` だけは同梱のライブラリで、`hljs` を定義するほかは
+/// 呼ばれるまで何もしないので抜けない）。抜けないと、文書の iframe の中でアプリの部品
+/// （キー操作・右クリックメニュー・コメントなど）が動き出す。
+///
+/// この抜け道は守りの 2 枚目で、1 枚目は移動の判定（`navigation::decide`）がサブフレームの
+/// `/`（md の画面）を常に取り消すこと。md の画面がサブフレームに開かれることはまず無い。
+/// いまこの抜け道が実際に効くのは、`.html` や md の本文の iframe が `.md` を指したときに出る
+/// md の 1 枚ページ（`build_html`）を、文書の JS を ON にして開いた場合だけ。ヘッダの
+/// `script-src` が緩むので、この列の script も動きうる。OFF ではヘッダの `script-src 'none'`
+/// で何も動かない。
+///
 /// 引き換えに、iframe の中に開いた `.md` は色付けと図の無い素の HTML で出る（OFF のときは
 /// この抜け道ではなく、`script-src 'none'` のせい）。
 const PAGE_SCRIPTS: &[(&str, &str)] = &[
@@ -1177,6 +1182,36 @@ mod tests {
         }
         // シェルは自前の script を全部持つ（列に余りが無い）。
         assert_eq!(inline_scripts(&shell).len(), hashes.len());
+    }
+
+    /// 先頭の空白と行コメント（`//`）を読み飛ばす。
+    fn skip_leading_comments(mut s: &str) -> &str {
+        loop {
+            s = s.trim_start();
+            match s.strip_prefix("//") {
+                Some(rest) => s = rest.split_once('\n').map_or("", |(_, after)| after),
+                None => return s,
+            }
+        }
+    }
+
+    #[test]
+    fn every_app_script_returns_early_outside_the_top_frame() {
+        let guarded = inline_script_sources().filter(|src| *src != HLJS_JS).chain([FOLDER_JS]);
+        let mut count = 0;
+        for src in guarded {
+            let head: String = src.chars().take(60).collect();
+            let body = skip_leading_comments(src)
+                .strip_prefix("(function() {")
+                .unwrap_or_else(|| panic!("即時関数で始まっていない: {head}"));
+            assert!(
+                skip_leading_comments(body).starts_with("if (window.top !== window) return;"),
+                "トップのフレームでないときに抜けていない: {head}"
+            );
+            count += 1;
+        }
+        // 自前の script の列（PAGE_SCRIPTS とシェルの 3 本から hljs を除いたもの）と FOLDER_JS。
+        assert_eq!(count, PAGE_SCRIPTS.len() + SHELL_SCRIPTS.len() - 1 + 1);
     }
 
     #[test]

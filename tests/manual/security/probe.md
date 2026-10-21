@@ -3,19 +3,23 @@
 文書の JS・外部の読み込み・mermaid・右クリック・特殊なファイルが、いまどう扱われているかを目で見るためのファイル。
 `.html` 側は [probe.html](./probe.html) にある。
 
-開くとネットへ読み込みが飛ぶ（`img.shields.io`・`fonts.googleapis.com`）。外部の読み込みを止める前の状態を見るためなので、気になるなら外部の節を飛ばす。
+既定（両方 OFF）では、開いても外へは何も読み込まない。「外部の読み込みを許す」を ON にすると、外部の節が `img.shields.io` と `example.com` を読み込む。
 
 ## 読み方
 
 各項目の「結果」は、何もしなければ `⚪ 止まった` のまま。文書の JS が動いたときだけ `🔴 動いた` に書き換わる。
 
-期待する結果は、段階と設定で変わる。
+期待する結果は、設定画面の 2 つのスイッチで変わる。
 
-- いま（段 2 まで）: CSP がまだ無いので、イベント属性は動く（`🔴`）。外部の読み込みもそのまま
-- 段 5 の後・設定は両方 OFF（既定）: 文書の JS は全部 `⚪`。外部の画像・iframe は「開く」リンクに置き換わり、外部のフォントは効かない
-- 「文書の JavaScript を動かす」だけ ON: イベント属性と `javascript:` が `🔴` に戻る。外部は止まったまま
-- 「外部の読み込みを許す」だけ ON: 外部の画像・iframe・フォントが戻る（md の本文の `<style>` で読むフォントは戻らない。2 の Web フォントの項）。JS は `⚪` のまま
-- 両方 ON: いま（段 2 まで）と同じ見た目
+- 既定（両方 OFF）: 文書の JS は全部 `⚪`。外部の画像・iframe は「開く」リンクに置き換わり、外部のフォントは効かない
+- 「文書の JavaScript を動かす」だけ ON: イベント属性と `javascript:` が `🔴` になる。`<script>` 要素は `⚪` のまま。外部は止まったまま
+- 「外部の読み込みを許す」だけ ON: 外部の画像・iframe が出る。外部のフォントは md では効かないまま（2 の Web フォントの項）。JS は `⚪` のまま
+- 両方 ON: 上の 2 つを合わせたもの
+
+どの設定でも変わらないもの:
+
+- WebKit の先読み（`<link rel=preconnect>`・DNS の先読み）は切ってある。画面では分からないので、確かめるなら [real-device/](./real-device/README.md) の手順で
+- 何も押さないうちに既定のブラウザが開くことは無い。外へ開くのはリンクのクリックだけ
 
 設定は ⌘Q で終了して開き直したときから効く。
 
@@ -40,20 +44,24 @@
 
 - **外部の画像**（README のバッジと同じ形）
   - 見え方: [![外部の画像](https://img.shields.io/badge/外部の画像-読めた-blue)](https://img.shields.io)
-  - 段 5 の後の OFF では、バッジがチップ（「外部の画像」の文字）に置き換わる
+  - 外部が OFF なら、バッジがチップ（「外部の画像」の文字）に置き換わる。ON ならバッジが出る
 - **外部の Web フォント**（読めていれば、下の文字が袋文字の Rampart One になる。読めなければ等幅の文字のまま）
-  - 本文の `<style>` の `@import` と `@font-face` は、設定に関係なく落とすようになった（2-4。本文の CSS を本文の枠に閉じ込めるため）。md では、外部の読み込みを許していても等幅の文字のまま出るのが正しい
+  - 本文の `<style>` の `@import` と `@font-face` は、設定に関係なく落とす（本文の CSS を本文の枠に閉じ込めるため）。md では、外部の読み込みを許していても等幅の文字のまま出るのが正しい。`.html` の中なら効く（[probe.html](./probe.html) の同じ項目）
 
   <style>
   @import url('https://fonts.googleapis.com/css2?family=Rampart+One&display=swap');
   .probe-font { font-family: 'Rampart One', ui-monospace, monospace; font-size: 1.6em; }
   </style>
   <span class="probe-font">外部フォント ABC</span>
-- **外部の iframe**: いまは置いていない。今のアプリは iframe の中の http(s) の読み込みもブラウザへ回すので、開いた瞬間にブラウザで example.com が開いてしまう（1-2 で「サブフレームの最初の読み込みは許す」に直す）。1-2 が入ったら、ここに `<iframe src="https://example.com">` を戻す
+- **外部の iframe**
+  - 外部が OFF なら「外部の埋め込み」の「開く」リンクに置き換わる。ON なら枠の中に example.com が出る
+  - どちらでも、開いた瞬間に既定のブラウザが開かないこと。ON のとき、枠の中の example.com のリンクを押しても何も開かないこと
+
+  <iframe src="https://example.com" width="480" height="160"></iframe>
 - **外部へのリンク**（どの設定でも、押すと既定のブラウザで開く）
   - [example.com を開く](https://example.com)
 
-## 3. 変わらないもの（どの段階・設定でも同じに見えるべきもの）
+## 3. 変わらないもの（どの設定でも同じに見えるべきもの）
 
 - 手元の画像（相対パス）: ![手元の PNG](./probe-assets/local.png) ![手元の SVG](./probe-assets/local.svg)
 - `data:` の画像: <img alt="data: の画像" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='24'><rect width='120' height='24' fill='%236a1b9a'/><text x='60' y='17' font-size='12' fill='white' text-anchor='middle' font-family='sans-serif'>data: の画像</text></svg>">
@@ -69,9 +77,9 @@ flowchart LR
   click B call alert()
 ```
 
-上の図のノードを押しても何も起きないこと（mermaid の strict。段 2 で入った）。
+上の図のノードを押しても何も起きないこと（mermaid の strict）。
 
-## 4. 右クリックと偽の UI（段 2 で入った）
+## 4. 右クリックと偽の UI
 
 本文の中に、サイドバーの行やタブに似せた要素を置いてある。
 
@@ -80,9 +88,9 @@ flowchart LR
 
 - 右クリックして「絶対パスをコピー」すると、`/etc/hosts` ではなく、**このファイル（probe.md）のパス**が入ること
 - メニューに「閉じる (⌘W)」や「ここを root にする」が出ないこと
-- 未対応（2-3 で直す）: ツリーにフォーカスして j / k で動くと、この偽の行に乗れてしまう。Enter で `/etc/hosts` が開く
+- ツリーにフォーカスして j / k で動いても、この偽の行には乗らないこと（Enter で `/etc/hosts` が開かないこと）
 
-## 5. 特殊なファイル（段 2 で入った）
+## 5. 特殊なファイル
 
 FIFO や `/dev/zero` へのリンクはリポジトリに置いておけない（ツリーを辿る道具が止まる）。先に手元で作ってから、このファイルを開き直す。
 
@@ -109,7 +117,7 @@ mkfile -n 100m probe-big.md                            # ツリーで押す用
 rm probe-zero.png probe-zero.md probe-fifo.md probe-big.md
 ```
 
-## 6. 部品（段 3 で入った）
+## 6. 部品
 
 文書の JS を止めたまま（既定）でも動く、アプリが配る部品。
 

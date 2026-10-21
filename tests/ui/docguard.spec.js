@@ -243,3 +243,29 @@ body { background: #fff; color: #222; }
   // ページ全体の背景は変わらない。
   expect(await appLook(page)).toEqual(before);
 });
+
+test('本文に書いた偽のソースビューは行の包み直しに通らず、<style> の中から要素を作り出せない', async ({ page }) => {
+  const sheetHits = [];
+  await page.route('**/__probe-*.css', (route) => {
+    sheetHits.push(route.request().url());
+    return route.fulfill({ contentType: 'text/css', body: `#sidebar-col { background: ${RED} !important; }` });
+  });
+  // CSS の文字列の中の `\3c /style>` は、直列化すると素の `</style>` になる。
+  const breakout = '\\3c /style><link rel=stylesheet href=/__probe-src.css>' +
+    '<meta http-equiv=refresh content=0;url=about:blank>' +
+    '<div popover=manual id=srcpop>POP</div>' +
+    `<style>#sidebar-col { background: ${RED} !important; }`;
+  const before = await openMdBody(page, `
+<div class="source-view"><div class="source-main"><pre><code data-highlighted="yes"><style>.fake::after { content: "${breakout}"; }</style>one
+two
+</code></pre></div></div>
+`);
+  const url = page.url();
+  await page.waitForTimeout(500);
+  expect(page.url()).toBe(url);
+  expect(await appLook(page)).toEqual(before);
+  expect(sheetHits).toEqual([]);
+  expect(await page.evaluate(() => document.body.querySelectorAll('link, meta, [popover]').length)).toBe(0);
+  // 偽物の <code> は 1 行 1 要素に包まれない。
+  await expect(page.locator('#preview-pane .md-src-row')).toHaveCount(0);
+});
