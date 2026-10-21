@@ -8,6 +8,8 @@
 // 配色は context-menu / diff-toggle と同じくシステムカラー（Canvas/CanvasText/…）と
 // color-mix で theme-agnostic に組む。themes/*.css への追記は不要。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var overlay = null;
 
   function build(welcome) {

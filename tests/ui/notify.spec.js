@@ -3,8 +3,7 @@
 // 一覧を持っているのは Rust 側なので、ここでは `MdNotify.push` を直接叩いて
 // 「渡された」状態を作る。Rust との往復（既読を書いて渡し直す）は serve.rs に
 // 無いので、押した結果として **IPC に何が出たか**で確かめる。
-const { test, expect } = require('@playwright/test');
-const { openFolder, id, tab, display } = require('./helpers');
+const { test, expect, openFolder, id, tab, display } = require('./helpers');
 
 /// Rust から全件が渡ってきた、という状態を作る。`at` は相対時刻を安定させるため
 /// テスト時刻からの引き算で作る（固定の UNIX 秒を書くと日が変わるたび表示が動く）。

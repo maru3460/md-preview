@@ -6,8 +6,7 @@
 //
 // クリップボードの中身は autocopy.spec.js と同じく、navigator.clipboard を失敗させて
 // IPC スタブ（window.__mdIpc）へ落として見る。
-const { test, expect } = require('@playwright/test');
-const { openFolder, treeItem } = require('./helpers');
+const { test, expect, openFolder, treeItem } = require('./helpers');
 
 async function stubClipboard(page) {
   await page.addInitScript(() => {

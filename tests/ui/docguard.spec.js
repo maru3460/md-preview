@@ -4,8 +4,7 @@
 // 本文は a.md の応答を差し替えて作る（フィクスチャを足すとツリーの並びを見ている spec に
 // 響く）。差し替えるのはサーバの応答なので、本物の読み込み経路（fetch → 差し込み →
 // hydrate）を通る。
-const { test, expect } = require('@playwright/test');
-const { openFolder, treeItem } = require('./helpers');
+const { test, expect, openFolder, treeItem } = require('./helpers');
 
 const RED = 'rgb(255, 0, 0)';
 

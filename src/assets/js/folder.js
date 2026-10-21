@@ -1,4 +1,6 @@
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // 現在プレビュー中のファイルの識別子（絶対パス）。何も開いていなければ null。
   var currentFilePath = null;
   // 本文フェッチの世代。loadPreview と clearPreview が進め、応答が届いた側は

@@ -9,8 +9,7 @@
 // クリップボードの中身は window.__mdIpc（serve.rs の IPC スタブ）で見る。
 // そのためには navigator.clipboard 側を失敗させて Rust への経路へ落とす必要がある
 // ——実機の mdpreview:// でも、ユーザー ジェスチャの外から呼ぶと同じ道を通る。
-const { test, expect } = require('@playwright/test');
-const { MULTI_URL, open, openFolder, treeItem } = require('./helpers');
+const { test, expect, MULTI_URL, open, openFolder, treeItem } = require('./helpers');
 
 /// clipboard を必ず失敗させて IPC 経路に寄せる。中身を観測するのはこの道しかない。
 async function stubClipboard(page) {

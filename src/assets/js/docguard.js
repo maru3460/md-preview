@@ -16,6 +16,8 @@
 // 文書の要素で名前がすり替わらないよう（`<form>` の中の `<input name=remove>` で
 // `form.remove` が文書の要素になる。DOM clobbering）、要素のメソッドは prototype から呼ぶ。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var SCOPE_ROOT = '.markdown-body';
   var XHTML = 'http://www.w3.org/1999/xhtml';
 

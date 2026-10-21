@@ -3,8 +3,7 @@
 // 「別のファイルを開く」入口（ツリー・[ ]・⌘P）と、サイドバーのフォーカス排他。
 // 起動時に何が開いていても同じ導線が揃っていること（issue #12 でモードを 1 本に
 // 畳んだので、cwd 外のファイルを 1 つ渡した起動でもツリーとタブが出る）もここ。
-const { test, expect } = require('@playwright/test');
-const { id, ONE_FILE_URL, open, openFolder, treeItem } = require('./helpers');
+const { test, expect, id, ONE_FILE_URL, open, openFolder, treeItem } = require('./helpers');
 
 test('⌘P でファイル検索が開く', async ({ page }) => {
   await openFolder(page);

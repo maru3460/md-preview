@@ -15,6 +15,8 @@
 // が文書の要素になる。`<form>` の中の `<input name=tagName>` で `form.tagName` も同じ。
 // DOM clobbering）、document と要素のメソッド・プロパティは prototype から呼ぶ。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // 合図を出しておく時間。写した中身を読ませるので、トースト（1500ms）より長い。
   // 選択即コピーの合図（チェック 1 つ、620ms）より長いのは、あちらは自分で選んだ文字を
   // 見ながらなので文字が要らず、こちらは中身が見えないまま写すため。

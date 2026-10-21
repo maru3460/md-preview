@@ -3,8 +3,7 @@
 // オーバーレイの譲り合い（Esc が 1 回で 1 つだけ閉じる）、素キーのスクロール、
 // ヘルプが keymap から作られていること、iframe 越しのクリックでメニューが閉じること。
 // どれも「本文にフォーカスがある」という前提が崩れると一斉に死ぬ部分。
-const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 test('Esc は最前面のオーバーレイを 1 つずつ閉じる', async ({ page }) => {
   await openFolder(page);

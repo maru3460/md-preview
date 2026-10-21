@@ -13,6 +13,12 @@ rust-version = "1.89"
 name = "md"
 path = "src/main.rs"
 
+# 開発用サーバの中のテスト（起動用の script を差し込む位置）も `cargo test` で回す。
+# examples の単体テストは既定では走らない。
+[[example]]
+name = "serve"
+test = true
+
 [dependencies]
 wry = { version = "0.55", features = ["transparent"] }
 tao = "0.35"

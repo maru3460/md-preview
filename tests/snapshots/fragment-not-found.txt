@@ -1,4 +1,6 @@
 status: 404
-content-type: 
+cache-control: no-store
+content-security-policy: script-src 'none'; default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'
+x-content-type-options: nosniff
 ----
 Not Found

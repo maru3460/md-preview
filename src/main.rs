@@ -616,13 +616,21 @@ fn main() {
     let (theme_paint, appearance, mut active_theme) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
+    // CSP はプロセスの間ずっと同じものを使う（設定の切り替えは ⌘Q の後から効く）。
+    // 設定の 2 つのスイッチはまだ無いので、いまは常に両方 OFF。
+    let page = md_preview::app_config::PageInputs {
+        theme_css: &theme_css,
+        custom_css: &custom_css,
+        policy: md_preview::csp::Policy::default(),
+        lib_origin: md_preview::csp::APP_ORIGIN,
+    };
     let mut config = if stdin_mode {
-        AppConfig::from_stdin(&theme_css, &custom_css, &current_dir, &open_flags.origin)
+        AppConfig::from_stdin(&page, &current_dir, &open_flags.origin)
     } else if open_flags.notify {
         // 受け取る md が居なかった `--notify`。積む先が無いので普通に開く（#36）。
-        AppConfig::from_notify(&targets, &theme_css, &custom_css, &current_dir)
+        AppConfig::from_notify(&targets, &page, &current_dir)
     } else {
-        AppConfig::from_paths(&targets, &theme_css, &custom_css, &current_dir)
+        AppConfig::from_paths(&targets, &page, &current_dir)
     };
     // 積む先が無かった `--notify` も、ベルに既読の行として残し、開くタブを「ベルから
     // 開いた」扱いにする（#68）。名乗りの出る場所はベルの行と、ベルから開いたタブの帯
@@ -651,6 +659,7 @@ fn main() {
         origins: _,
         initial_ids: _,
         bell_opened: _,
+        policy: _,
     } = config;
 
     // 転送で開かれるたびに更新する（#49）ので mut。
@@ -737,12 +746,7 @@ fn main() {
 
     // 配信の文脈はクロージャの外で作る。root は実行中に動く（#34）ので、
     // イベントループ側からも同じものを触れる必要がある。
-    let ctx = std::sync::Arc::new(request::RequestContext::new(
-        root_dir.clone(),
-        html_bytes,
-        theme_css,
-        custom_css,
-    ));
+    let ctx = std::sync::Arc::new(request::RequestContext::new(root_dir.clone(), html_bytes, &page));
     let webview = webview_builder
         .with_initialization_script(&init_script)
         .with_navigation_handler(|url: String| {
@@ -768,7 +772,7 @@ fn main() {
                 let query = request.uri().query().unwrap_or("").to_string();
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
-                    responder.respond(handle_request(&ctx, &url_path, &query));
+                    responder.respond(handle_request(&ctx, &url_path, &query, request.headers()));
                 });
             }
         })
@@ -1717,8 +1721,8 @@ fn watch_extra(watcher: &SharedWatcher, file: &Path) {
 }
 
 /// `open` で起動すると任意コード実行・任意URL遷移になりうる拡張子を弾く。
-/// ページに CSP は無く、本文の script もこの IPC を叩けるので、ここが実行系に対する
-/// 唯一のガードになる。
+/// 既定では文書の JS は CSP で止まっているが、設定で動かすと文書の script もこの IPC を
+/// 叩けるので、そのときはここが実行系に対する唯一のガードになる。
 /// （`open` はテキスト系拡張子を実行せず既定エディタで開くだけなので、ここでは
 /// 実際に「起動/遷移」しうる型だけを対象にする。）
 fn is_blocked_ext(path: &Path) -> bool {

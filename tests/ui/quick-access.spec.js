@@ -6,8 +6,7 @@
 // スタブは `window.__mdIpc` に積むだけで、ディスクへは書かない。
 // つまりページを開き直すたびに Quick Access は空に戻る（`MD_QUICK_ACCESS` が
 // 常に `[]` で焼かれる）ので、テスト間の後片付けは要らない。
-const { test, expect } = require('@playwright/test');
-const { ROOT_URL, open, openFolder, treeItem, id } = require('./helpers');
+const { test, expect, ROOT_URL, open, openFolder, treeItem, id } = require('./helpers');
 
 /// Quick Access の行。ツリーの行と同じ `.tree-item` を着ているので、**必ず枠で絞る**。
 function quickRows(page) {

@@ -9,6 +9,8 @@
 // 安全性: クリップボード書き込みは MdCommon.copyText に一本化している。
 // data-src-line は数値のみで、コメント本文/引用は textContent 経由でしか DOM に入れない。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // ── 状態（配列がコメントの真実） ──────────────────────────────
   var comments = [];      // { id, file, startLine, endLine, quote, body }
   var nextId = 1;

@@ -1,4 +1,7 @@
 status: 200
+cache-control: no-store
+content-security-policy: script-src 'none'; default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'
 content-type: application/json; charset=utf-8
+x-content-type-options: nosniff
 ----
 [{"name":"code","path":"<FIXTURES>/code","kind":"dir"},{"name":"blob.bin","path":"<FIXTURES>/blob.bin","kind":"file"},{"name":"embed.txt","path":"<FIXTURES>/embed.txt","kind":"file"},{"name":"kitchen-sink.md","path":"<FIXTURES>/kitchen-sink.md","kind":"file"},{"name":"page.html","path":"<FIXTURES>/page.html","kind":"file"}]

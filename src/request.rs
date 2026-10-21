@@ -2,13 +2,17 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, DRAWIO_JS, MERMAID_JS};
-use crate::fsread::{is_automount_path, read_regular, read_regular_string, too_large_message, ReadError, ASSET_MAX_BYTES, TEXT_MAX_BYTES};
+use crate::csp::{Kind, Policy};
+use crate::html::{attr_escape, build_html, html_escape, json_string, parse_frontmatter, render_body_in, render_frontmatter_html, BUILTIN_LIBS};
+use crate::fsread::{is_automount_path, open_regular, read_regular, read_regular_string, too_large_message, ReadError, ASSET_MAX_BYTES, TEXT_MAX_BYTES};
 use crate::urlpath::{asset_url, display_id, DocBase, ABS_PREFIX};
 pub use crate::urlpath::{file_id, percent_decode};
 
 
 type Response = wry::http::Response<Cow<'static, [u8]>>;
+
+/// リクエストのヘッダ。いま見るのは `Range` だけ（動画・音声の部分配信）。
+pub use wry::http::{HeaderMap, HeaderName, HeaderValue};
 
 /// すべての応答に付ける。WebKit にディスクキャッシュを作らせないため。
 ///
@@ -61,6 +65,17 @@ pub fn guess_mime(path: &Path) -> &'static str {
         Some("woff") => "font/woff",
         Some("ttf") => "font/ttf",
         Some("otf") => "font/otf",
+        // 手元の PDF（`<embed>` / `<object>`）と動画・音声。ヘッダの CSP と一緒に
+        // `nosniff` を付けるので、octet-stream のままにせず型を名乗る。
+        Some("pdf") => "application/pdf",
+        Some("mp4" | "m4v") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("webm") => "video/webm",
+        Some("ogv") => "video/ogg",
+        Some("mp3") => "audio/mpeg",
+        Some("m4a") => "audio/mp4",
+        Some("wav") => "audio/wav",
+        Some("ogg" | "oga") => "audio/ogg",
         _ => "application/octet-stream",
     }
 }
@@ -495,7 +510,9 @@ fn binary_notice(path: &Path) -> String {
 /// ではなく `path` の親であることに注意（root 固定だと `docs/a.md` の `fig.png` が
 /// root 直下を引きに行く）。
 /// 読めなければ None（404 にするか通知を出すかは呼び出し側が決める）。
-pub fn render_file(path: &Path, root: &Path, mode: ViewMode) -> Option<RenderedFile> {
+///
+/// `policy` は起動時に決めた CSP。md の描画（[`DocBase`]）まで届ける。
+pub fn render_file(path: &Path, root: &Path, mode: ViewMode, policy: Policy) -> Option<RenderedFile> {
     let kind = match mode {
         ViewMode::RawSource => ViewKind::Source,
         ViewMode::Normal => classify_ext(path),
@@ -544,7 +561,7 @@ pub fn render_file(path: &Path, root: &Path, mode: ViewMode) -> Option<RenderedF
                 html: format!(
                     "{}{}",
                     render_frontmatter_html(&fm_pairs, offset),
-                    render_body_in(body, Some(&DocBase::new(dir, root)), offset)
+                    render_body_in(body, Some(&DocBase::new(dir, root).with_policy(policy)), offset)
                 ),
                 body_class: "",
             }
@@ -561,7 +578,8 @@ pub fn render_file(path: &Path, root: &Path, mode: ViewMode) -> Option<RenderedF
 /// `url` は [`asset_url`] が組んだ絶対 URL パス。`src` を同一スキームのファイル URL に
 /// することで、iframe 内の相対リンク・画像・CSS がその html の場所を基準に解決される。
 /// root の外の html も `/__abs/` 配下で実パスの階層を保つので、同じ理屈で通る。
-/// sandbox は付けない（ローカルファイル閲覧用途。JS 実行・同一オリジンを許可して忠実に描画）。
+/// sandbox は付けない（同一オリジンのまま、親が外から ⌘F・コメント・選択コピーを効かせるため）。
+/// 中の script は、配る側が付けるヘッダの CSP で止まる（設定で JS を動かしたときだけ動く）。
 pub fn render_html_iframe(url: &str, title: &str) -> String {
     format!(
         r#"<iframe class="html-frame" src="{src}" title="{title}" referrerpolicy="no-referrer"></iframe>"#,
@@ -637,10 +655,8 @@ fn lang_label(hljs_lang: &str) -> String {
 }
 
 fn serve_builtin_lib(name: &str) -> Response {
-    let js = match name {
-        "mermaid.min.js" => MERMAID_JS,
-        "drawio-viewer.min.js" => DRAWIO_JS,
-        _ => return not_found_response(),
+    let Some((_, js)) = BUILTIN_LIBS.iter().find(|(n, _)| *n == name) else {
+        return not_found_response();
     };
     ok_response("application/javascript; charset=utf-8", js.as_bytes().to_vec())
 }
@@ -671,7 +687,8 @@ fn handle_dir(id: &str, root_dir: &Path) -> Response {
 /// `/__abs/` を置くと、iframe で描画している html の JS が同一オリジンのまま
 /// root の外のファイルを読めるようになる。それでも置いているのは、`../assets/fig.png`
 /// のような日常的な相対参照を表示するのに他の道が無いため（開くファイルを絞っても、
-/// 画像は結局 root の外を引く）。信頼できない html を開かない、が前提。
+/// 画像は結局 root の外を引く）。html の JS は既定では CSP で止まるので、これを悪用できるのは
+/// 設定で文書の JS を動かしたときだけになる。
 fn asset_path(url_path: &str, root_dir: &Path) -> Option<PathBuf> {
     match url_path.strip_prefix(ABS_PREFIX) {
         Some(rest) => resolve_abs(PathBuf::from(format!("/{}", rest))),
@@ -679,31 +696,175 @@ fn asset_path(url_path: &str, root_dir: &Path) -> Option<PathBuf> {
     }
 }
 
-fn handle_asset(url_path: &str, root_dir: &Path, theme_css: &str, custom_css: &str) -> Response {
-    let Some(file_path) = asset_path(url_path, root_dir) else { return not_found_response() };
-    match classify_ext(&file_path) {
+/// 実ファイルの配信。返す kind は、md の 1 枚ページと `.html` が [`Kind::Doc`]、
+/// それ以外（画像・CSS・404 など）が [`Kind::Other`]。
+///
+/// 配り方は要求された URL の分類で決め、URL と実体（canonicalize した後）の分類が
+/// 食い違えば 404 にする。`a.png` が `evil.html` を指すシンボリックリンクのとき、
+/// 実体の側で配ると html のページとして（設定で JS を動かしていれば script ごと）
+/// 開いてしまう。逆に `a.html` が別の種類を指すときも、`Doc` として緩めた指定で配らない。
+fn handle_asset(ctx: &RequestContext, url_path: &str, headers: &HeaderMap) -> (Response, Kind) {
+    let root_dir = ctx.root();
+    let Some(file_path) = asset_path(url_path, &root_dir) else { return (not_found_response(), Kind::Other) };
+    let kind = classify_ext(&file_path);
+    if classify_ext(Path::new(url_path)) != kind {
+        return (not_found_response(), Kind::Other);
+    }
+    match kind {
         // md を直接開いた場合はページとして描画する（本来のページと同じ経路）。
+        // アプリの中でこのページが出るのは、`.html` や md の本文の iframe などが `.md` を
+        // 指したときだけ（サブフレーム）。`.html` と同じ `Doc` で配るので、既定では
+        // 色付けや図の script も止まる。
         ViewKind::Markdown => {
             let title = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("Markdown Preview");
-            let Some(r) = render_file(&file_path, root_dir, ViewMode::Normal) else {
-                return not_found_response();
+            let Some(r) = render_file(&file_path, &root_dir, ViewMode::Normal, ctx.policy) else {
+                return (not_found_response(), Kind::Other);
             };
-            let page = build_html(&r.html, title, theme_css, custom_css, r.body_class);
-            ok_response("text/html; charset=utf-8", page.into_bytes())
+            let page = build_html(
+                &r.html,
+                title,
+                &ctx.theme_css(),
+                &ctx.custom_css,
+                r.body_class,
+                &ctx.policy,
+                &ctx.lib_origin,
+            );
+            (ok_response("text/html; charset=utf-8", page.into_bytes()), Kind::Doc)
         }
-        // iframe に配信する html は 2 つ通してから返す。行の錨（`inject_src_lines`）と、
-        // head 内 CSS が JS より先に適用されるようにする style-gate（`inject_style_gate`）。
+        // iframe に配信する html には行の錨（`inject_src_lines`）を刻む。
+        // style-gate（`inject_style_gate`）は文書の JS を動かす設定のときだけ足す。止めている
+        // ときは先に走る JS がいないので要らず、足すと gate 自身が CSP に止められる。
         // 順序はどちらでもよい（差し込む文字列が互いのパターンを含まず、改行も足さない）。
         ViewKind::HtmlPage => {
-            let Ok(bytes) = read_regular(&file_path, TEXT_MAX_BYTES) else { return not_found_response() };
-            ok_response("text/html; charset=utf-8", inject_style_gate(inject_src_lines(bytes)))
+            let Ok(bytes) = read_regular(&file_path, TEXT_MAX_BYTES) else {
+                return (not_found_response(), Kind::Other);
+            };
+            let bytes = inject_src_lines(bytes);
+            let bytes = if ctx.policy.doc_scripts { inject_style_gate(bytes) } else { bytes };
+            (ok_response("text/html; charset=utf-8", bytes), Kind::Doc)
         }
         // 画像・CSS・フォントなど。iframe 内の html から参照されるサブリソースを含む。
-        _ => {
-            let Ok(bytes) = read_regular(&file_path, ASSET_MAX_BYTES) else { return not_found_response() };
-            ok_response(guess_mime(&file_path), bytes)
+        _ => (serve_file(&file_path, headers), Kind::Other),
+    }
+}
+
+/// 動画・音声の `Range` 要求に返す 1 回ぶんの上限。要求がこれより広ければ（`bytes=0-` の
+/// ような開いた形を含む）頭からこの大きさで切って返し、続きはプレーヤーが取り直す。
+const RANGE_CHUNK_MAX: u64 = 8 * 1024 * 1024;
+
+fn is_media(mime: &str) -> bool {
+    mime.starts_with("video/") || mime.starts_with("audio/")
+}
+
+/// 画像・動画・PDF・CSS などをそのまま返す。動画と音声は `Range` を受けて部分だけを読む。
+///
+/// 全体を返すときは [`ASSET_MAX_BYTES`] までしか読まない（全量をメモリに載せるため）。
+/// 部分を返すときは上限を掛けない。読むのは要求された範囲（最大 [`RANGE_CHUNK_MAX`]）だけで、
+/// 256 MB を超える手元の動画もこちらで出る。
+fn serve_file(path: &Path, headers: &HeaderMap) -> Response {
+    let mime = guess_mime(path);
+    if is_media(mime) {
+        if let Some(range) = headers.get("Range").and_then(|v| v.to_str().ok()) {
+            if let Some(resp) = serve_range(path, mime, range) {
+                return resp;
+            }
         }
     }
+    let Ok(bytes) = read_regular(path, ASSET_MAX_BYTES) else { return not_found_response() };
+    let resp = ok_response(mime, bytes);
+    if is_media(mime) {
+        // 部分で取り直せることを伝える。プレーヤーはこれを見てシークに Range を使う。
+        with_header(resp, "Accept-Ranges", "bytes")
+    } else {
+        resp
+    }
+}
+
+fn with_header(mut resp: Response, name: &'static str, value: &str) -> Response {
+    if let Ok(v) = wry::http::HeaderValue::from_str(value) {
+        resp.headers_mut().insert(name, v);
+    }
+    resp
+}
+
+/// `Range: bytes=…` の解釈。
+#[derive(Debug, PartialEq, Eq)]
+enum ByteRange {
+    /// 返す範囲（両端を含む）。
+    Part(u64, u64),
+    /// 範囲がファイルの外（416）。
+    Unsatisfiable,
+}
+
+/// 1 つの範囲だけを受ける。読めない書き方と複数の範囲は `None`（Range を無視して全体を
+/// 返す。RFC 9110 が許す扱い）。
+fn parse_range(header: &str, len: u64) -> Option<ByteRange> {
+    let spec = header.trim().strip_prefix("bytes=")?.trim();
+    if spec.contains(',') {
+        return None;
+    }
+    let (a, b) = spec.split_once('-')?;
+    let (a, b) = (a.trim(), b.trim());
+    let (start, end) = if a.is_empty() {
+        // `bytes=-N`: 末尾の N バイト。
+        let n: u64 = b.parse().ok()?;
+        if n == 0 || len == 0 {
+            return Some(ByteRange::Unsatisfiable);
+        }
+        (len.saturating_sub(n), len - 1)
+    } else {
+        let start: u64 = a.parse().ok()?;
+        let end = if b.is_empty() { u64::MAX } else { b.parse().ok()? };
+        if end < start {
+            return None;
+        }
+        if start >= len {
+            return Some(ByteRange::Unsatisfiable);
+        }
+        (start, end.min(len - 1))
+    };
+    let end = end.min(start + RANGE_CHUNK_MAX - 1);
+    Some(ByteRange::Part(start, end))
+}
+
+/// 206（または 416）を返す。開けないときは 404。`Range` を解釈できないときは `None` で、
+/// 呼び出し側が全体を返す。
+fn serve_range(path: &Path, mime: &str, header: &str) -> Option<Response> {
+    use std::io::{Read, Seek, SeekFrom};
+    // 開くときの大きさの上限は掛けない。読むのは下で切った範囲だけ。
+    let Ok((mut file, len)) = open_regular(path, u64::MAX) else { return Some(not_found_response()) };
+    let (start, end) = match parse_range(header, len)? {
+        ByteRange::Part(s, e) => (s, e),
+        ByteRange::Unsatisfiable => {
+            let resp = wry::http::Response::builder()
+                .status(416)
+                .header(NO_STORE.0, NO_STORE.1)
+                .header("Content-Range", format!("bytes */{len}"))
+                .body(Cow::Borrowed(b"" as &[u8]))
+                .unwrap();
+            return Some(resp);
+        }
+    };
+    let want = end - start + 1;
+    let mut buf = Vec::with_capacity(want as usize);
+    if file.seek(SeekFrom::Start(start)).is_err() || (&mut file).take(want).read_to_end(&mut buf).is_err() {
+        return Some(not_found_response());
+    }
+    // 開いた後に縮んだファイルでも、実際に読めたぶんだけを名乗る。
+    if buf.is_empty() {
+        return Some(not_found_response());
+    }
+    let end = start + buf.len() as u64 - 1;
+    let resp = wry::http::Response::builder()
+        .status(206)
+        .header("Content-Type", mime)
+        .header(NO_STORE.0, NO_STORE.1)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+        .header("Content-Length", buf.len().to_string())
+        .body(Cow::Owned(buf))
+        .unwrap();
+    Some(resp)
 }
 
 /// ASCII パターンを大文字小文字無視で探し、元バイト列での開始位置を返す。
@@ -990,15 +1151,24 @@ pub struct RequestContext {
     /// テーマの層（[`crate::theme::style_layer`]）。設定画面と `md theme` で変わる（#38）。
     theme_css: RwLock<String>,
     pub custom_css: String,
+    /// 起動時に決めた CSP。初期ページの meta を組んだときと同じ値を渡すこと
+    /// （meta とヘッダが別々の値を見ないように）。プロセスの間は変えない。
+    pub policy: Policy,
+    /// `/__lib/` を許す住所（[`crate::csp::meta`]）。md を直接開いた 1 枚ページの meta に使う。
+    pub lib_origin: String,
 }
 
 impl RequestContext {
-    pub fn new(root_dir: PathBuf, index_html: Vec<u8>, theme_css: String, custom_css: String) -> Self {
+    /// `page` は初期ページ（`index_html`）を組んだときと同じものを渡す。CSS と CSP を
+    /// 名前付きの欄で受けるのは、文字列の引数が並んで取り違えても型が通ってしまうから。
+    pub fn new(root_dir: PathBuf, index_html: Vec<u8>, page: &crate::app_config::PageInputs) -> Self {
         RequestContext {
             root_dir: RwLock::new(root_dir),
             index_html: RwLock::new(index_html),
-            theme_css: RwLock::new(theme_css),
-            custom_css,
+            theme_css: RwLock::new(page.theme_css.to_string()),
+            custom_css: page.custom_css.to_string(),
+            policy: page.policy,
+            lib_origin: page.lib_origin.to_string(),
         }
     }
 
@@ -1076,8 +1246,11 @@ enum Route<'a> {
     Raw(String),
     Diff(String),
     DiffStat(String),
-    /// 起動時に組み立てた初期ページ。
+    /// 起動時に組み立てた初期ページ。クエリの無い `/` だけ。
     Index,
+    /// 知らないクエリの付いた `/`。初期ページとして返すと、ヘッダの無い md の画面が
+    /// 別の URL でも開けてしまう。
+    NotFound,
     /// 画像・CSS・フォントなどの実ファイル配信。
     Asset(&'a str),
 }
@@ -1100,10 +1273,19 @@ fn parse_route<'a>(url_path: &'a str, query: &str) -> Route<'a> {
             _ => {}
         }
     }
-    if url_path == "/" {
+    if is_index(url_path, query) {
         return Route::Index;
     }
+    if url_path == "/" {
+        return Route::NotFound;
+    }
     Route::Asset(url_path)
+}
+
+/// md の画面そのもの（クエリの無い `/`）を指す URL か。配る側（`parse_route`）と、
+/// その画面へ入ってよいかを決める側が、同じ判定を使うための関数。
+pub fn is_index(url_path: &str, query: &str) -> bool {
+    url_path == "/" && query.is_empty()
 }
 
 /// 識別子を実ファイルへ解決する。**識別子とファイルの唯一の関門**で、
@@ -1148,7 +1330,7 @@ fn respond_fragment(body_class: &str, html: String) -> Response {
 
 fn serve_view(ctx: &RequestContext, id: &str, mode: ViewMode) -> Response {
     let Some(path) = id_to_path(id) else { return not_found_response() };
-    let Some(r) = render_file(&path, &ctx.root(), mode) else { return not_found_response() };
+    let Some(r) = render_file(&path, &ctx.root(), mode, ctx.policy) else { return not_found_response() };
     respond_fragment(r.body_class, r.html)
 }
 
@@ -1169,8 +1351,39 @@ fn serve_diffstat(id: &str) -> Response {
     )
 }
 
-pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Response {
-    match parse_route(url_path, query) {
+/// 1 リクエストを処理する。カスタムプロトコルのハンドラ・開発用サーバ・テストが
+/// みなここを呼ぶ。
+///
+/// CSP のヘッダはここで付ける（[`crate::csp::header`]）。呼ぶ側で付けると、テストと
+/// スナップショットと `examples/serve.rs` から見えない。`headers` はリクエストのヘッダで、
+/// いまは動画・音声の `Range` にだけ使う。
+pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str, headers: &HeaderMap) -> Response {
+    let (resp, kind) = route(ctx, url_path, query, headers);
+    with_csp(resp, crate::csp::header(&ctx.policy, kind).as_deref())
+}
+
+/// 応答に CSP のヘッダを付ける。`csp` が None（md の画面）なら何も足さない。
+///
+/// Why not ヘッダにできない値のときは付けずに返す: 守りの無い文書がそのまま開く。
+/// 中身は固定の文字列から組むので起きないはずだが、起きたら空の 500 にして閉じる側に倒す。
+fn with_csp(mut resp: Response, csp: Option<&str>) -> Response {
+    let Some(csp) = csp else { return resp };
+    let Ok(v) = HeaderValue::from_str(csp) else {
+        return wry::http::Response::builder()
+            .status(500)
+            .header(NO_STORE.0, NO_STORE.1)
+            .body(Cow::Borrowed(b"" as &[u8]))
+            .unwrap();
+    };
+    resp.headers_mut().insert("Content-Security-Policy", v);
+    resp.headers_mut().insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
+    resp
+}
+
+/// ルートごとの応答と、その種類。種類は `Route` で決め、既定は [`Kind::Other`]。
+/// `Index` と `Doc` だけを明示で返す（`Doc` は [`handle_asset`] が決める）。
+fn route(ctx: &RequestContext, url_path: &str, query: &str, headers: &HeaderMap) -> (Response, Kind) {
+    let resp = match parse_route(url_path, query) {
         Route::BuiltinLib(name) => serve_builtin_lib(name),
         Route::Dir(id) => handle_dir(&id, &ctx.root()),
         Route::HasMd(id) => handle_has_md(&id, &ctx.root()),
@@ -1180,9 +1393,11 @@ pub fn handle_request(ctx: &RequestContext, url_path: &str, query: &str) -> Resp
         Route::Raw(id) => serve_view(ctx, &id, ViewMode::RawSource),
         Route::Diff(id) => serve_diff(&id),
         Route::DiffStat(id) => serve_diffstat(&id),
-        Route::Index => ok_response("text/html; charset=utf-8", ctx.index_html()),
-        Route::Asset(p) => handle_asset(p, &ctx.root(), &ctx.theme_css(), &ctx.custom_css),
-    }
+        Route::NotFound => not_found_response(),
+        Route::Index => return (ok_response("text/html; charset=utf-8", ctx.index_html()), Kind::Index),
+        Route::Asset(p) => return handle_asset(ctx, p, headers),
+    };
+    (resp, Kind::Other)
 }
 
 /// サイドバーのフォルダに「中に md がある」点を出すかの判定。
@@ -1223,10 +1438,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.md"), "# a").unwrap();
 
-        let index = crate::html::build_folder_html("t", "THEME_OLD", "", &[]).into_bytes();
-        let ctx = RequestContext::new(dir.clone(), index, "THEME_OLD".to_string(), String::new());
+        let index = crate::html::build_folder_html("t", "THEME_OLD", "", &Policy::default(), crate::csp::APP_ORIGIN).into_bytes();
+        let ctx = RequestContext::new(
+            dir.clone(),
+            index,
+            &crate::app_config::PageInputs { theme_css: "THEME_OLD", ..Default::default() },
+        );
         let body = |path: &str| {
-            String::from_utf8(handle_request(&ctx, path, "").body().to_vec()).unwrap()
+            String::from_utf8(handle_request(&ctx, path, "", &HeaderMap::new()).body().to_vec()).unwrap()
         };
 
         ctx.set_theme("THEME_NEW".to_string());
@@ -1249,9 +1468,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&inner).unwrap();
 
-        let ctx = RequestContext::new(base.clone(), Vec::new(), String::new(), String::new());
+        let ctx = RequestContext::new(base.clone(), Vec::new(), &crate::app_config::PageInputs::default());
         let ask = |ctx: &RequestContext, dir: &Path| {
-            handle_request(ctx, "/", &format!("dir={}", dir.to_string_lossy())).status()
+            handle_request(ctx, "/", &format!("dir={}", dir.to_string_lossy()), &HeaderMap::new()).status()
         };
 
         assert_eq!(ask(&ctx, &base), 200, "起動時の root は読める");
@@ -1276,12 +1495,37 @@ mod tests {
 
     #[test]
     fn builtin_lib_served_for_known_names() {
-        for name in ["mermaid.min.js", "drawio-viewer.min.js"] {
+        for (name, _) in BUILTIN_LIBS {
             let resp = serve_builtin_lib(name);
             assert_eq!(resp.status(), 200, "{name} should be 200");
             assert!(resp.body().len() > 100_000, "{name} body too small");
             assert!(resp.headers()["Content-Type"].to_str().unwrap().contains("javascript"));
         }
+    }
+
+    #[test]
+    fn a_csp_that_cannot_be_a_header_turns_the_response_into_an_empty_500() {
+        let resp = with_csp(ok_response("text/html; charset=utf-8", b"<p>doc</p>".to_vec()), Some("bad\nvalue"));
+        assert_eq!(resp.status(), 500);
+        assert!(resp.body().is_empty());
+        assert!(resp.headers().get("Content-Security-Policy").is_none());
+    }
+
+    #[test]
+    fn the_index_gets_no_csp_header_added() {
+        let resp = with_csp(ok_response("text/html; charset=utf-8", b"x".to_vec()), None);
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().get("Content-Security-Policy").is_none());
+        assert!(resp.headers().get("X-Content-Type-Options").is_none());
+    }
+
+    #[test]
+    fn only_the_bare_root_is_the_index() {
+        assert!(is_index("/", ""));
+        assert!(!is_index("/", "x=1"));
+        assert!(!is_index("/", "file=%2Fa.md"));
+        assert!(!is_index("/a.md", ""));
+        assert!(!is_index("", ""));
     }
 
     #[test]
@@ -1338,7 +1582,7 @@ mod tests {
         std::fs::write(&file, [0xff, 0xfe, 0x00]).unwrap();
 
         for mode in [ViewMode::Normal, ViewMode::RawSource] {
-            let r = render_file(&file, &dir, mode).unwrap();
+            let r = render_file(&file, &dir, mode, Policy::default()).unwrap();
             assert_eq!(r.kind, ViewKind::Binary);
             assert_eq!(r.body_class, "source-page");
             assert!(r.html.contains("md-notice"), "{}", r.html);
@@ -1671,7 +1915,7 @@ mod tests {
         let md = dir.join("doc.md");
         std::fs::write(&md, "[code](./code.txt#L2)\n").unwrap();
 
-        let r = render_file(&md, &dir, ViewMode::Normal).unwrap();
+        let r = render_file(&md, &dir, ViewMode::Normal, Policy::default()).unwrap();
         assert_eq!(r.kind, ViewKind::Markdown);
         assert!(r.html.contains("code-embed"), "not embedded: {}", r.html);
         assert!(r.html.contains(">two</code>"), "wrong line: {}", r.html);
@@ -1975,6 +2219,9 @@ mod tests {
     fn non_query_routes() {
         assert_eq!(parse_route("/__lib/mermaid.min.js", ""), Route::BuiltinLib("mermaid.min.js"));
         assert_eq!(parse_route("/", ""), Route::Index);
+        // 知らないクエリの付いた `/` は初期ページにしない（ヘッダの無い画面を別の URL で開かせない）。
+        assert_eq!(parse_route("/", "foo"), Route::NotFound);
+        assert_eq!(parse_route("/", "foo=bar"), Route::NotFound);
         assert_eq!(parse_route("/img/a.png", ""), Route::Asset("/img/a.png"));
         // 知らないキーはアセット配信に落ちる（クエリ付きの画像 URL 等）。
         assert_eq!(parse_route("/img/a.png", "v=2"), Route::Asset("/img/a.png"));
@@ -2008,12 +2255,295 @@ mod tests {
         // html は中身を読まずに iframe を返す（描くのは WebView 側）。存在しない
         // パスでも 200 になるのはそのため。
         let root = Path::new("/tmp/whatever");
-        let r = render_file(Path::new("/tmp/whatever/foo.html"), root, ViewMode::Normal).unwrap();
+        let r = render_file(Path::new("/tmp/whatever/foo.html"), root, ViewMode::Normal, Policy::default()).unwrap();
         assert_eq!(r.kind, ViewKind::HtmlPage);
         assert_eq!(r.body_class, "html-page");
         assert!(r.html.contains(r#"class="html-frame""#), "{}", r.html);
         assert!(r.html.contains(r#"src="/foo.html""#), "{}", r.html);
         // raw トグル時はソース扱いなので、読めなければ None（404）。
-        assert!(render_file(Path::new("/tmp/whatever/foo.html"), root, ViewMode::RawSource).is_none());
+        assert!(render_file(Path::new("/tmp/whatever/foo.html"), root, ViewMode::RawSource, Policy::default()).is_none());
+    }
+
+    // ── CSP のヘッダ ──────────────────────────────────────────────
+
+    /// 抜けるときに消す一時ディレクトリ。
+    struct Tmp(PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tmp(tag: &str) -> Tmp {
+        let d = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("md-req-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        Tmp(d)
+    }
+
+    fn ctx_with(root: &Path, policy: Policy) -> RequestContext {
+        RequestContext::new(
+            root.to_path_buf(),
+            b"<!-- index -->".to_vec(),
+            &crate::app_config::PageInputs { policy, ..Default::default() },
+        )
+    }
+
+    fn csp_of(resp: &Response) -> Option<String> {
+        resp.headers().get("Content-Security-Policy").map(|v| v.to_str().unwrap().to_string())
+    }
+
+    fn script_src(resp: &Response) -> String {
+        let csp = csp_of(resp).expect("CSP のヘッダが無い");
+        csp.split("; ").find(|d| d.starts_with("script-src")).unwrap().to_string()
+    }
+
+    const JS_ON: Policy = Policy { doc_scripts: true, external: false };
+
+    #[test]
+    fn only_the_bare_index_goes_without_a_header() {
+        let d = tmp("idx");
+        for policy in [Policy::default(), JS_ON] {
+            let ctx = ctx_with(&d.0, policy);
+            let index = handle_request(&ctx, "/", "", &HeaderMap::new());
+            assert_eq!(index.status(), 200);
+            assert_eq!(csp_of(&index), None, "md の画面は meta だけで守る");
+            assert!(index.headers().get("X-Content-Type-Options").is_none());
+
+            let unknown = handle_request(&ctx, "/", "foo", &HeaderMap::new());
+            assert_eq!(unknown.status(), 404, "知らないクエリの付いた / は 404");
+            assert_eq!(script_src(&unknown), "script-src 'none'");
+        }
+    }
+
+    #[test]
+    fn query_routes_are_other_even_when_document_scripts_are_on() {
+        let d = tmp("query");
+        std::fs::write(d.0.join("a.md"), "# a").unwrap();
+        std::fs::write(d.0.join("p.html"), "<p>x</p>").unwrap();
+        let ctx = ctx_with(&d.0, JS_ON);
+        let root = d.0.to_string_lossy().into_owned();
+        let md = d.0.join("a.md").to_string_lossy().into_owned();
+        let html = d.0.join("p.html").to_string_lossy().into_owned();
+        for q in [
+            format!("dir={root}"),
+            format!("has_md={root}"),
+            "files=1".to_string(),
+            "changed=1".to_string(),
+            format!("file={md}"),
+            format!("file={html}"),
+            format!("raw={md}"),
+            format!("diff={md}"),
+            format!("diffstat={md}"),
+            "file=/nope.md".to_string(),
+        ] {
+            // `/x.png?file=` もクエリのキーで先に振り分けられるので、パスに関係なく同じ。
+            for path in ["/", "/p.html"] {
+                let resp = handle_request(&ctx, path, &q, &HeaderMap::new());
+                assert_eq!(script_src(&resp), "script-src 'none'", "{path}?{q}");
+                assert_eq!(resp.headers().get("X-Content-Type-Options").unwrap(), "nosniff", "{path}?{q}");
+            }
+        }
+    }
+
+    #[test]
+    fn documents_loosen_script_src_only_when_the_setting_is_on() {
+        let d = tmp("doc");
+        std::fs::write(d.0.join("a.md"), "# a").unwrap();
+        std::fs::write(d.0.join("p.html"), "<html><head><title>t</title></head><body></body></html>").unwrap();
+        std::fs::write(d.0.join("p.htm"), "<p>x</p>").unwrap();
+        std::fs::write(d.0.join("i.png"), [0x89, b'P', b'N', b'G']).unwrap();
+        std::fs::write(d.0.join("s.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>").unwrap();
+
+        let off = ctx_with(&d.0, Policy::default());
+        let on = ctx_with(&d.0, JS_ON);
+        let open = "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:";
+        for path in ["/a.md", "/p.html", "/p.htm"] {
+            assert_eq!(script_src(&handle_request(&off, path, "", &HeaderMap::new())), "script-src 'none'", "{path}");
+            assert_eq!(script_src(&handle_request(&on, path, "", &HeaderMap::new())), open, "{path}");
+        }
+        for path in ["/i.png", "/s.svg", "/__lib/mermaid.min.js", "/__lib/nope.js", "/missing.png", "/missing.html"] {
+            for ctx in [&off, &on] {
+                let resp = handle_request(ctx, path, "", &HeaderMap::new());
+                assert_eq!(script_src(&resp), "script-src 'none'", "{path}");
+                assert_eq!(resp.headers().get("X-Content-Type-Options").unwrap(), "nosniff");
+            }
+        }
+    }
+
+    #[test]
+    fn the_style_gate_rides_only_with_document_scripts() {
+        let d = tmp("gate");
+        std::fs::write(d.0.join("p.html"), "<html><head><title>t</title></head><body></body></html>").unwrap();
+        let body = |policy| {
+            let resp = handle_request(&ctx_with(&d.0, policy), "/p.html", "", &HeaderMap::new());
+            String::from_utf8(resp.body().to_vec()).unwrap()
+        };
+        assert!(!body(Policy::default()).contains("md:style-gate"));
+        assert!(body(JS_ON).contains("md:style-gate"));
+    }
+
+    #[test]
+    fn a_url_and_its_target_must_agree_on_the_kind() {
+        let d = tmp("mismatch");
+        std::fs::write(d.0.join("real.html"), "<p>x</p>").unwrap();
+        std::fs::write(d.0.join("real.htm"), "<p>x</p>").unwrap();
+        std::fs::write(d.0.join("note.md"), "# n").unwrap();
+        std::fs::write(d.0.join("pic.png"), [0x89]).unwrap();
+        let link = |name: &str, to: &str| std::os::unix::fs::symlink(d.0.join(to), d.0.join(name)).unwrap();
+        link("disguised.png", "real.html");
+        link("alias.html", "real.htm");
+        link("md-as-html.html", "note.md");
+        link("html-as-md.md", "real.html");
+        link("pic-as-html.html", "pic.png");
+        link("other.png", "pic.png");
+
+        for policy in [Policy::default(), JS_ON] {
+            let ctx = ctx_with(&d.0, policy);
+            let get = |p: &str| handle_request(&ctx, p, "", &HeaderMap::new());
+            for p in ["/disguised.png", "/md-as-html.html", "/html-as-md.md", "/pic-as-html.html"] {
+                let resp = get(p);
+                assert_eq!(resp.status(), 404, "{p}");
+                assert_eq!(script_src(&resp), "script-src 'none'", "{p}");
+            }
+            // 同じ種類どうしのリンクは今までどおり読める。
+            assert_eq!(get("/alias.html").status(), 200);
+            assert_eq!(get("/other.png").status(), 200);
+            // root の外を指す `/__abs/` も同じ規則。
+            let abs = format!("{}{}", ABS_PREFIX, d.0.join("disguised.png").to_string_lossy().trim_start_matches('/'));
+            assert_eq!(get(&abs).status(), 404);
+        }
+    }
+
+    #[test]
+    fn builtin_lib_serves_only_the_two_exact_names() {
+        let d = tmp("lib");
+        let ctx = ctx_with(&d.0, Policy::default());
+        for name in ["mermaid.min.js", "drawio-viewer.min.js"] {
+            assert_eq!(handle_request(&ctx, &format!("/__lib/{name}"), "", &HeaderMap::new()).status(), 200);
+        }
+        for p in [
+            "/__lib/",
+            "/__lib/none",
+            "/__lib/Mermaid.min.js",
+            "/__lib/./mermaid.min.js",
+            "/__lib/../__lib/mermaid.min.js",
+            "/__lib//mermaid.min.js",
+            "/__lib/mermaid.min.js/",
+            "/__lib/mermaid.min.js%00",
+        ] {
+            assert_eq!(handle_request(&ctx, p, "", &HeaderMap::new()).status(), 404, "{p}");
+        }
+    }
+
+    // ── 動画・音声の Range ──────────────────────────────────────────
+
+    fn range(v: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("Range", HeaderValue::from_str(v).unwrap());
+        h
+    }
+
+    #[test]
+    fn range_headers_are_read_as_one_byte_span() {
+        assert_eq!(parse_range("bytes=0-1", 10), Some(ByteRange::Part(0, 1)));
+        assert_eq!(parse_range("bytes=4-", 10), Some(ByteRange::Part(4, 9)));
+        assert_eq!(parse_range("bytes=-3", 10), Some(ByteRange::Part(7, 9)));
+        assert_eq!(parse_range("bytes=-30", 10), Some(ByteRange::Part(0, 9)));
+        assert_eq!(parse_range("bytes=5-100", 10), Some(ByteRange::Part(5, 9)));
+        assert_eq!(parse_range("bytes=10-", 10), Some(ByteRange::Unsatisfiable));
+        assert_eq!(parse_range("bytes=-0", 10), Some(ByteRange::Unsatisfiable));
+        assert_eq!(parse_range("bytes=0-", 0), Some(ByteRange::Unsatisfiable));
+        // 読めない書き方と複数の範囲は無視して全体を返す。
+        for bad in ["bytes=5-2", "bytes=a-b", "items=0-1", "bytes=0-1,4-5", "bytes=-", "0-1"] {
+            assert_eq!(parse_range(bad, 10), None, "{bad}");
+        }
+        // 広い範囲は 1 回ぶんの上限で切る。
+        assert_eq!(parse_range("bytes=0-", u64::MAX), Some(ByteRange::Part(0, RANGE_CHUNK_MAX - 1)));
+        assert_eq!(parse_range("bytes=100-", 1 << 40), Some(ByteRange::Part(100, 100 + RANGE_CHUNK_MAX - 1)));
+    }
+
+    #[test]
+    fn media_ranges_come_back_as_partial_content() {
+        let d = tmp("range");
+        let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        std::fs::write(d.0.join("v.mp4"), &data).unwrap();
+        let ctx = ctx_with(&d.0, Policy::default());
+
+        let resp = handle_request(&ctx, "/v.mp4", "", &range("bytes=10-19"));
+        assert_eq!(resp.status(), 206);
+        assert_eq!(resp.headers().get("Content-Range").unwrap(), "bytes 10-19/1000");
+        assert_eq!(resp.headers().get("Content-Type").unwrap(), "video/mp4");
+        assert_eq!(resp.headers().get("Accept-Ranges").unwrap(), "bytes");
+        assert_eq!(resp.headers().get("Content-Length").unwrap(), "10");
+        assert_eq!(&resp.body()[..], &data[10..20]);
+        assert_eq!(script_src(&resp), "script-src 'none'", "部分の応答にも CSP が付く");
+
+        let tail = handle_request(&ctx, "/v.mp4", "", &range("bytes=-5"));
+        assert_eq!(tail.headers().get("Content-Range").unwrap(), "bytes 995-999/1000");
+        assert_eq!(&tail.body()[..], &data[995..]);
+
+        let out = handle_request(&ctx, "/v.mp4", "", &range("bytes=1000-"));
+        assert_eq!(out.status(), 416);
+        assert_eq!(out.headers().get("Content-Range").unwrap(), "bytes */1000");
+
+        // Range が無ければ全体を返し、部分で取り直せることを添える。
+        let whole = handle_request(&ctx, "/v.mp4", "", &HeaderMap::new());
+        assert_eq!(whole.status(), 200);
+        assert_eq!(whole.body().len(), 1000);
+        assert_eq!(whole.headers().get("Accept-Ranges").unwrap(), "bytes");
+    }
+
+    #[test]
+    fn ranges_are_ignored_for_everything_but_media() {
+        let d = tmp("range-img");
+        std::fs::write(d.0.join("i.png"), [1u8; 50]).unwrap();
+        let ctx = ctx_with(&d.0, Policy::default());
+        let resp = handle_request(&ctx, "/i.png", "", &range("bytes=0-1"));
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.body().len(), 50);
+    }
+
+    #[test]
+    fn a_video_over_the_whole_file_cap_still_plays_in_ranges() {
+        let d = tmp("range-big");
+        let f = d.0.join("big.mov");
+        // 中身を書かずに大きさだけを伸ばす（APFS は疎なファイルにするので、書き込みは要らない）。
+        let file = std::fs::File::create(&f).unwrap();
+        file.set_len(ASSET_MAX_BYTES + 1).unwrap();
+        drop(file);
+        let ctx = ctx_with(&d.0, Policy::default());
+
+        assert_eq!(handle_request(&ctx, "/big.mov", "", &HeaderMap::new()).status(), 404, "全体は上限で断る");
+        let resp = handle_request(&ctx, "/big.mov", "", &range("bytes=0-"));
+        assert_eq!(resp.status(), 206);
+        assert_eq!(resp.body().len() as u64, RANGE_CHUNK_MAX, "1 回ぶんの上限で切る");
+        assert_eq!(
+            resp.headers().get("Content-Range").unwrap().to_str().unwrap(),
+            format!("bytes 0-{}/{}", RANGE_CHUNK_MAX - 1, ASSET_MAX_BYTES + 1)
+        );
+        let end = ASSET_MAX_BYTES; // 最後の 1 バイト
+        let last = handle_request(&ctx, "/big.mov", "", &range(&format!("bytes={end}-")));
+        assert_eq!(last.status(), 206);
+        assert_eq!(last.body().len(), 1);
+    }
+
+    #[test]
+    fn media_and_pdf_name_their_types() {
+        for (name, mime) in [
+            ("a.pdf", "application/pdf"),
+            ("a.MP4", "video/mp4"),
+            ("a.m4v", "video/mp4"),
+            ("a.mov", "video/quicktime"),
+            ("a.webm", "video/webm"),
+            ("a.mp3", "audio/mpeg"),
+            ("a.wav", "audio/wav"),
+            ("a.ogg", "audio/ogg"),
+        ] {
+            assert_eq!(guess_mime(Path::new(name)), mime, "{name}");
+        }
     }
 }

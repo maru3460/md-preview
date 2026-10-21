@@ -1,5 +1,8 @@
 status: 200
+cache-control: no-store
+content-security-policy: script-src 'none'; default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'
 content-type: application/octet-stream
+x-content-type-options: nosniff
 ----
 one
 two

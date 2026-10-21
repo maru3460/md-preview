@@ -7,8 +7,7 @@
 //
 // 素の状態では窓が 0.3ms 前後しかないので、ここでは `?file=` を遅らせて窓を
 // 開ける。遅らせるのは Playwright 側だけで、サーバは触らない。
-const { test, expect } = require('@playwright/test');
-const { openFolder, treeItem, tab } = require('./helpers');
+const { test, expect, openFolder, treeItem, tab } = require('./helpers');
 
 /// 最初の `?file=` だけを `ms` ミリ秒遅らせる。述語で見るのは、クエリ無しの `/`
 /// （ページ本体）と `?dir=` を巻き込まないため（tree-dot.spec.js に倣う）。

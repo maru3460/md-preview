@@ -1,4 +1,6 @@
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var panel = null;
   var listEl = null;
   var emptyEl = null;

@@ -3,8 +3,7 @@
 // 見ているのは「図の中から文書の JS が動かないこと」と「それを図の側の設定で
 // 緩め直せないこと」。mermaid は `%%{init}%%` と frontmatter の `config:` で
 // 図ごとに設定を上書きできるので、ここが loose に戻せると strict にした意味が無い。
-const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 // 図を本文に差し込み、アプリと同じ経路（MdCommon.runMermaid）で描かせる。
 // フィクスチャを足すとツリーの並びを見ている spec に響くので、その場で作る。

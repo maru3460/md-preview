@@ -7,6 +7,7 @@
 pub mod app_config;
 pub mod bundle;
 pub mod cli;
+pub mod csp;
 pub mod diff;
 pub mod embed;
 pub mod fsread;

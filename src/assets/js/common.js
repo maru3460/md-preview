@@ -3,6 +3,8 @@
 // シェル（#preview-pane を持つアプリのページ）と、build_html で出す 1 枚もの
 // （md の直開き・`--html` ダンプ）の両方を 1 つの実装で賄う。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // 遅延ロードした <script> を URL 単位でメモ化する。mermaid/drawio の巨大ライブラリを
   // 必要になった時に 1 度だけ読み込むためのもの。
   // URL はスキームを書かずオリジン相対にする（examples/serve.rs 越しに http で
@@ -423,6 +425,26 @@
     var root = scope || document;
     var nodes = root.querySelectorAll('.mxgraph');
     if (!nodes.length) return;
+    // 数式（MathJax）は読み込ませない。drawio は読み込んだ直後に `Editor.initMath()` を呼び、
+    // `window.MathJax` が未定義のときだけ `DRAW_MATH_URL + "/startup.js"` の script を足す。
+    // 先に空の MathJax を置けば、その一式（script の追加ごと）を飛ばす。図を描く側は
+    // `MathJax.typeset` が関数かどうかを見てから使うので、空のままで数式の処理だけが止まる。
+    // Why not 読み込み先を 404 に向けるだけ: script は足されるので、CSP が図のあるページごとに
+    // 違反を 1 件出す（止まるのは同じでも、本物の違反と見分けがつかなくなる）。
+    // 図の中の数式は描かれない（`$…$` はそのまま文字で出る）。
+    if (typeof window.MathJax === 'undefined') window.MathJax = {};
+    // 読み込み先は念のため 404 の場所へ向けたままにする。版が変わって上の判定が変わったとき、
+    // 既定の `math4/es5`（開いたフォルダの中）を読みにいかないように（空文字は既定値に戻る）。
+    window.DRAW_MATH_URL = '/__lib/none';
+    // initMath を飛ばすと `Editor.MathJaxRender` も定義されない。数式付きの図を SVG に
+    // 書き出す経路（Graph.getSvg）が確かめずに呼ぶので、何もしない関数を置いてから描かせる。
+    // drawio は読み込みの最後にこれがあれば processElements の代わりに呼ぶので、描くのもここ。
+    window.onDrawioViewerLoad = function() {
+      if (typeof Editor !== 'undefined' && typeof Editor.MathJaxRender !== 'function') {
+        Editor.MathJaxRender = function() {};
+      }
+      if (typeof GraphViewer !== 'undefined') GraphViewer.processElements();
+    };
     loadLib('/__lib/drawio-viewer.min.js').then(function() {
       if (typeof GraphViewer === 'undefined') return;
       try { GraphViewer.processElements(); } catch (e) {}

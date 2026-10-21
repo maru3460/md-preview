@@ -3,8 +3,7 @@
 // ソケット・送り側の pid・前面化・Rust 側の待ち行列はここでは触れない。叩けるのは
 // `window.MdOpenFiles` から先だけで、本物もソケット → Rust → evaluate_script で
 // 同じ関数を呼ぶ。ソケットの層は tests/single_instance.rs と手動確認が持つ。
-const { test, expect } = require('@playwright/test');
-const { openFolder, treeItem, tab, display } = require('./helpers');
+const { test, expect, openFolder, treeItem, tab, display } = require('./helpers');
 
 /// 転送の口を直接叩く。
 const forward = (page, ids) => page.evaluate((v) => window.MdOpenFiles(v), ids);

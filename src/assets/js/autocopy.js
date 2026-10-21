@@ -25,6 +25,8 @@
 // 親 document ぶんはここで張り、.html-frame の中は common.js の bindFrame が
 // bindDoc() を呼んで張る（iframe の mouseup は親に届かないため）。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var TICK_MS = 620;   // 読ませる文字が無いぶん、トースト（1500ms）より短くてよい
 
   // 入力欄の中の選択か。ドラッグを欄の外で離すと mouseup の target は本文に化けるので、

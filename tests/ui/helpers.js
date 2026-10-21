@@ -3,7 +3,46 @@
 // 各 spec が実物のページを開くまでの手順（オンボーディング抑止・初期描画待ち）は
 // どこでも同じなので、ここ 1 か所に置く。サーバは playwright.config.js が
 // 4 つ立てていて、URL の使い分けだけをここで持つ。
-const { expect } = require('@playwright/test');
+const base = require('@playwright/test');
+const { expect } = base;
+
+/// すべての spec が `@playwright/test` の代わりにこれを読む。
+///
+/// 自動の fixture で、テストの間に起きた CSP の違反（`securitypolicyviolation`）を全部の
+/// フレームから集め、終わったときに 0 件であることを確かめる。アプリ自身の script や
+/// 読み込みが CSP に止められていれば、画面が黙って壊れていてもここで落ちる。
+///
+/// 文書の JS を止めることを確かめる spec は、わざと違反を起こす。そこでは
+/// `test.use({ cspAllowed: [(v) => …] })` で、数えない違反を述語で渡す。
+/// v は { directive, blocked, doc, source, line, sample, frame }。
+const test = base.test.extend({
+  cspAllowed: [[], { option: true }],
+  cspViolations: [async ({ page, cspAllowed }, use) => {
+    const seen = [];
+    await page.exposeBinding('__mdCspViolation', (source, v) => {
+      seen.push(Object.assign({ frame: source.frame ? source.frame.url() : '' }, v));
+    });
+    await page.addInitScript(() => {
+      // 捕獲で受ける。違反のイベントは要素から document へ上がってくるが、文書の側が
+      // 途中で止められないように。
+      document.addEventListener('securitypolicyviolation', (e) => {
+        try {
+          window.__mdCspViolation({
+            directive: e.effectiveDirective || e.violatedDirective,
+            blocked: e.blockedURI,
+            doc: e.documentURI,
+            source: e.sourceFile,
+            line: e.lineNumber,
+            sample: e.sample,
+          });
+        } catch (_) {}
+      }, true);
+    });
+    await use(seen);
+    const unexpected = seen.filter((v) => !cspAllowed.some((allow) => allow(v)));
+    expect(unexpected, 'CSP の違反が起きた').toEqual([]);
+  }, { auto: true }],
+});
 
 /// フォルダ起動（`md tests/ui-fixtures`。タブ 0 枚）。baseURL なので '/' で足りる。
 const FOLDER_URL = '/';
@@ -63,6 +102,7 @@ async function nextFrames(page) {
 }
 
 module.exports = {
+  test, expect,
   FOLDER_URL, ONE_FILE_URL, MULTI_URL, ROOT_URL,
   open, openFolder, nextFrames,
   id, treeItem, tab, display,

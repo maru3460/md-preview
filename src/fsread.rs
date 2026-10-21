@@ -24,12 +24,10 @@ use std::path::Path;
 /// （`request.rs` の `HIGHLIGHT_MAX_BYTES`）とは別物で、こちらは「そもそも読まない」線。
 pub const TEXT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
-/// 配信する画像・動画・PDF・CSS・フォントなどの上限。全量をメモリに載せて返すので、
-/// 1GB 超のファイルを `<img>` で指されてもこの大きさで止まる。
-///
-/// Why not 動画だけ外す: Range で返す形にすれば上限は要らないが、`handle_request` が
-/// リクエストのヘッダを受け取らない。ヘッダを受け取れるようにする改修と一緒に入れる
-/// （そのときは [`open_regular`] で開いて、要る範囲だけを読む）。
+/// 配信する画像・動画・PDF・CSS・フォントなどを、まるごと返すときの上限。全量をメモリに
+/// 載せて返すので、1GB 超のファイルを `<img>` で指されてもこの大きさで止まる。
+/// 動画と音声の `Range` の要求は、[`open_regular`] で開いて要る範囲だけを読むので、
+/// この上限を受けない（`request.rs` の `serve_range`）。
 pub const ASSET_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug)]

@@ -18,6 +18,8 @@
 // 渡したときの一時ファイルも、root の外にあるだけで同じ形でここに乗る。
 // 同一判定は文字列一致なので、識別子の形を混ぜると同じファイルがタブ 2 枚になる。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // { path, scroll, mode } の配列。並び順がそのままタブバーの並び。
   var tabs = [];
   var activeIdx = -1;

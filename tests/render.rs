@@ -10,9 +10,11 @@
 //!
 //! inline された CSS / JS の中身は `…` に畳んでから比較する。base.css や hljs の
 //! 中身まで固定すると、無関係な変更でスナップショットが落ちて役に立たなくなるため。
+//! CSP の meta が持つ script のハッシュも同じ理由で畳む（JS を 1 行直すたびに変わる）。
 
 use std::path::{Path, PathBuf};
 
+use md_preview::csp::{Policy, APP_ORIGIN};
 use md_preview::html::{build_folder_html, build_html};
 use md_preview::request::{handle_request, render_file, render_html_iframe, source_view_html, RequestContext, ViewMode};
 
@@ -67,8 +69,23 @@ fn fold_inline_assets(html: &str) -> String {
     }
 }
 
+/// CSP の `'sha256-…'` を畳む。数は残す（script を足したのに列から漏れた、は数で見える）。
+fn fold_hashes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("'sha256-") {
+        out.push_str(&rest[..i + "'sha256-".len()]);
+        rest = &rest[i + "'sha256-".len()..];
+        let end = rest.find('\'').unwrap_or(rest.len());
+        out.push('…');
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn normalize(html: &str) -> String {
-    let mut s = fold_inline_assets(html);
+    let mut s = fold_hashes(&fold_inline_assets(html));
     // 識別子は絶対パスなので、そのまま焼くと機械ごとに違うスナップショットになる。
     // 出力に出るのは fixtures の下だけなので、その接頭辞だけを畳む。
     s = s.replace(&fixtures().to_string_lossy().into_owned(), "<FIXTURES>");
@@ -132,7 +149,8 @@ fn id(rel: &str) -> String {
     fixtures().join(rel).to_string_lossy().into_owned()
 }
 
-/// `handle_request` を叩いて本文を取り出す。ステータスも一緒に固定する。
+/// `handle_request` を叩いて本文を取り出す。ステータスとヘッダも一緒に固定する
+/// （CSP のヘッダが付くか・どの指定かは応答の種類で決まるので、取り違えがここで見える）。
 fn request(query: &str) -> String {
     let (url_path, query) = match query.strip_prefix('/') {
         Some(_) => (query, ""),
@@ -141,18 +159,24 @@ fn request(query: &str) -> String {
     let ctx = RequestContext::new(
         fixtures(),
         b"<!-- index -->".to_vec(),
-        THEME_CSS.to_string(),
-        CUSTOM_CSS.to_string(),
+        &md_preview::app_config::PageInputs {
+            theme_css: THEME_CSS,
+            custom_css: CUSTOM_CSS,
+            policy: Policy::default(),
+            lib_origin: APP_ORIGIN,
+        },
     );
-    let resp = handle_request(&ctx, url_path, query);
+    let resp = handle_request(&ctx, url_path, query, &md_preview::request::HeaderMap::new());
     let status = resp.status().as_u16();
-    let ctype = resp
+    let mut headers: Vec<String> = resp
         .headers()
-        .get("Content-Type")
-        .map(|v| v.to_str().unwrap_or("").to_string())
-        .unwrap_or_default();
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
+        .collect();
+    headers.sort();
     format!(
-        "status: {status}\ncontent-type: {ctype}\n----\n{}",
+        "status: {status}\n{}\n----\n{}",
+        headers.join("\n"),
         String::from_utf8_lossy(resp.body())
     )
 }
@@ -164,8 +188,8 @@ fn markdown_full_document() {
     // md を直接開いたとき（`/__abs/` などのアセット経路）に返るページ 1 枚。
     let dir = fixtures();
     let path = dir.join("kitchen-sink.md");
-    let r = render_file(&path, &dir, ViewMode::Normal).expect("描画できない");
-    let html = build_html(&r.html, "kitchen-sink.md", THEME_CSS, CUSTOM_CSS, r.body_class);
+    let r = render_file(&path, &dir, ViewMode::Normal, md_preview::csp::Policy::default()).expect("描画できない");
+    let html = build_html(&r.html, "kitchen-sink.md", THEME_CSS, CUSTOM_CSS, r.body_class, &Policy::default(), APP_ORIGIN);
     assert_snapshot("page-markdown", &html);
 }
 
@@ -179,6 +203,8 @@ fn source_view_page() {
         THEME_CSS,
         CUSTOM_CSS,
         "source-page",
+        &Policy::default(),
+        APP_ORIGIN,
     );
     assert_snapshot("page-source", &html);
 }
@@ -191,29 +217,38 @@ fn html_iframe_page() {
         THEME_CSS,
         CUSTOM_CSS,
         "html-page",
+        &Policy::default(),
+        APP_ORIGIN,
     );
     assert_snapshot("page-html-iframe", &html);
 }
 
 #[test]
 fn folder_shell_page() {
-    let files = vec![id("kitchen-sink.md")];
-    let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &files);
+    let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &Policy::default(), APP_ORIGIN);
     assert_snapshot("page-folder-shell", &html);
 }
 
 /// 複数ファイル指定（`md a.md b.md`）は、その全部が INITIAL_FILES に順番どおり乗る。
 /// 先頭が最初に見えるタブになるので、順序が入れ替わると開くファイルが変わる。
+/// INITIAL_FILES はページではなく初期化スクリプト（`page_globals`）で渡る。
 #[test]
 fn folder_shell_page_lists_every_initial_file() {
     let files = vec![id("kitchen-sink.md"), id("code/sample.rs")];
-    let html = build_folder_html("fixtures", THEME_CSS, CUSTOM_CSS, &files);
+    let page = md_preview::app_config::PageInputs {
+        theme_css: THEME_CSS,
+        custom_css: CUSTOM_CSS,
+        policy: Policy::default(),
+        lib_origin: APP_ORIGIN,
+    };
+    let config = md_preview::app_config::AppConfig::from_paths(&files, &page, &None);
+    let globals = config.page_globals(md_preview::theme::Appearance::Light, &[]);
     assert!(
-        html.contains(&format!(
-            r#"var INITIAL_FILES = ["{}","{}"];"#,
+        globals.contains(&format!(
+            r#"window.INITIAL_FILES = ["{}","{}"];"#,
             files[0], files[1]
         )),
-        "INITIAL_FILES が期待どおりでない"
+        "INITIAL_FILES が期待どおりでない: {globals}"
     );
 }
 
@@ -263,9 +298,18 @@ fn file_list_json() {
 
 // ── アセット配信 ────────────────────────────────────────────────────
 
+/// 文書の JS を止めている（既定）ので、style-gate は差し込まない（差し込むと gate 自身が
+/// CSP に止められる）。行の錨だけが刻まれる。
 #[test]
-fn asset_html_gets_style_gate() {
+fn asset_html_has_no_style_gate_by_default() {
     assert_snapshot("asset-html", &request("/page.html"));
+}
+
+/// md を直接開いた 1 枚ページは、`.html` と同じ文書（Doc）のヘッダで配る。既定では
+/// `script-src 'none'` なので、ページに inline された自前の script も動かない。
+#[test]
+fn asset_markdown_is_a_document_page() {
+    assert_snapshot("asset-markdown", &request("/kitchen-sink.md"));
 }
 
 #[test]

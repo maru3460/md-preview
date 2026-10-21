@@ -3,8 +3,7 @@
 // 設定はファイルではないタブとして本文ペインに描く。設定を持っているのは Rust 側
 // なので、`MdSettings.push` を直接叩いて「渡された」状態を作り、操作の結果は
 // **IPC に何が出たか**で確かめる。
-const { test, expect } = require('@playwright/test');
-const { openFolder, open, ONE_FILE_URL } = require('./helpers');
+const { test, expect, openFolder, open, ONE_FILE_URL } = require('./helpers');
 
 const SW = {
   minimal: ['#ffffff', '#37352f', '#2e7cd6', '#2f9e44', '#e03131'],

@@ -9,6 +9,8 @@
 // classList を触るか？」。コメントの意味論は 1 つも渡さない——渡すと両実装に同じ
 // 分岐が生えて、直すときに 2 箇所を見ることになる。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // 塗りの状態と、DomHost が使う class。呼ぶ側は class 名を知らない——FrameHost は
   // 他人のページを相手にするので DOM を書き換えられず、同じ状態を ::highlight() と
   // 親のオーバーレイへ振り分ける。キーの並びが「塗りの状態」の定義でもある。

@@ -7,8 +7,7 @@
 // 通って届くまでは tests/single_instance.rs と cli.rs のユニットテストが持つ。
 const fs = require('fs');
 const path = require('path');
-const { test, expect } = require('@playwright/test');
-const { openFolder, id } = require('./helpers');
+const { test, expect, openFolder, id } = require('./helpers');
 
 const tabNames = (page) => page.locator('.md-tab .md-tab-name');
 const band = (page) => page.locator('#origin-band');

@@ -15,6 +15,8 @@
 // Why not 別の窓: md-preview は窓 1 枚にタブを並べる形で、設定もその 1 枚に乗せる。
 // 窓を増やすと、隠す・全画面・Space の扱いを設定の窓にも決め直すことになる。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // タブの識別子。ファイルの識別子は必ず `/` で始まる（#33）ので、ぶつからない。
   var TAB_ID = 'md:settings';
 

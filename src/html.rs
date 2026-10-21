@@ -2,6 +2,7 @@ use std::path::Path;
 
 use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, CowStr, Event, LinkType, Options, Parser, Tag, TagEnd};
 
+use crate::csp::Policy;
 use crate::embed;
 use crate::urlpath::DocBase;
 use std::ops::Range;
@@ -103,8 +104,14 @@ pub fn json_string(s: &str) -> String {
 
 pub const BASE_CSS: &str = include_str!("assets/css/base.css");
 pub const HLJS_JS: &str = include_str!("assets/vendor/highlight.min.js");
-pub const MERMAID_JS: &str = include_str!("assets/vendor/mermaid.min.js");
-pub const DRAWIO_JS: &str = include_str!("assets/vendor/drawio-viewer.min.js");
+
+/// `/__lib/` で配る同梱ライブラリ（名前, 中身）。配る側（`request.rs` の `serve_builtin_lib`）も
+/// md の画面の meta が許すファイル（[`crate::csp::lib_files`]）もこの表から作るので、
+/// 片方にだけ足して「配っているのに CSP で止まる」「許しているのに 404」にはならない。
+pub const BUILTIN_LIBS: &[(&str, &str)] = &[
+    ("mermaid.min.js", include_str!("assets/vendor/mermaid.min.js")),
+    ("drawio-viewer.min.js", include_str!("assets/vendor/drawio-viewer.min.js")),
+];
 
 /// ページの `<head>` に inline する自前スクリプト。**この配列の順序が読み込み順**で、
 /// モジュールを足すときはここに 1 行加えるだけでよい。
@@ -120,6 +127,16 @@ pub const DRAWIO_JS: &str = include_str!("assets/vendor/drawio-viewer.min.js");
 ///
 /// 起動スクリプト（`FOLDER_JS`）はここには含めない。あちらは `<head>` ではなく
 /// 初期化スクリプトとして注入される。
+///
+/// 各スクリプト（と `FOLDER_JS`・シェルの 3 本）は、先頭でトップのフレームでなければ何もせずに
+/// 抜ける。この抜け道は恒久のもので、サブフレームの移動を止める仕組みが入っても外さない。
+/// 文書の iframe の中で開かれうるのは次の 2 つで、抜けないとアプリの部品が文書の中で動き出す。
+///   - md の画面（`/`）… meta の CSP がハッシュで自前の script を許すので、設定に関係なく
+///                       常に効く。
+///   - md を直接開いた 1 枚ページ … 文書の JS を ON にしたとき（ヘッダの `script-src` が
+///                       緩む）に効く。OFF ではヘッダの `script-src 'none'` で何も動かない。
+/// 引き換えに、iframe の中に開いた `.md` は色付けと図の無い素の HTML で出る（OFF のときは
+/// この抜け道ではなく、`script-src 'none'` のせい）。
 const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("keymap.js", include_str!("assets/js/keymap.js")),
     ("docguard.js", include_str!("assets/js/docguard.js")),
@@ -160,6 +177,26 @@ const NOTIFY_JS: &str = include_str!("assets/js/notify.js");
 /// `NOTIFY_JS` と同じくシェル専用。CSS はベルと同じく base.css に置く（ユーザーの
 /// style.css が後から上書きできるように）。
 const SETTINGS_JS: &str = include_str!("assets/js/settings.js");
+
+/// シェル（`build_folder_html`）だけが `<head>` に足す 3 本。`PAGE_SCRIPTS` の後ろに続く。
+const SHELL_SCRIPTS: &[(&str, &str)] = &[
+    ("tabs.js", TABS_JS),
+    ("notify.js", NOTIFY_JS),
+    ("settings.js", SETTINGS_JS),
+];
+
+/// md の画面に inline する自前の script の中身を、全部。
+///
+/// CSP のハッシュ（[`crate::csp::script_hashes`]）はこの列から作り、タグもこの列からしか
+/// 出さない。タグとハッシュを別々の列で持つと、script を足したときにハッシュが漏れて、
+/// その script だけが黙って止まる。
+pub fn inline_script_sources() -> impl Iterator<Item = &'static str> {
+    PAGE_SCRIPTS.iter().chain(SHELL_SCRIPTS).map(|(_name, src)| *src)
+}
+
+fn script_tags(list: &[(&str, &str)]) -> String {
+    list.iter().map(|(_name, src)| format!("<script>{}</script>\n", src)).collect()
+}
 
 const ICON_NOTE: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
 const ICON_TIP: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/></svg>"##;
@@ -707,39 +744,45 @@ pub fn swap_theme_style(page: &str, old: &str, new: &str) -> String {
     page.replacen(&theme_style(old), &theme_style(new), 1)
 }
 
-/// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、`PAGE_SCRIPTS` の
-/// 各モジュールを inline する。
-/// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILES 等）を末尾に差し込む。
-fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> String {
-    let scripts: String = PAGE_SCRIPTS
-        .iter()
-        .map(|(_name, src)| format!("<script>{}</script>\n", src))
-        .collect();
-    // CSP はまだ張らない（後の段で入れる）。今は本文の <script> も iframe の埋め込みも動く。
-    // md の本文の `<link>` と `@import`・`@font-face` は CSP ではなく docguard.js が
-    // 差し込む前に落としているので、外部 CSS と Web フォントはもう効かない。
-    // `.html` は忠実描画のため sandbox 無しの同一オリジン iframe で JS ごと動かしており、
-    // docguard.js もそちらの中身には触らない。
-    // IPC 側のガード（is_top_frame / id_to_path / is_blocked_ext）は CSP とは独立に残る。
+/// 共通の `<head>` 中身を組み立てる。CSP の meta、base/theme/custom の CSS と、
+/// `PAGE_SCRIPTS` の各モジュールを inline する。
+/// `extra_head` は呼び出し側で追加したい追記（シェルの 3 本）を末尾に差し込む。
+///
+/// CSP の meta は `<meta charset>` の直後に置く。meta はそれより後ろにしか効かないので、
+/// 最初の `<script>` より前でなければならない。md の本文の `<link>` と `@import`・
+/// `@font-face` は、これとは別に docguard.js が差し込む前に落としている。
+fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, policy: &Policy, lib_origin: &str) -> String {
     format!(
         r#"<meta charset="utf-8">
+{csp}
 <title>{title}</title>
 <style>{base_css}</style>
 {theme_style}
 <style>{custom_css}</style>
 {scripts}{extra_head}"#,
+        csp = crate::csp::meta(policy, lib_origin),
         title = html_escape(title),
         base_css = BASE_CSS,
         theme_style = theme_style(theme_css),
         custom_css = custom_css,
-        scripts = scripts,
+        scripts = script_tags(PAGE_SCRIPTS),
         extra_head = extra_head,
     )
 }
 
 /// `body_class` は `.markdown-body` に足す追加クラス（空文字なら無し）。
 /// ソース表示は `"source-page"` を渡して 720px 中央制約を外し全幅にする。
-pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, body_class: &str) -> String {
+///
+/// `policy` と `lib_origin` は CSP の meta のため（[`crate::csp::meta`]）。
+pub fn build_html(
+    body: &str,
+    title: &str,
+    theme_css: &str,
+    custom_css: &str,
+    body_class: &str,
+    policy: &Policy,
+    lib_origin: &str,
+) -> String {
     let class_attr = if body_class.is_empty() {
         "markdown-body".to_string()
     } else {
@@ -757,7 +800,7 @@ pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, bo
 </article>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, ""),
+        head = head(title, theme_css, custom_css, "", policy, lib_origin),
         class_attr = class_attr,
         body = body,
     )
@@ -847,23 +890,18 @@ pub fn render_frontmatter_html(pairs: &[(String, String)], lines: usize) -> Stri
     format!(r#"<div class="frontmatter"{}>{}</div>"#, attrs, rows)
 }
 
-/// `initial_files` は起動時にタブとして開く識別子（絶対パス。先頭が最初に表示される）。
-/// 空なら何も開かずツリーだけを出す。
+/// md の画面（シェル）。起動時に開くタブ（`INITIAL_FILES`）はここには焼かない。
+/// [`crate::app_config::AppConfig::page_globals`] が初期化スクリプトで渡す。
+///
+/// Why not ここで inline の script にする: 中身が起動のたびに変わるので、CSP のハッシュを
+/// 定数にできない。
 pub fn build_folder_html(
     title: &str,
     theme_css: &str,
     custom_css: &str,
-    initial_files: &[String],
+    policy: &Policy,
+    lib_origin: &str,
 ) -> String {
-    let initial_files_json = initial_files
-        .iter()
-        .map(|s| json_string(s))
-        .collect::<Vec<_>>()
-        .join(",");
-    let folder_head = format!(
-        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>\n<script>{}</script>\n<script>{}</script>",
-        initial_files_json, TABS_JS, NOTIFY_JS, SETTINGS_JS
-    );
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -898,7 +936,7 @@ pub fn build_folder_html(
 </div>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, &folder_head),
+        head = head(title, theme_css, custom_css, &script_tags(SHELL_SCRIPTS), policy, lib_origin),
     )
 }
 
@@ -1044,11 +1082,67 @@ pub fn theme_script(theme_css: &str, appearance: crate::theme::Appearance) -> St
 mod tests {
     use super::*;
 
+    /// ページが持つ `<script>` の中身を全部抜き出す。
+    fn inline_scripts(page: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = page;
+        while let Some(i) = rest.find("<script") {
+            rest = &rest[i..];
+            let gt = rest.find('>').unwrap();
+            let end = rest.find("</script>").unwrap();
+            out.push(&rest[gt + 1..end]);
+            rest = &rest[end + "</script>".len()..];
+        }
+        out
+    }
+
+    #[test]
+    fn every_script_the_pages_emit_is_covered_by_a_hash() {
+        let hashes = crate::csp::script_hashes();
+        let policy = Policy::default();
+        let shell = build_folder_html("t", "", "", &policy, crate::csp::APP_ORIGIN);
+        let doc = build_html("<p>hi</p>", "t", "", "", "", &policy, crate::csp::APP_ORIGIN);
+        for (name, page) in [("shell", &shell), ("doc", &doc)] {
+            let scripts = inline_scripts(page);
+            assert!(!scripts.is_empty(), "{name}");
+            for src in scripts {
+                assert!(
+                    hashes.contains(&crate::csp::hash_of(src)),
+                    "{name} のハッシュに無い script: {}",
+                    &src[..src.len().min(80)]
+                );
+            }
+        }
+        // シェルは自前の script を全部持つ（列に余りが無い）。
+        assert_eq!(inline_scripts(&shell).len(), hashes.len());
+    }
+
+    #[test]
+    fn the_csp_meta_comes_right_after_the_charset_and_before_any_script() {
+        let policy = Policy::default();
+        for page in [
+            build_folder_html("t", "", "", &policy, crate::csp::APP_ORIGIN),
+            build_html("<p>hi</p>", "t", "", "", "", &policy, crate::csp::APP_ORIGIN),
+        ] {
+            let meta = page.find("<meta http-equiv=\"Content-Security-Policy\"").expect("meta が無い");
+            let charset = page.find("<meta charset=\"utf-8\">\n").unwrap();
+            assert_eq!(meta, charset + "<meta charset=\"utf-8\">\n".len());
+            assert!(meta < page.find("<script").unwrap());
+        }
+    }
+
+    #[test]
+    fn the_shell_carries_no_per_launch_script() {
+        // 起動のたびに変わる中身（INITIAL_FILES）が inline に残ると、ハッシュが合わずに止まる。
+        let page = build_folder_html("t", "", "", &Policy::default(), crate::csp::APP_ORIGIN);
+        assert!(!page.contains("INITIAL_FILES ="), "{}", &page[..200]);
+    }
+
     /// 起動後にテーマを変えても、配信し直す初期ページが新しい層を持つこと。
     /// 古い層が残ると、WebContent が落ちて読み込み直したときに起動時のテーマへ戻る。
     #[test]
     fn swapping_the_theme_replaces_only_the_theme_layer() {
-        let page = build_folder_html("t", "THEME_OLD", "CUSTOM", &[]);
+        let page = build_folder_html("t", "THEME_OLD", "CUSTOM", &Policy::default(), crate::csp::APP_ORIGIN);
         let swapped = swap_theme_style(&page, "THEME_OLD", "THEME_NEW");
         assert!(swapped.contains(r#"<style id="md-theme">THEME_NEW</style>"#), "{swapped}");
         assert!(!swapped.contains("THEME_OLD"));
@@ -1151,7 +1245,7 @@ mod tests {
     #[test]
     fn build_html_no_longer_inlines_diagram_libs() {
         // mermaid だけで約 3MB。遅延ロードにより、ページは小さく保たれるはず。
-        let page = build_html("<p>hi</p>", "t", "", "", "");
+        let page = build_html("<p>hi</p>", "t", "", "", "", &Policy::default(), crate::csp::APP_ORIGIN);
         assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
         assert!(page.contains("<p>hi</p>"));
     }

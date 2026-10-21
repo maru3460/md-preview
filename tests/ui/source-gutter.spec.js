@@ -9,10 +9,9 @@
 //   ・カードが消えれば隙間も畳まれる
 //   ・はみ出していないソースに、ガター幅ぶんの横スクロールを作らない
 //   ・表示を往復してもガターは 1 本のままで、隙間が持ち越されない
-const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 const LINES = 600;
 // 画面より十分に短い行だけのソース（横スクロールが出ないことを見るため）。

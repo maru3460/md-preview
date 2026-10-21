@@ -9,6 +9,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::csp::Policy;
 use crate::html::{build_folder_html, json_string};
 use crate::request::{self, file_id};
 
@@ -72,6 +73,30 @@ pub fn format_window_size(w: u32, h: u32) -> String {
     format!("{w}x{h}")
 }
 
+/// 画面を組むのに要る、入力（開くもの）とは関係なく決まる値。3 つの入口（`AppConfig` の
+/// `from_*`）と [`crate::request::RequestContext::new`] が同じものを受ける。
+///
+/// 1 つの構造体で渡すのは、同じ型（文字列）が並ぶ引数を取り違えないため。初期ページの meta と
+/// 配信時のヘッダが同じ CSP を見るのも、同じ値を両方に渡すことで担保する。
+pub struct PageInputs<'a> {
+    /// テーマの層（[`crate::theme::style_layer`]）。
+    pub theme_css: &'a str,
+    /// ユーザーの追加スタイル。
+    pub custom_css: &'a str,
+    /// 起動時に設定から 1 回だけ作った CSP。
+    pub policy: Policy,
+    /// `/__lib/` を許す住所。本番は [`crate::csp::APP_ORIGIN`]、`examples/serve.rs` は
+    /// 自分の origin。
+    pub lib_origin: &'a str,
+}
+
+/// CSS は空、CSP は既定（両方 OFF）、住所は本番のもの。テストが `RequestContext` を作るとき用。
+impl Default for PageInputs<'_> {
+    fn default() -> Self {
+        PageInputs { theme_css: "", custom_css: "", policy: Policy::default(), lib_origin: crate::csp::APP_ORIGIN }
+    }
+}
+
 /// ウィンドウ起動に必要な、入力から決まる設定一式。
 pub struct AppConfig {
     pub title: String,
@@ -93,6 +118,8 @@ pub struct AppConfig {
     /// 無いので普通に開くが、ベルに既読の行を書いてこの印を付ける。印が無いと、
     /// 帯の note がどこにも出ない（帯はベルから開いたタブにだけ出す）。
     pub bell_opened: Vec<String>,
+    /// 起動時に決めた CSP。ページの meta はこれで組んである（`page_globals` が設定画面へ渡す）。
+    pub policy: Policy,
 }
 
 impl AppConfig {
@@ -116,6 +143,12 @@ impl AppConfig {
     /// - `MD_ORIGINS`        起動時に開くタブの名乗り（#68）。`[[識別子, {title, description, note}]]`。
     ///                       `INITIAL_FILES` より先に読める必要があるので、ここで渡す。
     /// - `MD_BELL_OPENED`    起動時に「ベルから開いた」扱いにする識別子（#68。`bell_opened`）。
+    /// - `INITIAL_FILES`     起動時にタブとして開く識別子（`initial_ids`。先頭が最初に見える）。
+    ///                       起動のたびに変わるので、ページの inline の script には置かない
+    ///                       （CSP のハッシュを定数にできなくなる）。
+    /// - `MD_DOC_SCRIPTS` / `MD_EXTERNAL`  起動時に決めた CSP（`policy`）の 2 つのスイッチ。
+    ///                       ON でも OFF でも必ず定義する。未定義だと、文書が同じ名前の id の
+    ///                       要素を置くだけで値がすり替わる（window の名前付きプロパティ）。
     ///
     /// `quick` を引数で受けるのは、これが AppConfig（起動の入力）ではなく
     /// **ユーザーの持ち物**だから。`~/.config` をここで読むと、`examples/serve.rs` で
@@ -131,7 +164,7 @@ impl AppConfig {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}];",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}]; window.INITIAL_FILES = [{}]; window.MD_DOC_SCRIPTS = {}; window.MD_EXTERNAL = {};",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
@@ -144,14 +177,17 @@ impl AppConfig {
                 .collect::<Vec<_>>()
                 .join(","),
             self.bell_opened.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
+            self.initial_ids.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
+            self.policy.doc_scripts,
+            self.policy.external,
         )
     }
 
     /// ツリー付きのページ。`initial_files` は起動時にタブとして開く識別子
     /// （絶対パス。先頭が最初に表示される）。
-    fn folder(root: PathBuf, theme_css: &str, custom_css: &str, initial_files: &[String]) -> Self {
+    fn folder(root: PathBuf, page: &PageInputs, initial_files: &[String]) -> Self {
         let title = dir_name(&root);
-        let html = build_folder_html(&title, theme_css, custom_css, initial_files);
+        let html = build_folder_html(&title, page.theme_css, page.custom_css, &page.policy, page.lib_origin);
         AppConfig {
             title,
             html_bytes: html.into_bytes(),
@@ -160,6 +196,7 @@ impl AppConfig {
             origins: Vec::new(),
             initial_ids: initial_files.to_vec(),
             bell_opened: Vec::new(),
+            policy: page.policy,
         }
     }
 
@@ -167,28 +204,17 @@ impl AppConfig {
     /// 外にあるファイルとして開く。ツリーには出ないがタブには出る。
     ///
     /// `origin` は `--title` などの名乗り（#68）。空なら何も結び付けない。
-    pub fn from_stdin(
-        theme_css: &str,
-        custom_css: &str,
-        current_dir: &Option<PathBuf>,
-        origin: &crate::origin::Origin,
-    ) -> Self {
-        Self::stdin_doc(materialize_stdin(), theme_css, custom_css, current_dir, origin)
+    pub fn from_stdin(page: &PageInputs, current_dir: &Option<PathBuf>, origin: &crate::origin::Origin) -> Self {
+        Self::stdin_doc(materialize_stdin(), page, current_dir, origin)
     }
 
     /// 実体化した stdin のファイルから設定を組み立てる。root は作業ディレクトリなので、
     /// ツリーとファイル検索は「いまいる場所」を見せられる（一時ファイルの置き場所を
     /// 見せても意味が無い）。stdin のファイルはその root の外なので、識別子は絶対パス。
-    fn stdin_doc(
-        doc: PathBuf,
-        theme_css: &str,
-        custom_css: &str,
-        current_dir: &Option<PathBuf>,
-        origin: &crate::origin::Origin,
-    ) -> Self {
+    fn stdin_doc(doc: PathBuf, page: &PageInputs, current_dir: &Option<PathBuf>, origin: &crate::origin::Origin) -> Self {
         let root = stdin_root(&doc, current_dir);
         let id = file_id(&doc);
-        let mut config = Self::folder(root, theme_css, custom_css, std::slice::from_ref(&id));
+        let mut config = Self::folder(root, page, std::slice::from_ref(&id));
         config.stdin_dir = owned_stdin_dir(&doc);
         if !origin.is_empty() {
             config.origins.push((id, origin.clone()));
@@ -207,25 +233,15 @@ impl AppConfig {
     /// ⚠️ issue #36 はこれを「共通の親が `/` まで広がると**起動を拒否される**から」と
     /// 書いているが、その門はもう無い（[`files_root`] の Why not）。理由は入れ替わって
     /// いて、規則だけが残っている。
-    pub fn from_notify(
-        args: &[String],
-        theme_css: &str,
-        custom_css: &str,
-        current_dir: &Option<PathBuf>,
-    ) -> Self {
+    pub fn from_notify(args: &[String], page: &PageInputs, current_dir: &Option<PathBuf>) -> Self {
         let ids = notify_ids(args);
-        Self::folder(notify_root(&ids, current_dir), theme_css, custom_css, &ids)
+        Self::folder(notify_root(&ids, current_dir), page, &ids)
     }
 
     /// 引数で渡されたパス（1 つ以上）から設定を組み立てる。
-    pub fn from_paths(
-        args: &[String],
-        theme_css: &str,
-        custom_css: &str,
-        current_dir: &Option<PathBuf>,
-    ) -> Self {
+    pub fn from_paths(args: &[String], page: &PageInputs, current_dir: &Option<PathBuf>) -> Self {
         let (root, ids) = plan_paths(args, current_dir);
-        Self::folder(root, theme_css, custom_css, &ids)
+        Self::folder(root, page, &ids)
     }
 }
 
@@ -490,6 +506,11 @@ fn canonical(p: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// テストの画面。CSS は空、CSP は既定（両方 OFF）。
+    fn page() -> PageInputs<'static> {
+        PageInputs::default()
+    }
+
     #[test]
     fn a_saved_window_size_is_read_back_as_logical_points() {
         assert_eq!(window_size(Some("1440x900")), (1440.0, 900.0));
@@ -635,7 +656,7 @@ mod tests {
             a.join("x.md").to_string_lossy().into_owned(),
             b.join("y.md").to_string_lossy().into_owned(),
         ];
-        let config = AppConfig::from_notify(&args, "", "", &Some(cwd.clone()));
+        let config = AppConfig::from_notify(&args, &page(), &Some(cwd.clone()));
         assert_eq!(config.root_dir, cwd);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -652,16 +673,15 @@ mod tests {
         // 乗ることと、片付け先のディレクトリを覚えていることを押さえる。
         let doc = spooled("test");
         let cwd = Some(PathBuf::from("/work"));
-        let config =
-            AppConfig::stdin_doc(doc.clone(), "/* theme */", "/* custom */", &cwd, &Default::default());
+        let config = AppConfig::stdin_doc(doc.clone(), &page(), &cwd, &Default::default());
 
         assert_eq!(config.root_dir, PathBuf::from("/work"));
         assert_eq!(config.title, "work", "タイトルは root（cwd）の名前");
         assert_eq!(config.stdin_dir, doc.parent().map(|p| p.to_path_buf()));
-        let html = String::from_utf8(config.html_bytes).unwrap();
+        let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
         assert!(
-            html.contains(&format!(r#"var INITIAL_FILES = ["{}"];"#, doc.to_string_lossy())),
-            "stdin のファイルが絶対パスの識別子でタブに乗っていない: {html}"
+            globals.contains(&format!(r#"window.INITIAL_FILES = ["{}"];"#, doc.to_string_lossy())),
+            "stdin のファイルが絶対パスの識別子でタブに乗っていない: {globals}"
         );
     }
 
@@ -669,7 +689,7 @@ mod tests {
     fn a_named_pipe_input_hands_its_name_to_the_page() {
         let doc = spooled("named");
         let origin = crate::origin::Origin { title: Some("レビュー".into()), ..Default::default() };
-        let config = AppConfig::stdin_doc(doc.clone(), "", "", &None, &origin);
+        let config = AppConfig::stdin_doc(doc.clone(), &page(), &None, &origin);
         let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
         let want = format!(r#"window.MD_ORIGINS = [["{}",{}]];"#, doc.to_string_lossy(), origin.to_json());
         assert!(globals.contains(&want), "{globals}");
@@ -677,7 +697,7 @@ mod tests {
 
     #[test]
     fn tabs_marked_as_opened_from_the_bell_reach_the_page() {
-        let mut config = AppConfig::stdin_doc(spooled("bell"), "", "", &None, &Default::default());
+        let mut config = AppConfig::stdin_doc(spooled("bell"), &page(), &None, &Default::default());
         config.bell_opened = config.initial_ids.clone();
         let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
         let want = format!(r#"window.MD_BELL_OPENED = ["{}"];"#, config.initial_ids[0]);
@@ -685,8 +705,20 @@ mod tests {
     }
 
     #[test]
+    fn the_policy_switches_are_always_defined_for_the_page() {
+        let mut config = AppConfig::stdin_doc(spooled("policy"), &page(), &None, &Default::default());
+        let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
+        assert!(globals.contains("window.MD_DOC_SCRIPTS = false;"), "{globals}");
+        assert!(globals.contains("window.MD_EXTERNAL = false;"), "{globals}");
+        config.policy = Policy { doc_scripts: true, external: true };
+        let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
+        assert!(globals.contains("window.MD_DOC_SCRIPTS = true;"), "{globals}");
+        assert!(globals.contains("window.MD_EXTERNAL = true;"), "{globals}");
+    }
+
+    #[test]
     fn an_unnamed_pipe_input_has_no_origins() {
-        let config = AppConfig::stdin_doc(spooled("plain"), "", "", &None, &Default::default());
+        let config = AppConfig::stdin_doc(spooled("plain"), &page(), &None, &Default::default());
         assert!(config.page_globals(crate::theme::Appearance::Light, &[]).contains("window.MD_ORIGINS = [];"));
     }
 

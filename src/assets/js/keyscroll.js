@@ -5,6 +5,8 @@
 // ツリーにフォーカスがある間と、錨れる行があるコメントモード中の j/k は keymap.js 側の
 // when で除外済み（錨れない表示——html の iframe / git 差分 / 巨大ソース——では戻ってくる）。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // html を iframe 描画している時、スクロールすべき対象は iframe 内の文書である。
   // 親（body / #preview-pane）は html-frame が丁度 1 画面ぶんなので動かず、フォーカスが
   // まだ親にあるうち（開いた直後・iframe 外をクリックした後）は素キーが死んでしまう。

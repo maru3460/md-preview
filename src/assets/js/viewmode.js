@@ -9,6 +9,8 @@
 //
 // 入出力（対象ファイルの URL・コンテナ・スクロール主体）は folder.js が initAll() で渡す。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // モードの定義。ここに 1 行足せば、ボタン・ショートカット・排他・再取得が揃う。
   // CSS は `.md-<id>-toggle` / `.md-<id>-count` を見る（並び順は base.css の order）。
   // キー割り当ては keymap.js の `view-<id>` 行が持つ（ここには書かない）。

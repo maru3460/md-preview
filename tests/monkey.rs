@@ -126,15 +126,15 @@ fn id_of(root: &Path, rel: &str) -> String {
 /// **識別子**（絶対パス）、`Asset` は **URL**（root 相対）。名前空間が違うので
 /// 混ぜないこと——混ぜると片方の関門（`id_to_path` / `safe_join`）に一度も届かない。
 fn perform(action: &Action, root: &Path) -> u16 {
-    let ctx = RequestContext::new(root.to_path_buf(), Vec::new(), String::new(), String::new());
+    let ctx = RequestContext::new(root.to_path_buf(), Vec::new(), &md_preview::app_config::PageInputs::default());
     match action {
-        Action::ListDir(rel) => handle_request(&ctx, "/", &format!("dir={}", id_of(root, rel))),
-        Action::HasMd(rel) => handle_request(&ctx, "/", &format!("has_md={}", id_of(root, rel))),
-        Action::OpenFile(rel) => handle_request(&ctx, "/", &format!("file={}", id_of(root, rel))),
-        Action::Raw(rel) => handle_request(&ctx, "/", &format!("raw={}", id_of(root, rel))),
-        Action::Diff(rel) => handle_request(&ctx, "/", &format!("diff={}", id_of(root, rel))),
-        Action::Asset(rel) => handle_request(&ctx, &format!("/{}", rel), ""),
-        Action::Garbage(q, _) => handle_request(&ctx, "/", q),
+        Action::ListDir(rel) => handle_request(&ctx, "/", &format!("dir={}", id_of(root, rel)), &md_preview::request::HeaderMap::new()),
+        Action::HasMd(rel) => handle_request(&ctx, "/", &format!("has_md={}", id_of(root, rel)), &md_preview::request::HeaderMap::new()),
+        Action::OpenFile(rel) => handle_request(&ctx, "/", &format!("file={}", id_of(root, rel)), &md_preview::request::HeaderMap::new()),
+        Action::Raw(rel) => handle_request(&ctx, "/", &format!("raw={}", id_of(root, rel)), &md_preview::request::HeaderMap::new()),
+        Action::Diff(rel) => handle_request(&ctx, "/", &format!("diff={}", id_of(root, rel)), &md_preview::request::HeaderMap::new()),
+        Action::Asset(rel) => handle_request(&ctx, &format!("/{}", rel), "", &md_preview::request::HeaderMap::new()),
+        Action::Garbage(q, _) => handle_request(&ctx, "/", q, &md_preview::request::HeaderMap::new()),
     }
     .status()
     .as_u16()

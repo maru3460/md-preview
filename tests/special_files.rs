@@ -42,7 +42,7 @@ fn quick(ctx: &Arc<RequestContext>, path: &str, query: &str) -> (u16, String) {
     let (tx, rx) = std::sync::mpsc::channel();
     let (ctx, p, q) = (ctx.clone(), path.to_string(), query.to_string());
     std::thread::spawn(move || {
-        let resp = handle_request(&ctx, &p, &q);
+        let resp = handle_request(&ctx, &p, &q, &md_preview::request::HeaderMap::new());
         let _ = tx.send((resp.status().as_u16(), String::from_utf8_lossy(resp.body()).into_owned()));
     });
     rx.recv_timeout(Duration::from_secs(5))
@@ -50,7 +50,7 @@ fn quick(ctx: &Arc<RequestContext>, path: &str, query: &str) -> (u16, String) {
 }
 
 fn ctx(root: &Path) -> Arc<RequestContext> {
-    Arc::new(RequestContext::new(root.to_path_buf(), Vec::new(), String::new(), String::new()))
+    Arc::new(RequestContext::new(root.to_path_buf(), Vec::new(), &md_preview::app_config::PageInputs::default()))
 }
 
 fn id(p: &Path) -> String {
