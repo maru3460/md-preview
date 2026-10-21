@@ -21,9 +21,9 @@ test = true
 
 [dependencies]
 # 版を固定するのは、src/webview_delegate.rs が wry のナビゲーションのデリゲートを包み、内線の
-# 受け口の名前（`ipc`）を借り、新しい窓を作らないのを wry の UI のデリゲートの既定
-# （`new_window_req_handler` が無ければ nil を返す）に任せているため。wry の中身が変わると、
-# 包んだ側が黙って食い違う（転送すべき通知が増える、受け口の名前が変わる、窓を作るようになる）。
+# 受け口の名前（`ipc`）を借り、UI のデリゲートも包んで wry が持つメソッドだけを転送しているため。
+# wry の中身が変わると、包んだ側が黙って食い違う（転送すべき通知やメソッドが増える、受け口の
+# 名前が変わる）。
 # 上げるときはあちらを読み直す。
 wry = { version = "=0.55.0", features = ["transparent"] }
 tao = "0.35"
@@ -73,6 +73,9 @@ objc2-web-kit = { version = "0.3", default-features = false, features = [
     "WKNavigation", "WKNavigationAction", "WKNavigationDelegate", "WKNavigationResponse",
     "WKWebpagePreferences", "WKFrameInfo", "WKScriptMessage", "WKScriptMessageHandler",
     "WKUserContentController", "WKWebView", "block2", "objc2-app-kit",
+    # 新しい窓の拒否のため、UI のデリゲートも包む（webview_delegate.rs）。wry の UI のデリゲートが
+    # 持つメソッドの引数の型も要る。
+    "WKUIDelegate", "WKWindowFeatures", "WKOpenPanelParameters", "WKSecurityOrigin",
 ] }
 # 上の通知をブロックで受けるためだけに要る。wry と objc2-foundation が既に引いて
 # いるので依存ツリーは増えない（Cargo.lock の block2 0.6.2 と同じもの）。

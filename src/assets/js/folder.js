@@ -259,18 +259,41 @@
     return exts.indexOf(m[1].toLowerCase()) >= 0;
   }
 
-  // iframe(.html-frame) 内の相対リンククリックを親のプレビュー遷移に回す。true を返すと
-  // iframe 内遷移を止める。外部/アンカーや、md/html 以外（画像等）は iframe/wry に任せる。
-  function frameLinkClick(href) {
-    if (/^(https?:|mailto:|#)/i.test(href)) return false;
-    var hashIdx = href.indexOf('#');
-    var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
-    if (!isRenderablePath(pathPart)) return false;
-    // iframe の中身はサーバが書き換えていない（そのまま配信した html）ので、
-    // ここだけは相対パスを自前で解決する。
-    var resolved = currentFilePath ? MdCommon.resolvePath(currentFilePath, pathPart)
-      : MdCommon.urlToId(pathPart);
-    loadPreview(resolved);
+  // 窓の中のファイルを指すリンク（MdCommon.clickedLink の own）を、タブで開く。
+  // md・html 以外（画像・PDF・ソース）も、ツリーから開いたときと同じ表示になる。
+  // `/` で終わるパスはファイルではないので開かない。`/` そのもの（md の画面と、`?file=` など
+  // クエリで引く口）と、フォルダへのリンク（`./docs/`）。
+  // Why not フォルダをタブで開こうとする: 中身の無いエラーのタブが開くだけ。拡張子の無い
+  // ファイル（`LICENSE` など）は `/` で終わらないので、今までどおりタブで開く。
+  function openOwnLink(u) {
+    if (/\/$/.test(u.pathname)) return;
+    loadPreview(MdCommon.urlToId(u.pathname));
+    var anchor = u.hash.length > 1 ? u.hash.slice(1) : '';
+    if (anchor) {
+      setTimeout(function() {
+        var id = anchor;
+        try { id = decodeURIComponent(anchor); } catch (_) {}
+        var target = document.getElementById(id);
+        if (target) target.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }
+
+  var docUrlOf = Object.getOwnPropertyDescriptor(Document.prototype, 'URL').get;
+
+  // iframe(.html-frame) 内のリンクのうち、窓の中のファイルを指すものを親のプレビュー遷移に
+  // 回す（target に関係なく）。true を返すと iframe 内遷移を止める。外部は common.js の
+  // bindFrame が先に内線へ回している。同じ文書の中の錨と、クエリの付いたもの（検索ページの
+  // `search.html?q=` など。タブで開くとクエリが落ちる）は iframe の中に任せる。
+  function frameLinkClick(link, doc) {
+    var u = link.url;
+    if (!u || !link.own) return false;
+    var here;
+    // 文書の名前（`<img name=URL>`）で上書きされないよう、prototype の getter で読む。
+    try { here = new URL(docUrlOf.call(doc)); } catch (_) { return false; }
+    if (u.pathname === here.pathname && u.search === here.search) return false;
+    if (u.search) return false;
+    openOwnLink(u);
     return true;
   }
 
@@ -1367,33 +1390,20 @@
   });
 
   // ⌘A は common.js が、⌘W は tabs.js が keymap 経由で処理する。
+  //
+  // 本文のリンクのうち、窓の中のファイルを指すものは target に関係なくタブで開く
+  // （`<area>` と SVG のリンクも）。窓のメインフレームは md の画面から動かない
+  // （webview_delegate が取り消す）ので、ここで拾わないと押しても何も起きない。
+  // 本文の href はサーバが既に「開いているファイルの場所」基準で URL へ畳んでいる
+  // （相対解決をやり直すと二重解決になる）ので、識別子へ戻すだけ。
+  // 外部（http(s)・mailto: など、スキームかホストが違うもの）は拾わず、移動の判定に任せる。
+  // Why not 拡張子で見る: `vscode://file/x.md` のような外部スキームまでタブで開こうとしていた。
   document.addEventListener('click', function(e) {
-    var a = e.target.closest('a[href]');
-    if (!a) return;
-    var href = a.getAttribute('href');
-    if (!href) return;
-    if (MdCommon.scrollToAnchor(href, e)) {
-      // ページ内アンカーは処理済み。
-    } else if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('mailto:')) {
-      var hashIdx = href.indexOf('#');
-      var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
-      var anchorPart = hashIdx !== -1 ? href.slice(hashIdx + 1) : '';
-      // md / html はプレビュー枠内で遷移させる。html を top-level 遷移させると、text/html
-      // 配信になった今はウィンドウ全体が生ページに化けてサイドバー・トグルが消えてしまう。
-      if (isRenderablePath(pathPart)) {
-        e.preventDefault();
-        // 本文の href はサーバが既に「開いているファイルの場所」基準で URL へ畳んで
-        // いる（相対解決をここでやり直すと二重解決になる）。識別子へ戻すだけ。
-        var resolved = MdCommon.urlToId(pathPart);
-        loadPreview(resolved);
-        if (anchorPart) {
-          setTimeout(function() {
-            var id = decodeURIComponent(anchorPart);
-            var target = document.getElementById(id);
-            if (target) target.scrollIntoView({ behavior: 'smooth' });
-          }, 100);
-        }
-      }
-    }
+    var link = MdCommon.clickedLink(e, document);
+    if (!link) return;
+    if (MdCommon.scrollToAnchor(link.raw, e)) return; // ページ内アンカーは処理済み。
+    if (!link.url || !link.own) return;
+    e.preventDefault();
+    openOwnLink(link.url);
   });
 })();

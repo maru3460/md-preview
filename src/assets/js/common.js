@@ -331,7 +331,8 @@
   // 何もしない」ように書けているため。差分に mermaid は無いし、ソースビューに見出しは
   // 無い。分岐を増やすより、無いものを黙って飛ばす方が経路ごとの差を生まない。
   //
-  // opts.onLinkClick … iframe 内の相対リンクを親のプレビュー遷移へ回す（folder のみ）
+  // opts.onLinkClick … iframe 内のリンクを親のプレビュー遷移へ回す（folder のみ）。
+  //   受けるのは clickedLink の結果と iframe の文書
   // 本文（プレビュー枠）の差し替え回数。ファイル切替・raw/diff の切替・ホットリロードの
   // どれで入れ替わっても増える。「差し替えがもう起きたか」を待ちたい側（コメントのジャンプ）が
   // 見る——currentFile() は差し替えの前に切り替わるので、名前だけでは判断できない。
@@ -676,40 +677,94 @@
     });
   }
 
-  // iframe の中のクリックが、外部（http(s)）へ移るリンクの決定なら、その URL。違えば null。
+  // クリックが決めたリンク。`a[href]`・`area[href]`・SVG の `a`（`href` / `xlink:href`）。
+  // 返すのは { raw: 属性の生の値, url: doc の基準で解決した URL（解決できなければ null）,
+  // own: url が窓の中のファイルを指すか }。リンクでなければ null。
   //
-  // 人が押したもの（isTrusted）の主ボタンだけ。文書の script（許しているとき）が click() で
-  // ブラウザを開けないように。修飾キーは見ない: ⌘ / ⇧ 付きは WebKit が新しい窓へ回し、
-  // デリゲートが結局ブラウザで開くので、ここで同じ扱いにしても結果は変わらない。
-  // 文書の側が止めたクリック（defaultPrevented。自前の振り分けを持つページ）は開かない。
-  //
-  // 文書と同じスキーム・ホストの http(s) は外部ではない（開発用サーバの `.html` は http で
-  // 配る。本番の文書は mdpreview: なので、http(s) は常に外部）。
+  // 窓の中のファイルを指すか（own）は、md の画面（この script が動いているトップの文書）と
+  // スキーム・ホストが同じかで見る。
+  // Why not doc の URL と比べる: `srcdoc` の iframe は URL が `about:srcdoc` で、相対リンクは
+  // 親の文書の場所で解決されるので、窓の中のリンクが外部に見える。
+  // Why not `URL.origin` で比べる: `mdpreview:` は特別なスキームではないので "null" になる。
   //
   // 要素のメソッドは親の prototype から呼ぶ（extmedia.js の冒頭と同じ理由。DOM clobbering）。
-  var frameLinkSel = 'a[href], area[href], a[*|href]';
+  var linkSel = 'a[href], area[href], a[*|href]';
   var XLINK_NS = 'http://www.w3.org/1999/xlink';
-  var docUrlOf = Object.getOwnPropertyDescriptor(Document.prototype, 'URL').get;
   var baseUriOf = Object.getOwnPropertyDescriptor(Node.prototype, 'baseURI').get;
-  function frameExternalLink(e, doc) {
-    if (!e.isTrusted || e.button !== 0 || e.defaultPrevented) return null;
+  function clickedLink(e, doc) {
     var t = e.target;
     // 文字のノードから来ることは無いが、要素でなければ closest が無い。
     if (!t || t.nodeType !== 1) return null;
-    var a = Element.prototype.closest.call(t, frameLinkSel);
+    var a = Element.prototype.closest.call(t, linkSel);
     if (!a) return null;
     var raw = Element.prototype.getAttribute.call(a, 'href');
     if (raw === null) raw = Element.prototype.getAttributeNS.call(a, XLINK_NS, 'href');
     if (raw === null) return null;
-    var u, own;
+    var url = null, own = false;
     try {
-      u = new URL(raw, baseUriOf.call(doc));
-      own = new URL(docUrlOf.call(doc));
-    } catch (err) { return null; }
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    if (!u.host) return null;
-    if (u.protocol === own.protocol && u.host === own.host) return null;
+      url = new URL(raw, baseUriOf.call(doc));
+      own = url.protocol === location.protocol && url.host === location.host;
+    } catch (err) { url = null; }
+    return { raw: raw, url: url, own: own };
+  }
+
+  // iframe の中のクリックが、外部（http(s) と、`mailto:`・`vscode:` など他のアプリへ渡る
+  // スキーム）へ移るリンクの決定なら、その URL。違えば null。
+  //
+  // 人が押したもの（isTrusted）の主ボタンだけ。文書の script（許しているとき）が click() で
+  // ブラウザやメールを開けないように。修飾キーは見ない: ⌘ / ⇧ 付きは WebKit が新しい窓へ回し、
+  // デリゲートが結局外へ開くので、ここで同じ扱いにしても結果は変わらない。
+  // 文書の側が止めたクリック（defaultPrevented。自前の振り分けを持つページ）は開かない。
+  //
+  // 窓の中を指す http(s) は外部ではない（開発用サーバは http で配る。本番は mdpreview: なので、
+  // http(s) は常に外部）。外部スキームのどれを開くか（許可リスト）は Rust の
+  // navigation::open_url_decision が決める。ここで持たないのは、デリゲートの判定と線が
+  // ずれないように。外へ渡らないスキーム（javascript: や無名の文書など）は拾わず、
+  // 文書の側の振る舞いに任せる。
+  var NOT_EXTERNAL = ['javascript:', 'about:', 'data:', 'blob:', 'file:', 'mdpreview:'];
+  function frameExternalLink(e, doc) {
+    if (!e.isTrusted || e.button !== 0 || e.defaultPrevented) return null;
+    var link = clickedLink(e, doc);
+    if (!link || !link.url || link.own) return null;
+    var u = link.url;
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.host ? u.href : null;
+    if (NOT_EXTERNAL.indexOf(u.protocol) >= 0) return null;
     return u.href;
+  }
+
+  // `.html` の中の iframe（入れ子）にも、外部リンクを内線へ回す受け口を張る。入れ子の
+  // フレームの移動も、それを抱える文書の CSP（frame-src）が移動の判定より手前で止めるので、
+  // 拾わないと普通のリンクは押しても何も起きない。
+  //
+  // 見るのは同じ origin のフレームだけ（外部の iframe の中は読めないし、そこから外へは
+  // 開かない。webview_delegate も送り元が外部のフレームなら開かない）。入れ子の中で動いた
+  // 先の文書や、後から足された iframe は、load を捕捉の段で受けて張り直す（load は泡立たないが、
+  // 祖先の捕捉には届く）。キーの転送や部品は張らない（入れ子の中では今までどおり効かない）。
+  var boundNestedDocs = new WeakSet();
+  function bindNestedFrames(doc) {
+    var listen = function(target, type, fn, capture) {
+      EventTarget.prototype.addEventListener.call(target, type, fn, capture);
+    };
+    var bindChild = function(el) {
+      var d;
+      try { d = el.contentDocument; } catch (err) { return; }
+      if (!d || boundNestedDocs.has(d)) return;
+      boundNestedDocs.add(d);
+      listen(d, 'click', function(e) {
+        var url = frameExternalLink(e, d);
+        if (!url || !window.ipc) return;
+        e.preventDefault();
+        window.ipc.postMessage('open-url:' + url);
+      });
+      bindNestedFrames(d);
+    };
+    listen(doc, 'load', function(e) {
+      var t = e.target;
+      if (t && t.nodeType === 1 && /^(IFRAME|FRAME|OBJECT)$/.test(t.nodeName)) bindChild(t);
+    }, true);
+    Array.prototype.forEach.call(
+      Document.prototype.querySelectorAll.call(doc, 'iframe, frame, object'),
+      bindChild);
   }
 
   var boundFrameDocs = new WeakSet();
@@ -845,7 +900,8 @@
       }));
     });
 
-    // 外部（http(s)）へのリンクは、ここで止めて Rust に既定のブラウザで開かせる。
+    // 外部（http(s)・`mailto:` など）へのリンクは、ここで止めて Rust に開かせる（http(s) は
+    // 既定のブラウザ、外部スキームは許可リストに入るものだけ受け持つアプリ）。
     // iframe の中の移動は、シェルの CSP（frame-src 'self'）が移動の判定より手前で止めるので、
     // target の無い普通のリンクは webview_delegate まで届かず、押しても何も起きない。
     // `_blank` / `_top` は届くが、ここで同じに扱う（preventDefault で移動そのものが起きないので、
@@ -861,13 +917,13 @@
       listen('click', function(e) {
         // 上で外へ渡したリンク。`//host/x.md` のような形を、親のプレビュー遷移に回さない。
         if (e.defaultPrevented) return;
-        var a = e.target && e.target.closest && e.target.closest('a[href]');
-        if (!a) return;
-        var href = a.getAttribute('href');
-        if (!href) return;
-        if (opts.onLinkClick(href)) e.preventDefault();
+        var link = clickedLink(e, doc);
+        if (!link) return;
+        if (opts.onLinkClick(link, doc)) e.preventDefault();
       });
     }
+
+    try { bindNestedFrames(doc); } catch (e) {}
   }
 
   // scope 内の .html-frame を配線する。onload ごとに再バインドし、iframe 内遷移後も
@@ -1686,6 +1742,7 @@
     toast: toast,
     applyScrollKey: applyScrollKey,
     scrollToAnchor: scrollToAnchor,
+    clickedLink: clickedLink,
     idToDisplay: idToDisplay,
     isStdinId: isStdinId,
     setOrigin: setOrigin,

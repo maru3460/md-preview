@@ -25,7 +25,7 @@ mod webview_delegate;
 use md_preview::app_config::{self, AppConfig};
 use md_preview::cli;
 use md_preview::html::json_string;
-use md_preview::navigation::{self, NavDecision, NavFacts, NavKind, Target};
+use md_preview::navigation::{self, NavDecision, NavFacts, NavKind, Source, Target};
 use md_preview::quick_access;
 use md_preview::request::{self, handle_request, percent_decode};
 use md_preview::theme;
@@ -787,12 +787,19 @@ fn main() {
     let webview = webview_builder
         .with_initialization_script(&init_script)
         // 移動の判定は webview_delegate が wry のデリゲートを包んで自分で答えるので、ここは
-        // 包めなかったときの受け皿（来ないはず）。wry は移動の種類も行き先のフレームも渡さない
-        // ので、どれもクリックでないメインフレームの移動として判定する。外へは何も開かず、
-        // 通るのは md の画面だけ（`.html` のプレビューの iframe も止まるが、閉じる側に倒す）。
+        // 包めなかったときの受け皿（来ないはず）。wry は移動の種類もフレームも渡さないので、
+        // どれも送り元の分からない、クリックでないメインフレームの最初の読み込みとして判定する。
+        // 外へは何も開かず、通るのは md の画面だけ（`.html` のプレビューの iframe も止まり、
+        // 画面の読み込み直しは止められないが、閉じる側に倒す）。
         .with_navigation_handler(|url: String| {
-            navigation::decide(NavFacts { url: &url, kind: NavKind::Other, target: Target::Main })
-                == NavDecision::Allow
+            navigation::decide(NavFacts {
+                url: &url,
+                kind: NavKind::Other,
+                target: Target::Main,
+                target_url: "",
+                source: Source::Unknown,
+                main_committed: false,
+            }) == NavDecision::Allow
         })
         .with_asynchronous_custom_protocol("mdpreview".to_string(), {
             // macOS では WKWebView がこのクロージャをメインスレッドで呼ぶ。ここで
@@ -891,8 +898,10 @@ fn main() {
                 } else if let Some(url) = body.strip_prefix("open-url:") {
                     // `.html` のプレビューの中の外部リンク（common.js の bindFrame）。移動の
                     // 判定へ届かない分なので、開いてよいかを同じ考え方でここで見直す。
-                    if navigation::open_url_allowed(url) {
-                        webview_delegate::open_in_browser(url);
+                    match navigation::open_url_decision(url) {
+                        NavDecision::OpenInBrowser => webview_delegate::open_in_browser(url),
+                        NavDecision::OpenExternally => webview_delegate::open_externally(url),
+                        NavDecision::Allow | NavDecision::Cancel => {}
                     }
                 }
             }
