@@ -690,6 +690,9 @@
     var listen = function(type, fn, capture) {
       EventTarget.prototype.addEventListener.call(doc, type, fn, capture);
     };
+    // 外部の読み込みを止めているとき、外部の画像などを「開く」リンクに置き換える（extmedia.js）。
+    // 部品より先に。図の拡大は、置き換えた後の中身を見て拡大できるかを決める。
+    try { if (window.MdExtMedia) MdExtMedia.bindDoc(doc); } catch (e) {}
     // 文書の部品（コピーボタン・図の拡大）。クリックは iframe の中で受ける。下の配線が
     // 文書の名前のすり替えで投げても、部品は動くよう先に張る。
     if (window.MdParts) MdParts.bindDoc(doc, frame);

@@ -63,3 +63,8 @@ A-->B
 [^1]: 脚注の中身なのだ。
 
 ~~打ち消し線~~ と [[WikiLink]] 。
+
+外部の画像は既定で「開く」リンクになる: ![構成図](https://example.com/arch.png "題")
+バッジ: [![](https://img.shields.io/badge/build-passing-green.svg)](https://example.com/ci)
+
+<img src="https://example.com/a.png" alt="<b>太字</b> & 記号">

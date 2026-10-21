@@ -53,6 +53,17 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     # addObserverForName:object:queue:usingBlock: は NSOperation と block2 も要求する。
     "NSNotification", "NSOperation", "block2",
 ] }
+# WebKit の先読みを機能フラグで切る（platform.rs の without_prefetch）。webview を作る前の
+# configuration を自分で組んで wry に渡すため。wry が既に引いている版（0.3.2）なので、
+# 依存ツリーは増えない。
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std", "WKPreferences", "WKWebViewConfiguration",
+] }
 # 上の通知をブロックで受けるためだけに要る。wry と objc2-foundation が既に引いて
 # いるので依存ツリーは増えない（Cargo.lock の block2 0.6.2 と同じもの）。
 block2 = "0.6"
+
+# WebKit の機能フラグを、メインスレッドで確かめる（理由は tests/webkit_flags.rs の冒頭）。
+[[test]]
+name = "webkit_flags"
+harness = false

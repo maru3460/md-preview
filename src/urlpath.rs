@@ -162,7 +162,7 @@ fn has_scheme(url: &str) -> bool {
 /// 相対 URL を解決する基準。`dir` は描画中のファイルがあるディレクトリ、
 /// `root` は配信ルート（URL をどちらの形に畳むかの判定に使う）。
 /// `policy` は起動時に決めた CSP（[`crate::csp::Policy`]）。外部の読み込みを止めているとき、
-/// 外部の画像などを「開く」リンクへ置き換えるのに使う（まだ置き換えていない）。
+/// 外部の画像などを「開く」リンクへ置き換えるのに使う（[`crate::extmedia`]）。
 pub struct DocBase<'a> {
     pub dir: &'a Path,
     pub root: &'a Path,

@@ -10,6 +10,7 @@ pub mod cli;
 pub mod csp;
 pub mod diff;
 pub mod embed;
+pub mod extmedia;
 pub mod fsread;
 pub mod git;
 pub mod html;

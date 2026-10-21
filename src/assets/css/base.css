@@ -1961,6 +1961,38 @@ details[open] {
     padding: 32px 0;
 }
 
+/* 外部の読み込みを止めたとき、外部の画像・iframe・動画・音声の代わりに置く「開く」リンク
+   （extmedia.rs）。中身が来ないことが一目で分かる小さな札にする。`.md-ext-chip` は `<a>` の
+   中（README のバッジ）に置く文字だけの札で、押すと外側のリンクが開く。
+   `.html` の中は app の CSS が届かないので、extmedia.js が形（枠・下線・大きさ）を同じにした
+   style 属性を付ける。色だけは違う: こちらはテーマのリンクの色、`.html` は周りの文字の色
+   （テーマが届かず、文書のリンクの色が読める色とは限らないため）。 */
+.markdown-body a.md-ext-media,
+.markdown-body .md-ext-chip {
+    display: inline-block;
+    max-width: 100%;
+    padding: 1px 8px;
+    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+    border-radius: 4px;
+    font-size: 0.85em;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    vertical-align: middle;
+}
+/* 枠だけだと押せるものに見えないので、リンクには下線も引く。 */
+.markdown-body a.md-ext-media {
+    text-decoration: underline;
+}
+.markdown-body .md-ext-chip {
+    padding: 0 6px;
+    font-size: 0.8em;
+}
+.markdown-body svg text.md-ext-media {
+    font-size: 12px;
+    fill: currentColor;
+    text-decoration: underline;
+}
+
 /* ── プレビューにコメント（c キー）─────────────────────────────
    difit 風に、レンダリング済み本文の行/要素へその場でコメントを付け、まとめて
    コピーして Claude Code へ貼る。

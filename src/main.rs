@@ -644,6 +644,14 @@ fn main() {
         md_preview::notifications::add_read(&config.initial_ids, &open_flags.origin);
         config.bell_opened = config.initial_ids.clone();
     }
+    // 先読み（preconnect・DNS）を切った configuration は、webview を作る前に渡す（理由は
+    // without_prefetch の doc）。ページの材料（page_globals・RequestContext）より前に済ませて
+    // おくのは、切れなかった名前をいずれ設定画面に出すとき、そこへ渡せるようにするため。
+    // 今はログだけ。
+    let (webview_builder, prefetch_off) = platform::without_prefetch(WebViewBuilder::new());
+    if !prefetch_off.missing().is_empty() {
+        eprintln!("md: WebKit の先読みを切れなかった: {}", prefetch_off.missing().join(", "));
+    }
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
     let init_script = format!(
@@ -739,7 +747,7 @@ fn main() {
     // 色の中身が使われるのは underPageBackgroundColor（行き過ぎスクロールの
     // 跳ね返り、macOS 12 以降）だけ。透けた先に見えるのは窓側に塗った色なので、
     // ここを別の色にしても隙間の見え方は変わらない。
-    let mut webview_builder = WebViewBuilder::new();
+    let mut webview_builder = webview_builder;
     if let Some(color) = bg {
         webview_builder = webview_builder.with_background_color(color);
     }
@@ -856,6 +864,15 @@ fn main() {
         .with_url("mdpreview://localhost/")
         .build(&window)
         .expect("Failed to create WebView");
+
+    // 渡した configuration が build() の後も効いているかを、開発中のビルドで 1 度だけ読み戻す。
+    // 切る順番（webview を作る前に渡す）が本物のアプリで効いていることの確かめ。
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    match platform::prefetch_still_on(&webview) {
+        Some(on) if on.is_empty() => {}
+        Some(on) => eprintln!("md: build() の後に先読みが ON のまま: {}", on.join(", ")),
+        None => eprintln!("md: build() の後の先読みの設定を読み戻せなかった"),
+    }
 
     // メニューの ⌘Q はイベントループへ流す（#49）。宛先も購読も **NSMenuItem や
     // 通知センター側では保持されない** ので、ここで持ち続ける。`EventLoop::run` は

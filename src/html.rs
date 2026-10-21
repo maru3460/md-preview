@@ -148,6 +148,7 @@ const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("contextmenu.js", include_str!("assets/js/contextmenu.js")),
     ("autocopy.js", include_str!("assets/js/autocopy.js")),
     ("parts.js", include_str!("assets/js/parts.js")),
+    ("extmedia.js", include_str!("assets/js/extmedia.js")),
     ("viewmode.js", include_str!("assets/js/viewmode.js")),
     ("help.js", include_str!("assets/js/help.js")),
     ("keyscroll.js", include_str!("assets/js/keyscroll.js")),
@@ -236,6 +237,16 @@ pub fn render_body_in(markdown: &str, base: Option<&DocBase>, line_offset: usize
     }
     let mut body = String::new();
     html::push_html(&mut body, events.into_iter());
+    // 外部の読み込みを止めているときは、外部の画像などを「開く」リンクに置き換える。
+    // 描き終えた HTML に掛けるのは、複数行にまたがる生 HTML の `<picture>` などを 1 個に
+    // まとめるため（理由は extmedia.rs の冒頭）。
+    if let Some(b) = base {
+        if !b.policy.external {
+            if let Some(replaced) = crate::extmedia::replace_external(&body) {
+                body = replaced;
+            }
+        }
+    }
     body
 }
 
@@ -266,10 +277,11 @@ fn rewrite_urls(events: &mut [Event<'_>], base: &DocBase) {
     }
 }
 
-/// 生 HTML の `src` / `href` / `poster` 属性値だけを書き換える。書き換えが無ければ None。
+/// 生 HTML の `src` / `href` / `poster` / `srcset` 属性値だけを書き換える。書き換えが無ければ None。
 /// HTML を丸ごと構文解析はせず、「空白 + 属性名 + `=` + クォート」の並びだけを見る。
+/// `srcset` は候補（`a.png 1x, b.png 2x`）ごとに URL だけを畳む。
 fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
-    const ATTRS: [&str; 3] = ["src", "href", "poster"];
+    const ATTRS: [&str; 4] = ["src", "href", "poster", "srcset"];
     let bytes = src.as_bytes();
     let mut out = String::new();
     let mut copied = 0usize;
@@ -306,7 +318,13 @@ fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
         let value_start = k + 1;
         let Some(rel_end) = src[value_start..].find(quote) else { break };
         let value_end = value_start + rel_end;
-        if let Some(url) = base.resolve_url(&src[value_start..value_end]) {
+        let value = &src[value_start..value_end];
+        let resolved = if name.eq_ignore_ascii_case("srcset") {
+            resolve_srcset(value, base)
+        } else {
+            base.resolve_url(value)
+        };
+        if let Some(url) = resolved {
             out.push_str(&src[copied..value_start]);
             out.push_str(&url);
             copied = value_end;
@@ -318,6 +336,22 @@ fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
     }
     out.push_str(&src[copied..]);
     Some(out)
+}
+
+/// `srcset` の各候補の URL を [`DocBase::resolve_url`] で畳む。1 つも畳まなければ None。
+fn resolve_srcset(value: &str, base: &DocBase) -> Option<String> {
+    let mut changed = false;
+    let parts: Vec<String> = crate::extmedia::srcset_candidates(value)
+        .into_iter()
+        .map(|(url, candidate)| match base.resolve_url(url) {
+            Some(resolved) => {
+                changed = true;
+                format!("{resolved}{}", &candidate[url.len()..])
+            }
+            None => candidate.to_string(),
+        })
+        .collect();
+    changed.then(|| parts.join(", "))
 }
 
 /// fence 直後の Text イベントを CodeBlock の End まで集めて生テキストを返す。
@@ -1396,6 +1430,56 @@ mod tests {
         // 展開はされないが、href はドキュメント基準の URL に畳まれる。
         assert!(body.contains("<a href=\"/f.txt#L2\">"), "{body}");
         assert!(!body.contains("code-embed"), "should not embed inline link: {body}");
+    }
+
+    // ── 外部の画像などの置き換え（extmedia） ──
+
+    fn render_with_policy(md: &str, policy: Policy) -> String {
+        let dir = std::path::PathBuf::from("/proj/docs");
+        let root = std::path::PathBuf::from("/proj");
+        render_body_in(md, Some(&DocBase::new(&dir, &root).with_policy(policy)), 0)
+    }
+
+    #[test]
+    fn external_markdown_image_becomes_an_open_link_when_external_is_off() {
+        let body = render_with_policy("![構成図](https://example.com/arch.png)\n", Policy::default());
+        assert!(body.contains(r#"<a class="md-ext-media" href="https://example.com/arch.png""#), "{body}");
+        assert!(body.contains("外部の画像: 構成図（example.com）"), "{body}");
+        assert!(!body.contains("<img"), "{body}");
+        // 手元の画像はそのまま（相対パスは文書の場所で畳んだうえで）。
+        let body = render_with_policy("![a](fig.png)\n", Policy::default());
+        assert!(body.contains(r#"<img src="/docs/fig.png" alt="a" />"#), "{body}");
+    }
+
+    #[test]
+    fn readme_badge_becomes_a_chip_inside_its_link() {
+        let md = "[![CI](https://github.com/o/r/actions/workflows/ci.yml/badge.svg)](https://github.com/o/r/actions)\n";
+        let body = render_with_policy(md, Policy::default());
+        assert!(body.contains(r#"<a href="https://github.com/o/r/actions"><span class="md-ext-chip" title="github.com">CI</span></a>"#), "{body}");
+        assert_eq!(body.matches("<a ").count(), 1, "{body}");
+    }
+
+    #[test]
+    fn multi_line_raw_picture_becomes_one_link() {
+        let md = "<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://e.example/d.png\">\n  <img src=\"https://e.example/l.png\" alt=\"ロゴ\">\n</picture>\n";
+        let body = render_with_policy(md, Policy::default());
+        assert_eq!(body.matches("md-ext-media").count(), 1, "{body}");
+        assert!(!body.contains("<source") && !body.contains("<img"), "{body}");
+    }
+
+    #[test]
+    fn external_media_is_kept_when_external_is_on() {
+        let on = Policy { external: true, ..Policy::default() };
+        let body = render_with_policy("![a](https://example.com/a.png)\n\n<iframe src=\"https://e.example/x\"></iframe>\n", on);
+        assert!(body.contains(r#"<img src="https://example.com/a.png""#), "{body}");
+        assert!(body.contains(r#"<iframe src="https://e.example/x">"#), "{body}");
+        assert!(!body.contains("md-ext-"), "{body}");
+    }
+
+    #[test]
+    fn raw_srcset_candidates_resolve_against_the_document() {
+        let body = render_with_policy("<img srcset=\"fig.png 1x, ../big.png 2x\" src=\"fig.png\">\n", Policy::default());
+        assert!(body.contains(r#"srcset="/docs/fig.png 1x, /big.png 2x""#), "{body}");
     }
 
     #[test]
