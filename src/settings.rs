@@ -34,6 +34,13 @@ pub const THEME: &str = "theme";
 /// 窓の初期サイズ（#42）。`1440x900` の形で、意味の解釈は [`crate::app_config`] が持つ。
 pub const WINDOW_SIZE: &str = "window-size";
 
+/// 文書の JavaScript を動かすか。`on` / `off` で、読むのは [`crate::app_config::policy_from`]。
+/// 既定（書いていない）は OFF。
+pub const DOCUMENT_SCRIPTS: &str = "document-scripts";
+
+/// 外部（http / https）からの読み込みを許すか。書式と既定は [`DOCUMENT_SCRIPTS`] と同じ。
+pub const EXTERNAL_RESOURCES: &str = "external-resources";
+
 /// ファイルの 1 行。
 #[derive(Debug, PartialEq, Eq)]
 enum Line {
@@ -125,7 +132,7 @@ pub fn load() -> Settings {
 /// 値を書く。ファイルごと置き換えるので、知らないキーも書き戻される。
 pub fn set(key: &str, value: &str) -> io::Result<()> {
     let dir = crate::config_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME が設定されていない"))?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "設定の置き場所が決まらない（HOME も MD_CONFIG_DIR の行き先も読めない）"))?;
     set_at(&dir, key, value)
 }
 
@@ -199,7 +206,8 @@ fn has_line_break(s: &str) -> bool {
     s.contains('\n') || s.contains('\r')
 }
 
-fn parse(text: &str) -> Settings {
+/// テキストを設定として読む。ディスクに触れない（テストで設定の中身を作るのにも使う）。
+pub(crate) fn parse(text: &str) -> Settings {
     let lines = text
         .lines()
         .map(|raw| {

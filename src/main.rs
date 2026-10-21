@@ -100,6 +100,10 @@ enum SettingsRequest {
     WindowSize(u32, u32),
     /// 初期サイズを既定へ戻す。
     WindowSizeReset,
+    /// 設定「文書の JavaScript を動かす」を保存する。効くのは ⌘Q で終了した後から。
+    DocScripts(bool),
+    /// 設定「外部の読み込みを許す」を保存する。効くのは ⌘Q で終了した後から。
+    External(bool),
 }
 
 impl SettingsRequest {
@@ -119,6 +123,20 @@ impl SettingsRequest {
                     None => SettingsRequest::Get,
                 },
             },
+            // 値は `on` / `off` のどちらかだけを受ける。読めない値は保存せずに今の状態を
+            // 送り返す（初期サイズと同じ）。
+            "document-scripts" | "external-resources" => {
+                let on = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Some(SettingsRequest::Get),
+                };
+                if verb == "document-scripts" {
+                    SettingsRequest::DocScripts(on)
+                } else {
+                    SettingsRequest::External(on)
+                }
+            }
             _ => return None,
         })
     }
@@ -619,12 +637,13 @@ fn main() {
     let (theme_paint, appearance, mut active_theme) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
-    // CSP はプロセスの間ずっと同じものを使う（設定の切り替えは ⌘Q の後から効く）。
-    // 設定の 2 つのスイッチはまだ無いので、いまは常に両方 OFF。
+    // CSP はここで 1 回だけ設定から作り、プロセスの間ずっと同じものを使う（設定の切り替えは
+    // ⌘Q の後から効く）。設定画面が出す「いま効いている値」は、これを持つ RequestContext から引く。
+    let policy = app_config::policy_from(&md_preview::settings::load());
     let page = md_preview::app_config::PageInputs {
         theme_css: &theme_css,
         custom_css: &custom_css,
-        policy: md_preview::csp::Policy::default(),
+        policy,
         lib_origin: md_preview::csp::APP_ORIGIN,
     };
     let mut config = if stdin_mode {
@@ -649,8 +668,8 @@ fn main() {
     }
     // 先読み（preconnect・DNS）を切った configuration は、webview を作る前に渡す（理由は
     // without_prefetch の doc）。ページの材料（page_globals・RequestContext）より前に済ませて
-    // おくのは、切れなかった名前をいずれ設定画面に出すとき、そこへ渡せるようにするため。
-    // 今はログだけ。
+    // おくのは、切れなかった名前をそこへ渡せるようにするため。設定画面には「先読みの停止」として
+    // 出す（ログはデタッチ後に /dev/null へ行くので、ログだけでは誰も気づかない）。
     let (webview_builder, prefetch_off) = platform::without_prefetch(WebViewBuilder::new());
     if !prefetch_off.missing().is_empty() {
         eprintln!("md: WebKit の先読みを切れなかった: {}", prefetch_off.missing().join(", "));
@@ -1093,8 +1112,16 @@ fn main() {
                         // （`app_config::window_size`）ので、それで足りる。
                         save_window_size("");
                     }
+                    // 保存するだけで、いまの CSP（ctx.policy）は変えない。ページの meta は起動時に
+                    // 書き込んであり、窓を読み込み直すとタブと読み位置を失うため。
+                    SettingsRequest::DocScripts(on) => {
+                        save_switch(md_preview::settings::DOCUMENT_SCRIPTS, on);
+                    }
+                    SettingsRequest::External(on) => {
+                        save_switch(md_preview::settings::EXTERNAL_RESOURCES, on);
+                    }
                 }
-                send_settings(&webview);
+                send_settings(&webview, &ctx, &prefetch_off);
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
@@ -1126,7 +1153,7 @@ fn main() {
                     // 設定タブが開いていれば ✓ を動かす。開いていなければ写しを
                     // 持っているだけで、次に前に出したときに取り直す。
                     if page_ready {
-                        send_settings(&webview);
+                        send_settings(&webview, &ctx, &prefetch_off);
                     }
                     return;
                 }
@@ -1613,15 +1640,37 @@ fn save_window_size(value: &str) {
     }
 }
 
+/// 設定のスイッチ（`on` / `off`）を保存する。
+fn save_switch(key: &str, on: bool) {
+    if let Err(e) = md_preview::settings::set(key, app_config::format_switch(on)) {
+        eprintln!("md: 設定 {} を保存できませんでした: {}", key, e);
+    }
+}
+
 /// 設定タブへ状態を渡す（#38）。毎回 `settings` を読み直すのは、`md theme` や
 /// 手で書き換えたぶんも拾うため。読むのは数十バイトのファイル 1 つ。
-fn send_settings(webview: &wry::WebView) {
+///
+/// CSP のスイッチは、保存した値（読み直したもの）といま効いている値（`ctx.policy`。起動時に
+/// 決めたもの）を両方渡す。
+fn send_settings(webview: &wry::WebView, ctx: &request::RequestContext, prefetch_off: &platform::PrefetchOff) {
     let theme_name = theme::read_active_name();
-    let window_size = md_preview::settings::load()
+    let saved = md_preview::settings::load();
+    let window_size = saved
         .get(md_preview::settings::WINDOW_SIZE)
         .and_then(app_config::parse_window_size);
     let themes = theme::choices();
-    let view = md_preview::html::SettingsView { theme: &theme_name, themes: &themes, window_size };
+    let prefetch_missing = match prefetch_off {
+        platform::PrefetchOff::Applied { missing } => Some(missing.as_slice()),
+        platform::PrefetchOff::NotApplicable => None,
+    };
+    let view = md_preview::html::SettingsView {
+        theme: &theme_name,
+        themes: &themes,
+        window_size,
+        saved_policy: app_config::policy_from(&saved),
+        effective_policy: ctx.policy,
+        prefetch_missing,
+    };
     let _ = webview.evaluate_script(&md_preview::html::settings_script(&view));
 }
 
@@ -1859,5 +1908,17 @@ mod tests {
         assert!(matches!(SettingsRequest::parse("window-size:0x900"), Some(SettingsRequest::Get)));
         assert!(matches!(SettingsRequest::parse("window-size:20000x900"), Some(SettingsRequest::Get)));
         assert!(SettingsRequest::parse("unknown").is_none());
+    }
+
+    /// CSP の 2 つのスイッチは `on` / `off` だけを受け、それ以外は保存せずに状態を送り返させる。
+    #[test]
+    fn switch_requests_take_only_on_or_off() {
+        assert!(matches!(SettingsRequest::parse("document-scripts:on"), Some(SettingsRequest::DocScripts(true))));
+        assert!(matches!(SettingsRequest::parse("document-scripts:off"), Some(SettingsRequest::DocScripts(false))));
+        assert!(matches!(SettingsRequest::parse("external-resources:on"), Some(SettingsRequest::External(true))));
+        assert!(matches!(SettingsRequest::parse("external-resources:off"), Some(SettingsRequest::External(false))));
+        for bad in ["document-scripts:", "document-scripts:ON", "document-scripts:yes", "external-resources:1"] {
+            assert!(matches!(SettingsRequest::parse(bad), Some(SettingsRequest::Get)), "{bad}");
+        }
     }
 }

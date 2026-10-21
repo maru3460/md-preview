@@ -2,7 +2,7 @@
 //
 // 各 spec が実物のページを開くまでの手順（オンボーディング抑止・初期描画待ち）は
 // どこでも同じなので、ここ 1 か所に置く。サーバは playwright.config.js が
-// 4 つ立てていて、URL の使い分けだけをここで持つ。
+// 7 つ立てていて、URL の使い分けだけをここで持つ。
 const base = require('@playwright/test');
 const { expect } = base;
 
@@ -52,6 +52,12 @@ const ONE_FILE_URL = 'http://127.0.0.1:7879/';
 const MULTI_URL = 'http://127.0.0.1:7880/';
 /// root の移動（#34）専用。ここだけ**サーバの root が動く**ので、他と混ぜない。
 const ROOT_URL = 'http://127.0.0.1:7881/';
+/// 設定「文書の JavaScript を動かす」が ON のフォルダ起動（`serve --doc-scripts`）。
+const DOC_SCRIPTS_URL = 'http://127.0.0.1:7882/';
+/// 設定「外部の読み込みを許す」が ON のフォルダ起動（`serve --external`）。
+const EXTERNAL_URL = 'http://127.0.0.1:7883/';
+/// 2 つとも ON のフォルダ起動（`serve --doc-scripts --external`）。
+const BOTH_ON_URL = 'http://127.0.0.1:7884/';
 
 /// 初回オンボーディング（? のヘルプ自動表示）を抑止して開く。
 /// 出したままだと isOverlayOpen が true になり、素キーが全部止まる。
@@ -90,9 +96,10 @@ function display(page, id) {
   return id.startsWith(page.mdRoot + '/') ? id.slice(page.mdRoot.length + 1) : id;
 }
 
-/// フォルダ起動で、ツリーが描かれるのを待つ。
-async function openFolder(page) {
-  await open(page, FOLDER_URL);
+/// フォルダ起動で、ツリーが描かれるのを待つ。`url` を渡せば、同じ形の別のサーバ
+/// （CSP の設定を ON にしたもの）で開く。
+async function openFolder(page, url) {
+  await open(page, url || FOLDER_URL);
   await expect(page.locator('.tree-item').first()).toBeVisible();
 }
 
@@ -103,7 +110,7 @@ async function nextFrames(page) {
 
 module.exports = {
   test, expect,
-  FOLDER_URL, ONE_FILE_URL, MULTI_URL, ROOT_URL,
+  FOLDER_URL, ONE_FILE_URL, MULTI_URL, ROOT_URL, DOC_SCRIPTS_URL, EXTERNAL_URL, BOTH_ON_URL,
   open, openFolder, nextFrames,
   id, treeItem, tab, display,
 };

@@ -13,6 +13,11 @@
 // 起動時に焼き込まれるので、ページとサーバで root が食い違って木が 404 になる）。
 // spec 側でも毎回戻すが、漏れたときの被害を構造的に断つためポートごと分ける。
 //
+// 4 つ目までは CSP の 2 つの設定（文書の JavaScript・外部の読み込み）が両方 OFF の既定。
+// 5 つ目と 6 つ目は、それぞれを ON にしたとき（`--doc-scripts` / `--external`）を試す専用。
+// 7 つ目は 2 つとも ON（片方ずつでは、組み合わさったときの meta とヘッダを確かめられない）。
+// 設定は起動時に 1 回だけ決まり、ページの meta に焼き込まれるので、サーバごとに分ける。
+//
 // ── このスイートが守れないもの ──────────────────────────────────
 // Playwright の WebKit は本番の WKWebView とは別のビルドで、macOS には WKWebView
 // 用の WebDriver が無いため実機を直接は叩けない。つまり **ここが全部緑でも実機が
@@ -47,6 +52,9 @@ const FOLDER_PORT = 7878;
 const ONE_FILE_PORT = 7879;
 const MULTI_PORT = 7880;
 const ROOT_PORT = 7881;
+const DOC_SCRIPTS_PORT = 7882;
+const EXTERNAL_PORT = 7883;
+const BOTH_ON_PORT = 7884;
 
 const ROOT = __dirname;
 // ファイルを渡す 2 つのサーバは cwd を一時ディレクトリにして起動する。cwd 配下の
@@ -99,6 +107,27 @@ module.exports = defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 180000,
     },
+    {
+      // 設定「文書の JavaScript を動かす」が ON。フォルダ起動と同じ形。
+      command: `cargo run -q --example serve -- --port ${DOC_SCRIPTS_PORT} --doc-scripts tests/ui-fixtures`,
+      url: `http://127.0.0.1:${DOC_SCRIPTS_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180000,
+    },
+    {
+      // 設定「外部の読み込みを許す」が ON。フォルダ起動と同じ形。
+      command: `cargo run -q --example serve -- --port ${EXTERNAL_PORT} --external tests/ui-fixtures`,
+      url: `http://127.0.0.1:${EXTERNAL_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180000,
+    },
+    {
+      // 2 つとも ON。フォルダ起動と同じ形。
+      command: `cargo run -q --example serve -- --port ${BOTH_ON_PORT} --doc-scripts --external tests/ui-fixtures`,
+      url: `http://127.0.0.1:${BOTH_ON_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180000,
+    },
   ],
 });
 
@@ -106,3 +135,6 @@ module.exports.FOLDER_PORT = FOLDER_PORT;
 module.exports.ONE_FILE_PORT = ONE_FILE_PORT;
 module.exports.MULTI_PORT = MULTI_PORT;
 module.exports.ROOT_PORT = ROOT_PORT;
+module.exports.DOC_SCRIPTS_PORT = DOC_SCRIPTS_PORT;
+module.exports.EXTERNAL_PORT = EXTERNAL_PORT;
+module.exports.BOTH_ON_PORT = BOTH_ON_PORT;

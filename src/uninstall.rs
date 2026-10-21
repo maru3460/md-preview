@@ -240,6 +240,11 @@ pub fn run(rest: &[String]) {
         }
     };
     print!("{}", plan_text(&targets, &removal, &bin));
+    // 差し替え先は検証用に人が選んだ場所で、md が置いたとは限らない（作業ディレクトリの
+    // 相対パスのこともある）ので消さない。黙って残すと片付いたと思わせるので、一言出す。
+    if let Some(dir) = std::env::var_os(crate::CONFIG_DIR_ENV).filter(|v| !v.is_empty()) {
+        println!("\n{} に指定した {} は消しません。", crate::CONFIG_DIR_ENV, PathBuf::from(dir).display());
+    }
 
     if dry_run {
         println!("\n（--dry-run なので何も消していません）");

@@ -551,7 +551,7 @@ const DNS_PREFETCH_SETTER: &str = "_setDNSPrefetchingEnabled:";
 /// 先読みの停止を試した結果。
 ///
 /// 切れなかった名前は、OS の更新で口の名前が変わったことに気づくためのもの。ログは
-/// デタッチ後に `/dev/null` へ行くので、いずれ設定画面に「効いていない」として出す。
+/// デタッチ後に `/dev/null` へ行くので、設定画面に「効いていない」として出す。
 #[derive(Debug, PartialEq)]
 pub enum PrefetchOff {
     /// 切ろうとした（macOS）。`missing` が空なら全部切れている。

@@ -2791,3 +2791,58 @@ body.md-cmt-mode .source-main .copy-btn {
     font-size: 13px;
     background: color-mix(in srgb, var(--md-accent, Highlight) 9%, transparent);
 }
+
+/* ── JavaScript と外部の読み込み ── */
+.st-switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.st-switch-row .st-label { margin-bottom: 0; }
+
+/* スイッチ。ON のときだけアクセントで塗る（OFF が既定で、塗られている方が「外している」）。 */
+.st-switch {
+    all: unset;
+    cursor: pointer;
+    position: relative;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 20px;
+    border-radius: 10px;
+    background: color-mix(in srgb, currentColor 22%, transparent);
+    transition: background-color .12s;
+}
+.st-switch .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+    transition: left .12s;
+}
+.st-switch.is-on { background: var(--md-accent, Highlight); }
+.st-switch.is-on .knob { left: 16px; }
+.st-switch:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 45%, transparent); }
+
+.st-switch-state, .st-status { font-size: 12.5px; font-weight: 600; }
+
+/* 保存した値といま効いている値が違うときの文。スイッチの真下に置く。 */
+.st-pending {
+    margin: 0 0 12px;
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-size: 13px;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+/* 安全にかかわる向き（まだ ON のまま）と、先読みを止められていないとき。色はテーマが
+   決めた文字の色のままにして、印と太い左の線と太さで、ただの知らせ（上の .st-pending）と
+   分ける（テーマは警告色を持っていないので、固定の赤だと暗いテーマで読めないことがある）。 */
+.st-pending.is-warn {
+    border-color: currentColor;
+    border-left-width: 4px;
+    font-weight: 600;
+}
+.st-pending.is-warn::before { content: "⚠ "; }
+/* 切れなかった名前。前後の文と 1 行ずつ分ける。 */
+.st-missing { display: block; margin: 2px 0; }
+/* 見出しの直下に置く「⌘Q で終了した後から効きます。」。上の余白は見出しの線が持つ。 */
+.st-title + .st-when { margin-top: 0; margin-bottom: 8px; }

@@ -73,6 +73,31 @@ pub fn format_window_size(w: u32, h: u32) -> String {
     format!("{w}x{h}")
 }
 
+/// `settings` の on / off の値（`document-scripts=` など）を読む。`on` だけが ON で、
+/// 書いていない・空・書き損じは OFF。
+///
+/// Why not 書き損じを ON に読む余地を残す（`yes`・`true`・`1` も受ける）: どれも守りを外す
+/// 向きのスイッチなので、読めない値は閉じる側に倒す。大文字の `ON` だけは手で書いた人の
+/// 意図がはっきりしているので受ける。
+pub fn switch_on(value: Option<&str>) -> bool {
+    value.map_or(false, |v| v.trim().eq_ignore_ascii_case("on"))
+}
+
+/// 保存する綴り。[`switch_on`] と対。
+pub fn format_switch(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// 保存してある設定から CSP の 2 つのスイッチを作る。起動時に 1 回だけ呼び、その値を
+/// プロセスの間ずっと使う（切り替えは ⌘Q で終了して開き直したときから効く）。
+/// 設定画面が「保存した値」を出すときも、同じ読み方をここから引く。
+pub fn policy_from(settings: &crate::settings::Settings) -> Policy {
+    Policy {
+        doc_scripts: switch_on(settings.get(crate::settings::DOCUMENT_SCRIPTS)),
+        external: switch_on(settings.get(crate::settings::EXTERNAL_RESOURCES)),
+    }
+}
+
 /// 画面を組むのに要る、入力（開くもの）とは関係なく決まる値。3 つの入口（`AppConfig` の
 /// `from_*`）と [`crate::request::RequestContext::new`] が同じものを受ける。
 ///
@@ -551,6 +576,38 @@ mod tests {
     #[test]
     fn spaces_around_the_numbers_are_tolerated() {
         assert_eq!(window_size(Some(" 1440 x 900 ")), (1440.0, 900.0));
+    }
+
+    #[test]
+    fn only_on_turns_a_switch_on() {
+        assert!(switch_on(Some("on")));
+        assert!(switch_on(Some("ON")));
+        assert!(switch_on(Some(" on ")));
+        assert!(!switch_on(None));
+        for v in ["", "off", "yes", "true", "1", "onn", "o n"] {
+            assert!(!switch_on(Some(v)), "{v:?} を ON に読んでいる");
+        }
+        assert!(switch_on(Some(format_switch(true))));
+        assert!(!switch_on(Some(format_switch(false))));
+    }
+
+    /// 2 つのスイッチは別々のキーから読み、書いていなければ両方 OFF。
+    #[test]
+    fn the_policy_is_read_from_the_two_setting_keys() {
+        use crate::settings::parse;
+        assert_eq!(policy_from(&parse("")), Policy { doc_scripts: false, external: false });
+        assert_eq!(
+            policy_from(&parse("document-scripts=on\n")),
+            Policy { doc_scripts: true, external: false }
+        );
+        assert_eq!(
+            policy_from(&parse("external-resources=on\ndocument-scripts=off\n")),
+            Policy { doc_scripts: false, external: true }
+        );
+        assert_eq!(
+            policy_from(&parse("theme=nord\ndocument-scripts = on\nexternal-resources=on\n")),
+            Policy { doc_scripts: true, external: true }
+        );
     }
 
     fn paths(list: &[&str]) -> Vec<PathBuf> {

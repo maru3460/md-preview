@@ -21,7 +21,8 @@
   var TAB_ID = 'md:settings';
 
   // Rust から渡された写し。
-  // { theme, defaultTheme, autoDarkBg, themes:[{name, group, swatch}], windowSize, defaultWindowSize }
+  // { theme, defaultTheme, autoDarkBg, themes:[{name, group, swatch}], windowSize, defaultWindowSize,
+  //   docScripts:{saved, effective}, external:{saved, effective}, prefetch:{missing:[…]} | null }
   var state = null;
   var pane = 'theme';
   var host = null;    // 描いている先（本文ペイン）
@@ -32,7 +33,26 @@
     { key: 'theme', title: 'テーマ',
       icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/></svg>' },
     { key: 'window', title: 'ウィンドウ',
-      icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M1.8 5.8h12.4"/></svg>' }
+      icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M1.8 5.8h12.4"/></svg>' },
+    // 名前は、HTML が白紙になった・画像が文字になった人が探す言葉にする（「セキュリティ」では
+    // 症状から引けない）。
+    // ナビは幅が狭いので 1 行に収まる短い名前（`nav`）にし、ペインの見出しには全部を書く。
+    { key: 'content', title: 'JavaScript と外部の読み込み', nav: 'JavaScript・外部',
+      icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6 2.6 3.7v4c0 3.2 2.3 5.6 5.4 6.7 3.1-1.1 5.4-3.5 5.4-6.7v-4z"/></svg>' }
+  ];
+
+  // CSP の 2 つのスイッチ。`key` は Rust の settings.rs のキーで、`settings:<key>:on|off` で頼む。
+  // 説明は、困っている症状から引けるように先に書き、ON にしたときの危険を具体的に添える。
+  var SWITCHES = [
+    { field: 'docScripts', key: 'document-scripts', label: '文書の JavaScript を動かす',
+      desc: 'HTML が白紙になる、文書が自前で持つボタンやグラフが動かないときは ON。' +
+        'ON にすると、開いた md と HTML の JavaScript が、手元のファイルを読んで外へ送れるようになります。',
+      // アプリが配る部品は OFF でも動く。「ボタンが効かない」の中でも、こちらは ON にしても変わらない。
+      extra: 'コピーボタンと図の拡大はアプリが配る部品なので、OFF のままでも動きます。' },
+    { field: 'external', key: 'external-resources', label: '外部の読み込みを許す',
+      desc: 'ネットの画像やバッジが文字になる、Web フォントが効かないときは ON。' +
+        'ON にすると、開いた文書が外のサーバへ読み込みを送れるようになり、開いたことや本文の一部が伝わることがあります。',
+      extra: null }
   ];
 
   var GROUPS = [
@@ -77,7 +97,8 @@
     var p = el('div', 'st-pane');
     if (state) {
       if (pane === 'theme') renderTheme(p);
-      else renderWindow(p);
+      else if (pane === 'window') renderWindow(p);
+      else renderContent(p);
     }
     layout.appendChild(p);
     root.innerHTML = '';
@@ -101,7 +122,7 @@
       b.type = 'button';
       b.dataset.pane = item.key;
       b.innerHTML = item.icon;
-      b.appendChild(el('span', null, item.title));
+      b.appendChild(el('span', null, item.nav || item.title));
       b.addEventListener('click', function() {
         if (pane === item.key) return;
         pane = item.key;
@@ -218,9 +239,95 @@
     }));
 
     // ⌘W で閉じた窓は大きさごと隠して出し直す（#49）ので、効くのはプロセスが
-    // 立ち上がり直したときだけ。
-    item.appendChild(el('div', 'st-when', 'プロセスを終了した後から効きます。'));
+    // 立ち上がり直したときだけ。「プロセス」ではなく、押すキーで書く（JavaScript と
+    // 外部の読み込みの画面と揃える）。
+    item.appendChild(el('div', 'st-when', '⌘Q で終了した後から効きます。'));
     p.appendChild(item);
+  }
+
+  // ── JavaScript と外部の読み込み ─────────────────────────────
+  function renderContent(p) {
+    p.appendChild(el('div', 'st-title', 'JavaScript と外部の読み込み'));
+    // 2 つのスイッチに共通なので見出しの下に 1 回だけ書く。スイッチごとに書くと、同じ文が
+    // 食い違いの文の後ろに並び、そちらが最後の言葉に見えなくなる。
+    // ⌘W と × は窓を隠すだけでプロセスは残る（#49）ので、「窓を閉じたら」とは書かない。
+    p.appendChild(el('div', 'st-when', '⌘Q で終了した後から効きます。'));
+    SWITCHES.forEach(function(sw) { p.appendChild(switchItem(sw)); });
+
+    var both = el('div', 'st-item');
+    both.appendChild(el('div', 'st-label', '2 つとも ON のとき'));
+    both.appendChild(el('p', 'st-desc',
+      'draw.io の AWS・Cisco・BPMN などの図形は、2 つとも ON にしたときだけ描かれます（図形をネットから取ってきて、JavaScript として取り込むため）。'));
+    p.appendChild(both);
+
+    if (state.prefetch) p.appendChild(prefetchItem(state.prefetch));
+  }
+
+  function switchItem(sw) {
+    var v = state[sw.field] || { saved: false, effective: false };
+    var item = el('div', 'st-item');
+    item.dataset.switch = sw.key;
+
+    var row = el('div', 'st-switch-row');
+    var id = 'st-sw-' + sw.key;
+    var label = el('label', 'st-label', sw.label);
+    label.htmlFor = id;
+    row.appendChild(label);
+    var b = el('button', 'st-switch' + (v.saved ? ' is-on' : ''));
+    b.type = 'button';
+    b.id = id;
+    b.setAttribute('role', 'switch');
+    b.setAttribute('aria-checked', v.saved ? 'true' : 'false');
+    b.appendChild(el('span', 'knob'));
+    b.addEventListener('click', function() { toggle(sw); });
+    row.appendChild(b);
+    row.appendChild(el('span', 'st-switch-state', v.saved ? 'ON' : 'OFF'));
+    item.appendChild(row);
+
+    // 保存した値といま効いている値が違うときだけ、スイッチの真下に出す。切り替えは ⌘Q の
+    // 後から効くので、ここで書かないと、OFF にした直後に止まったと思わせてしまう。
+    if (v.saved !== v.effective) {
+      item.appendChild(v.saved
+        ? el('p', 'st-pending', '保存しました。いまの md は OFF のままです。⌘Q で終了して開き直すと ON になります。')
+        : el('p', 'st-pending is-warn', 'いまの md では、まだ ON のままです。止めるには ⌘Q で終了してください。'));
+    }
+
+    item.appendChild(el('p', 'st-desc', sw.desc));
+    if (sw.extra) item.appendChild(el('p', 'st-desc', sw.extra));
+    return item;
+  }
+
+  function toggle(sw) {
+    var v = state[sw.field] || { saved: false, effective: false };
+    var next = !v.saved;
+    // 写しは先に書き換える（テーマと同じ）。Rust は保存した後に状態を送り返してくるので、
+    // 保存できなかったときはそこで元に戻る。
+    state[sw.field] = { saved: next, effective: v.effective };
+    render();
+    send(sw.key + ':' + (next ? 'on' : 'off'));
+  }
+
+  // 先読み（preconnect・DNS の先読み）は設定に関係なく止めている。止める口は WebKit の
+  // 非公開の機能フラグで、macOS の更新で名前が変わると黙って効かなくなるので、ここに出す。
+  function prefetchItem(prefetch) {
+    var item = el('div', 'st-item st-prefetch');
+    var ok = !prefetch.missing.length;
+    var row = el('div', 'st-switch-row');
+    row.appendChild(el('span', 'st-label', '先読みの停止'));
+    // 2 つの状態は印で分ける（色はテーマ任せなので、色だけでは見分けられない）。
+    row.appendChild(el('span', 'st-status' + (ok ? ' is-ok' : ' is-warn'), ok ? '✓ 効いている' : '⚠ 効いていない'));
+    item.appendChild(row);
+    item.appendChild(el('p', 'st-desc',
+      '文書のリンク先へ前もって接続する WebKit の機能（preconnect・DNS の先読み）を、上の設定に関係なく止めています。'));
+    if (!ok) {
+      // 名前は英字の識別子なので、「」で括って 1 行に分け、句読点とくっつけない。
+      var warn = el('p', 'st-pending is-warn', '止められなかったもの:');
+      warn.appendChild(el('span', 'st-missing',
+        prefetch.missing.map(function(n) { return '「' + n + '」'; }).join('')));
+      warn.appendChild(document.createTextNode('macOS の更新で WebKit の中の名前が変わった可能性があります。'));
+      item.appendChild(warn);
+    }
+    return item;
   }
 
   // 窓の中身の大きさ。webview は窓の中身いっぱいなので、窓を作るときに渡す大きさと
