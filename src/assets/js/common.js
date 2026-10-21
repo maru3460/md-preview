@@ -676,6 +676,42 @@
     });
   }
 
+  // iframe の中のクリックが、外部（http(s)）へ移るリンクの決定なら、その URL。違えば null。
+  //
+  // 人が押したもの（isTrusted）の主ボタンだけ。文書の script（許しているとき）が click() で
+  // ブラウザを開けないように。修飾キーは見ない: ⌘ / ⇧ 付きは WebKit が新しい窓へ回し、
+  // デリゲートが結局ブラウザで開くので、ここで同じ扱いにしても結果は変わらない。
+  // 文書の側が止めたクリック（defaultPrevented。自前の振り分けを持つページ）は開かない。
+  //
+  // 文書と同じスキーム・ホストの http(s) は外部ではない（開発用サーバの `.html` は http で
+  // 配る。本番の文書は mdpreview: なので、http(s) は常に外部）。
+  //
+  // 要素のメソッドは親の prototype から呼ぶ（extmedia.js の冒頭と同じ理由。DOM clobbering）。
+  var frameLinkSel = 'a[href], area[href], a[*|href]';
+  var XLINK_NS = 'http://www.w3.org/1999/xlink';
+  var docUrlOf = Object.getOwnPropertyDescriptor(Document.prototype, 'URL').get;
+  var baseUriOf = Object.getOwnPropertyDescriptor(Node.prototype, 'baseURI').get;
+  function frameExternalLink(e, doc) {
+    if (!e.isTrusted || e.button !== 0 || e.defaultPrevented) return null;
+    var t = e.target;
+    // 文字のノードから来ることは無いが、要素でなければ closest が無い。
+    if (!t || t.nodeType !== 1) return null;
+    var a = Element.prototype.closest.call(t, frameLinkSel);
+    if (!a) return null;
+    var raw = Element.prototype.getAttribute.call(a, 'href');
+    if (raw === null) raw = Element.prototype.getAttributeNS.call(a, XLINK_NS, 'href');
+    if (raw === null) return null;
+    var u, own;
+    try {
+      u = new URL(raw, baseUriOf.call(doc));
+      own = new URL(docUrlOf.call(doc));
+    } catch (err) { return null; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (!u.host) return null;
+    if (u.protocol === own.protocol && u.host === own.host) return null;
+    return u.href;
+  }
+
   var boundFrameDocs = new WeakSet();
   function bindFrame(frame, opts) {
     var doc;
@@ -809,8 +845,22 @@
       }));
     });
 
+    // 外部（http(s)）へのリンクは、ここで止めて Rust に既定のブラウザで開かせる。
+    // iframe の中の移動は、シェルの CSP（frame-src 'self'）が移動の判定より手前で止めるので、
+    // target の無い普通のリンクは webview_delegate まで届かず、押しても何も起きない。
+    // `_blank` / `_top` は届くが、ここで同じに扱う（preventDefault で移動そのものが起きないので、
+    // 二重には開かない。デリゲートの判定は、ここを素通りした分の受け皿として残す）。
+    listen('click', function(e) {
+      var url = frameExternalLink(e, doc);
+      if (!url || !window.ipc) return;
+      e.preventDefault();
+      window.ipc.postMessage('open-url:' + url);
+    });
+
     if (opts && typeof opts.onLinkClick === 'function') {
       listen('click', function(e) {
+        // 上で外へ渡したリンク。`//host/x.md` のような形を、親のプレビュー遷移に回さない。
+        if (e.defaultPrevented) return;
         var a = e.target && e.target.closest && e.target.closest('a[href]');
         if (!a) return;
         var href = a.getAttribute('href');

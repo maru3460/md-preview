@@ -15,6 +15,7 @@ pub mod fsread;
 pub mod git;
 pub mod html;
 pub mod instance;
+pub mod navigation;
 pub mod notifications;
 pub mod origin;
 pub mod quick_access;
