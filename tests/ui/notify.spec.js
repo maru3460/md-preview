@@ -19,7 +19,9 @@ async function pushSample(page) {
   await push(page, [
     { path: id(page, 'a.md'), ago: 120 },
     { path: id(page, 'sub/a.md'), ago: 4000 },
-    { path: id(page, 'b.md'), ago: 90000, read: true },
+    // 「昨日」は 1 日以上前で、かつ暦の日が 1 つ前のもの。25 時間前だと 0 時台に走らせたとき
+    // 2 日前の暦日に落ちるので、24 時間と 1 分にして、落ちる窓を 0:00〜0:01 だけにする。
+    { path: id(page, 'b.md'), ago: 86460, read: true },
   ]);
 }
 
