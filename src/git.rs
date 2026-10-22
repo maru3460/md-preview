@@ -6,7 +6,13 @@
 //! - 設定は `GIT_CONFIG_COUNT` / `KEY_n` / `VALUE_n` で渡す（どの設定ファイルよりも強く、
 //!   これより強いのは `-c` だけで、ここでは `-c` を渡さない）。`-c` にしないのは、filter の
 //!   名前に `=` が入ると `-c` ではキーと値の切れ目を取り違えるため
-//! - 引き継いだ `GIT_*` は全部消す（`GIT_DIR` や `GIT_CONFIG_*` で外から差し込まれないように）
+//! - 引き継いだ `GIT_*` は消す（`GIT_DIR` や `GIT_CONFIG_COUNT` で外から差し込まれないように）。
+//!   利用者が自分の設定の置き場所を指す `GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM`（絶対パスの
+//!   とき）/ `GIT_CONFIG_NOSYSTEM` だけは残す。消すと、利用者の global 設定（`core.excludesFile`
+//!   など）を読めず、リポジトリ側の値を戻す先を取り違える
+//! - リポジトリ側の設定（filter・excludesFile・部分クローン）は `git config` で 1 回読んでから
+//!   本体を起動する。読んだ結果は設定ファイルの更新時刻を鍵に覚え、変わっていなければ
+//!   `git config` を省く（差分のバッジと ⌘P の並べ替えが、呼ぶたびに git を 2 本起こさないように）
 //! - すべての呼び出しに時間と出力量の上限を掛け、超えたらプロセスグループごと止める。
 //!   止まらなくなる設定（FIFO の `.gitignore` など）は、上限でしか確実に止められない
 
@@ -79,7 +85,7 @@ pub fn run(dir: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
     }
     let git = git_path().ok_or(GitError::Spawn)?;
 
-    let repo_cfg = read_repo_config(git, dir).inspect_err(|e| note_timeout(&repo, e))?;
+    let repo_cfg = repo_config(git, dir, &repo).inspect_err(|e| note_timeout(&repo, e))?;
     if repo_cfg.partial_clone && version(git).is_none_or(|v| v < LAZY_FETCH_GUARD) {
         return Err(GitError::Refused);
     }
@@ -169,7 +175,7 @@ fn parse_version(s: &str) -> Option<(u32, u32)> {
 }
 
 /// リポジトリ側の設定のうち、上書きを決めるのに要るもの。
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone)]
 struct RepoConfig {
     /// スコープが local / worktree の filter の名前（大文字小文字を保つ）。
     filters: Vec<String>,
@@ -183,6 +189,101 @@ struct RepoConfig {
 }
 
 const CONFIG_REGEX: &str = r"^(filter\..+\.(clean|process|smudge|required)|core\.excludesfile|extensions\.partialclone|remote\..+\.promisor)$";
+
+/// [`read_repo_config`] の結果を、設定ファイルの印（[`config_stamps`]）が同じ間は使い回す。
+/// 鍵は `repo`（[`find_repo`]）で、呼ぶ側はそのリポジトリの鍵（[`repo_lock`]）を取っている。
+///
+/// 印を取れないリポジトリ（`.git` が `gitdir:` のファイル。ワークツリーやサブモジュール）は
+/// 覚えず、毎回読む。
+fn repo_config(git: &Path, dir: &Path, repo: &Path) -> Result<RepoConfig, GitError> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (Vec<Stamp>, RepoConfig)>>> = OnceLock::new();
+    let Some(stamps) = config_stamps(repo) else { return read_repo_config(git, dir) };
+    let cache = CACHE.get_or_init(Default::default);
+    {
+        let map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((seen, cfg)) = map.get(repo) {
+            if *seen == stamps {
+                return Ok(cfg.clone());
+            }
+        }
+    }
+    let cfg = read_repo_config(git, dir)?;
+    let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+    map.insert(repo.to_path_buf(), (stamps, cfg.clone()));
+    Ok(cfg)
+}
+
+/// 印を取るために読む設定ファイルの大きさの上限。手で書く設定ファイルはこれより小さい。
+const CONFIG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// 設定ファイル 1 つの印。無ければ `None`（無いことも印のうち。後から作られたら変わる）。
+type Stamp = (PathBuf, Option<(std::time::SystemTime, u64)>);
+
+/// リポジトリ側の設定が変わったかを見るための、設定ファイルの印。取れないときは `None`
+/// （そのリポジトリは覚えず、毎回読む）。
+///
+/// 見るのは `.git/config`・`.git/config.worktree` と、利用者側の global の設定ファイル
+/// （`core.excludesFile` の戻し先をそこから読むため）。
+///
+/// 取れないのは次のとき。
+/// - `.git` がディレクトリでない（`gitdir:` のファイル。ワークツリーやサブモジュール）
+/// - `.git/HEAD` が無い。git はそれをリポジトリと認めず上を探すので、印を付ける先を取り違える
+///   （展開したアーカイブに残った空の `.git/` など）
+/// - `.git/config` か `config.worktree` に `[include]` / `[includeIf]` がある。include の先
+///   （とその先、`onbranch:` ならブランチ）まで印に入れないと、先だけ書き換えられたときに
+///   古い結果で filter を空にし損ねる。Why not 先を自前で辿る: git の設定ファイルの読み方
+///   （タブ区切りの見出し、`;` と `#` のコメント、引用のエスケープ、`~/` と相対パス）を
+///   真似る行が増えるわりに、リポジトリ側の設定に include があることは稀
+fn config_stamps(repo: &Path) -> Option<Vec<Stamp>> {
+    let git_dir = repo.join(".git");
+    if !git_dir.is_dir() || !git_dir.join("HEAD").is_file() {
+        return None;
+    }
+    let locals = [git_dir.join("config"), git_dir.join("config.worktree")];
+    for p in &locals {
+        // 通常ファイルかは special_files_are_regular が見ているが、上限はここで掛ける（設定
+        // ファイルが巨大なら、読み切れなかったものとして覚えない側へ倒す）。
+        if !p.exists() {
+            continue;
+        }
+        match crate::fsread::read_regular_string(p, CONFIG_MAX_BYTES) {
+            Ok(Some(text)) if !has_include(&text) => {}
+            Ok(None) => {}
+            _ => return None,
+        }
+    }
+    let paths = locals.into_iter().chain(global_config_paths());
+    Some(paths.map(|p| {
+        let stamp = std::fs::metadata(&p).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+        (p, stamp)
+    }).collect())
+}
+
+/// 設定ファイルに `[include]` / `[includeIf …]` の見出しがあるか。見出しの名前は大文字小文字を
+/// 問わず、後ろの区切りは空白（タブも）・`]`・引用のどれでもよい。
+fn has_include(text: &str) -> bool {
+    text.lines().any(|line| {
+        let Some(rest) = line.trim_start().strip_prefix('[') else { return false };
+        let name = rest.split(|c: char| c.is_whitespace() || c == ']' || c == '"').next().unwrap_or("");
+        name.eq_ignore_ascii_case("include") || name.eq_ignore_ascii_case("includeif")
+    })
+}
+
+/// 利用者側の global の設定ファイル。`GIT_CONFIG_GLOBAL`（絶対パスのときだけ残す。
+/// [`KEEP_ENV`]）があればそれだけ、無ければ git の既定（`$XDG_CONFIG_HOME/git/config` と
+/// `~/.gitconfig`）。
+fn global_config_paths() -> Vec<PathBuf> {
+    if let Some(p) = std::env::var_os("GIT_CONFIG_GLOBAL").map(PathBuf::from).filter(|p| p.is_absolute()) {
+        return vec![p];
+    }
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .map(|d| d.join("git/config"));
+    let home = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".gitconfig"));
+    xdg.into_iter().chain(home).collect()
+}
 
 /// filter と excludesFile と部分クローンの設定を、`git config` の 1 回で読む。本体と同じ `-C` で
 /// 走らせる（サブモジュールの中なら、そのサブモジュールの設定が読まれるように）。
@@ -263,11 +364,26 @@ fn overrides(cfg: &RepoConfig) -> Vec<(String, String)> {
     out
 }
 
+/// 引き継いだ `GIT_*` のうち残すもの。どれも利用者が自分の設定ファイルの置き場所を決めるもの
+/// （パスのものは絶対パスのときだけ）。
+const KEEP_ENV: [&str; 3] = ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM"];
+
 /// 守りの土台だけを敷いた `git -C <dir>`。
 fn base_command(git: &Path, dir: &Path) -> Command {
     let mut cmd = Command::new(git);
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
+    // 設定の置き場所を指すものだけは利用者の環境のまま（モジュールの doc）。それ以外の
+    // `GIT_*` は、何をするものでも消す（外から差し込まれる道を名指しで塞ぐより、残すものを
+    // 名指しにする方が、git に変数が増えても閉じたまま）。
+    // 残すのは絶対パスのときだけ。相対パスは git が `-C <dir>`（開いたリポジトリの中）で
+    // 解決するので、リポジトリに同じ名前で置かれたファイルが利用者の設定として読まれる。
+    for (key, value) in std::env::vars_os() {
+        let k = key.to_string_lossy();
+        if !k.starts_with("GIT_") {
+            continue;
+        }
+        let keep = KEEP_ENV.contains(&k.as_ref())
+            && (k == "GIT_CONFIG_NOSYSTEM" || Path::new(&value).is_absolute());
+        if !keep {
             cmd.env_remove(&key);
         }
     }
@@ -401,6 +517,42 @@ mod tests {
     fn detects_partial_clone() {
         assert!(parse_repo_config(b"local\0remote.origin.promisor\ntrue\0").partial_clone);
         assert!(parse_repo_config(b"local\0extensions.partialclone\norigin\0").partial_clone);
+    }
+
+    #[test]
+    fn has_include_sees_include_and_include_if_headings_only() {
+        assert!(has_include("[core]\n\tbare = false\n[include]\n\tpath = ../x\n"));
+        assert!(has_include("[includeIf \"gitdir:~/work/\"]\n\tpath = x\n"));
+        assert!(has_include("  [INCLUDEIF\t\"onbranch:main\"]\n"));
+        assert!(!has_include("[core]\n\tincludepath = x\n[user]\n\tname = include\n"));
+        assert!(!has_include("[includes]\n\tpath = x\n"));
+    }
+
+    #[test]
+    fn config_stamps_change_with_the_config_and_are_not_taken_for_odd_repositories() {
+        let dir = std::env::temp_dir().join(format!("md-git-stamps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/config"), "[core]\n\tbare = false\n").unwrap();
+        // HEAD の無い `.git` はリポジトリではない（git は上を探す）。
+        assert!(config_stamps(&dir).is_none());
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let a = config_stamps(&dir).unwrap();
+        std::fs::write(dir.join(".git/config"), "[core]\n\tbare = false\n[filter \"x\"]\n\tclean = touch y\n").unwrap();
+        let b = config_stamps(&dir).unwrap();
+        assert_ne!(a, b, "設定が変われば印が変わる");
+        // config.worktree が後から作られても変わる（無いことも印のうち）。
+        std::fs::write(dir.join(".git/config.worktree"), "[core]\n").unwrap();
+        assert_ne!(b, config_stamps(&dir).unwrap());
+        // include があれば覚えない。
+        std::fs::write(dir.join(".git/config.worktree"), "[include]\n\tpath = ../x\n").unwrap();
+        assert!(config_stamps(&dir).is_none());
+        // `.git` が gitdir: のファイルなら印は取れない（覚えない）。
+        let wt = dir.join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: ../.git/worktrees/wt\n").unwrap();
+        assert!(config_stamps(&wt).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

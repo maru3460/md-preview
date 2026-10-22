@@ -147,6 +147,23 @@ fn repository_config_launches_nothing() {
     render_diff_inner(&sub.join("s.md"));
     diff_stat(&sub.join("s.md"));
 
+    // 一度きれいな状態で読んだ後に仕込まれた filter（設定の読み取りを覚えていても、
+    // `.git/config` の更新で読み直し、include のある設定は覚えないこと）。
+    let r = fx.repo("later");
+    hit_all(&r, FAST);
+    std::fs::write(r.join(".gitattributes"), "*.md filter=late\n").unwrap();
+    git(&r, &["config", "filter.late.clean", fx.script("filter-clean").to_str().unwrap()]);
+    hit_all(&r, FAST);
+    // include の先に後から filter を足す。読んだ時点の先には filter が無いので、覚えが古い
+    // ままだと空にされずに起動する。
+    let inc = fx.dir.join("late.inc");
+    std::fs::write(&inc, "[x]\n\ty = z\n").unwrap();
+    git(&r, &["config", "include.path", inc.to_str().unwrap()]);
+    hit_all(&r, FAST);
+    std::fs::write(r.join(".gitattributes"), "*.md filter=inc\n").unwrap();
+    std::fs::write(&inc, format!("[filter \"inc\"]\n\tclean = {}\n", fx.script("filter-clean").display())).unwrap();
+    hit_all(&r, FAST);
+
     assert_eq!(fx.marks(), Vec::<String>::new(), "リポジトリの設定でコマンドが起動した");
 }
 
