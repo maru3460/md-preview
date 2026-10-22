@@ -1668,7 +1668,11 @@
   // 見ないもの: 透明・文字色・clip-path・小さな overflow の箱で一部だけ隠したもの。どれも
   // 見た目の判定で、取り違えると読めている文字をコピーから落とす。文書の部品（parts.js）の
   // コピーは隠した文字を除こうとせず、写した中身を見せる形にしている。
-  function hiddenFlags(body, range) {
+  // `firstOnly` なら、最初の見えない要素で止めてその 1 つだけを返す（有無を知りたいだけの
+  // ときに、範囲の要素を全部歩かない）。歩く要素の数には上限を置き、超えたら「見えない文字
+  // あり」側（`[true]`）へ倒す（写さない方へ倒れるだけで、何も漏れない）。
+  var HIDDEN_WALK_MAX = 50000;
+  function hiddenFlags(body, range, firstOnly) {
     var anc = elOf(range.commonAncestorContainer);
     if (!anc) return [];
     var ctx = newHiddenCtx();
@@ -1684,7 +1688,13 @@
     });
     // 共通祖先そのものは複製に入らない（中身だけが写る）ので、子孫から数える。共通祖先と
     // その上は hiddenAncestor が別に見る。
-    for (var el = walker.nextNode(); el; el = walker.nextNode()) out.push(isHiddenText(el, ctx));
+    var seen = 0;
+    for (var el = walker.nextNode(); el; el = walker.nextNode()) {
+      if (firstOnly && ++seen > HIDDEN_WALK_MAX) return [true];
+      var hidden = isHiddenText(el, ctx);
+      if (firstOnly && hidden) return [true];
+      out.push(hidden);
+    }
     return broken ? [] : out;
   }
 
@@ -1766,7 +1776,7 @@
 
   // 選択の中に、画面に出ていない文字があるか（選択即コピーが写しを作るかの判断に使う）。
   function hasHiddenText(body, range) {
-    var flags = hiddenFlags(body, range);
+    var flags = hiddenFlags(body, range, true);
     for (var i = 0; i < flags.length; i++) if (flags[i]) return true;
     return false;
   }
@@ -1855,8 +1865,11 @@
 
     // コードも見えない文字も混ざらない選択（＝普通の文章）は写しを作らずに返す。ここが大半の
     // 道で、写しを作らないぶん軽い。見えない文字が混ざるときは、写しの側で外す。
-    if (plain.length > MIRROR_MAX) return plain;
+    // 見えない文字の有無は、写しを諦める長さでも先に見る（要素の寸法を読むだけで、写しの
+    // ように複製と描画はしない）。諦める長さを超えていて見えない文字が混ざるなら、素の文字列を
+    // 返すと外すはずの文字が写るので、空を返す（呼ぶ側は「写すものが無い」として扱う）。
     var hidden = hasHiddenText(body, range);
+    if (plain.length > MIRROR_MAX) return hidden ? '' : plain;
     if (!hasCode(body, range) && !hidden) return plain;
     // 写しが空になるのは、見えている文字が無かったときと写しの組み立てに失敗したとき。
     // 見えない文字が混ざっていたなら、どちらでも空を返す（素の文字列へ戻すと、外した文字が
