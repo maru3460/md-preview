@@ -161,5 +161,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     本文の中のリンクは、<code>target="_blank"</code> が付いていても新しい窓にはならず、タブで開きます。
     md・html 以外のファイルへのリンクは、画像・PDF・動画なら表示用のタブ、それ以外はソースのタブです。
     Web のリンクはクリックしたときだけデフォルトのブラウザで開き、クリックせずに外へ開くことはありません。
+    ほかのアプリへ渡すリンクは <code>mailto:</code>（宛先だけ）と <code>vscode://file/</code>（ファイルを開くだけ）に限ります。md の本文でそれ以外の形（<code>file:</code> など）を押すと「md では開けない形のリンクです」と出ます。<code>.html</code> の中では黙って何も起きません。
   </p>
 </DocLayout>

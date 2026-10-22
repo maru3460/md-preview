@@ -51,7 +51,14 @@ pub enum NavDecision {
     OpenInBrowser,
     /// 取り消して、そのスキームを受け持つアプリで開く（[`external_allowed`] を通ったものだけ）。
     OpenExternally,
+    /// 取り消して、押した人に「開けない形のリンク」だと知らせる（[`UNOPENABLE_LINK_MSG`]）。
+    /// 人がリンクを押したのに何も起きないと、壊れたように見える。知らせるのは押した操作への
+    /// 返事で、「止めたことを知らせる印や帯は出さない」（本文の側に印を出さない）とは別のもの。
+    Unopenable,
 }
+
+/// [`NavDecision::Unopenable`] のときに出す文言。
+pub const UNOPENABLE_LINK_MSG: &str = "md では開けない形のリンクです";
 
 /// 移動の行き先のフレーム（`WKNavigationAction.targetFrame`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +185,9 @@ fn trusted_source(source: Source<'_>) -> bool {
 ///   （メタリフレッシュ・`location` の書き換え・フォームの送信）のは取り消す
 ///
 /// 外部スキーム（`mailto:` など）: リンクのクリックで、送り元が上と同じで、URL が閉じた許可リスト
-/// （[`external_allowed`]）に入るものだけ、受け持つアプリで開いて取り消す。ほかは取り消す。
+/// （[`external_allowed`]）に入るものだけ、受け持つアプリで開いて取り消す。許可リストに入らない
+/// ものは、取り消して「開けない形のリンク」だと知らせる。クリックでない・送り元が信用できない
+/// ものは黙って取り消す。
 ///
 /// `mdpreview:`:
 ///
@@ -198,7 +207,11 @@ fn trusted_source(source: Source<'_>) -> bool {
 ///
 /// 無名の文書（`about:`・`data:`・`blob:`）: サブフレームだけ通す（`srcdoc` の iframe など）。
 ///
-/// `file:`・`javascript:`・スキームの無いもの: 常に取り消す。
+/// `file:`・`javascript:`・スキームの無いもの: 常に取り消す。信用する送り元からのリンクの
+/// クリックなら、「開けない形のリンク」だと知らせる。ここへ届くのは md の本文（メインフレーム）
+/// から押したものだけで、`.html` のプレビューの中の `file:` はシェルの CSP（`frame-src`）が
+/// この判定より手前で止め、親の script（common.js の `frameExternalLink`）も内線に回さないので、
+/// 黙って何も起きない。
 ///
 /// Why not サブフレームの送り元が「行き先のフレーム自身か、その中のフレーム」かまで確かめる:
 /// 公開の `WKFrameInfo` にはフレームの親子を辿る口が無い。同じ文書の中の兄弟のフレームからの
@@ -225,10 +238,12 @@ pub fn decide(facts: NavFacts<'_>) -> NavDecision {
             }
         }
         Scheme::External => {
-            if clicked && trusted_source(source) && external_allowed(url) {
+            if !(clicked && trusted_source(source)) {
+                NavDecision::Cancel
+            } else if external_allowed(url) {
                 NavDecision::OpenExternally
             } else {
-                NavDecision::Cancel
+                NavDecision::Unopenable
             }
         }
         Scheme::App => match target {
@@ -237,6 +252,8 @@ pub fn decide(facts: NavFacts<'_>) -> NavDecision {
             Target::NewWindow => NavDecision::Cancel,
         },
         Scheme::Anonymous if target == Target::Sub => NavDecision::Allow,
+        // `file:` のリンクを押したときも知らせる（AI が書いた文書によくある形）。
+        Scheme::Never if clicked && trusted_source(source) => NavDecision::Unopenable,
         Scheme::Anonymous | Scheme::Never => NavDecision::Cancel,
     }
 }
@@ -320,7 +337,8 @@ fn is_vscode_file(rest: &str) -> bool {
 }
 
 /// 内線の `open-url:` で渡された URL をどう開くか。答えは [`NavDecision::OpenInBrowser`]・
-/// [`NavDecision::OpenExternally`]・[`NavDecision::Cancel`] のどれか。
+/// [`NavDecision::OpenExternally`]・[`NavDecision::Unopenable`] のどれか。ここへ来るのは人が
+/// 押したリンクだけ（送る側が見ている）なので、開けないものは黙らずに知らせる。
 ///
 /// `.html` のプレビューの中の外部リンク（`http(s)` も `mailto:` なども）は、シェルの CSP が
 /// 移動の判定より手前で止めるので、親の script（common.js の bindFrame）がクリックを受けて
@@ -336,7 +354,7 @@ pub fn open_url_decision(url: &str) -> NavDecision {
     } else if scheme_of(url) == Scheme::External && external_allowed(url) {
         NavDecision::OpenExternally
     } else {
-        NavDecision::Cancel
+        NavDecision::Unopenable
     }
 }
 
@@ -592,9 +610,17 @@ mod tests {
                 }
             }
         }
-        for url in ["obsidian://open?vault=x", "vscode://ms-python.python/x", "mailto:a@example.com?subject=x"] {
+        // 許可リストの外は、信用する送り元から押したときだけ知らせる。ほかは黙って取り消す。
+        for url in ["obsidian://open?vault=x", "vscode://ms-python.python/x", "mailto:a@example.com?subject=x", "file:///etc/hosts"] {
             for target in ALL_TARGETS {
-                assert_eq!(at(url, NavKind::LinkActivated, target), NavDecision::Cancel, "{url} {target:?}");
+                assert_eq!(at(url, NavKind::LinkActivated, target), NavDecision::Unopenable, "{url} {target:?}");
+                for source in UNTRUSTED_SOURCES {
+                    let f = facts(url, NavKind::LinkActivated, target, source);
+                    assert_eq!(decide(f), NavDecision::Cancel, "{url} {target:?} {source:?}");
+                }
+                for kind in not_clicked() {
+                    assert_eq!(at(url, kind, target), NavDecision::Cancel, "{url} {kind:?} {target:?}");
+                }
             }
         }
     }
@@ -782,6 +808,11 @@ mod tests {
         }
     }
 
+    /// 取り消す答え（黙って取り消すか、知らせて取り消すか）。窓の中でも外でも何も開かない。
+    fn closed(d: &NavDecision) -> bool {
+        matches!(d, NavDecision::Cancel | NavDecision::Unopenable)
+    }
+
     /// 行き先のフレームが無い移動は、押したリンクを外へ渡すほかは全部取り消す。
     #[test]
     fn new_windows_are_never_created() {
@@ -794,17 +825,23 @@ mod tests {
             "obsidian://open?vault=x",
         ] {
             for kind in ALL_KINDS {
-                assert_eq!(at(url, kind, Target::NewWindow), NavDecision::Cancel, "{url} {kind:?}");
+                assert!(closed(&at(url, kind, Target::NewWindow)), "{url} {kind:?}");
             }
         }
     }
 
+    /// 窓の中でも外でも開かない。信用する送り元から押したときだけ知らせ、ほかは黙って取り消す。
     #[test]
-    fn file_and_javascript_urls_and_scheme_less_strings_are_always_cancelled() {
+    fn file_and_javascript_urls_and_scheme_less_strings_are_always_closed() {
         for url in ["file:///etc/passwd", "FILE:///tmp/x.html", "javascript:alert(1)", "no-scheme", ":x", ""] {
             for kind in ALL_KINDS {
                 for target in ALL_TARGETS {
                     for source in TRUSTED_SOURCES {
+                        let f = facts(url, kind, target, source);
+                        let want = if kind == NavKind::LinkActivated { NavDecision::Unopenable } else { NavDecision::Cancel };
+                        assert_eq!(decide(f), want, "{url} {kind:?} {target:?} {source:?}");
+                    }
+                    for source in UNTRUSTED_SOURCES {
                         let f = facts(url, kind, target, source);
                         assert_eq!(decide(f), NavDecision::Cancel, "{url} {kind:?} {target:?} {source:?}");
                     }
@@ -825,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn open_url_ignores_everything_else() {
+    fn open_url_tells_the_user_about_everything_else() {
         for url in [
             "https://",
             "https://example.com/a b",
@@ -842,7 +879,7 @@ mod tests {
             "blob:mdpreview://localhost/1234",
             "",
         ] {
-            assert_eq!(open_url_decision(url), NavDecision::Cancel, "{url:?}");
+            assert_eq!(open_url_decision(url), NavDecision::Unopenable, "{url:?}");
         }
     }
 

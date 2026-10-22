@@ -52,11 +52,16 @@ pub struct Hooks {
 }
 
 /// 移動の判定と内線の受け口を差し込む。`on_ipc` には、メインフレームの md の画面から来た
-/// メッセージの本文だけが渡る。
+/// メッセージの本文だけが渡る。`on_notice` には、移動の判定が押した人に知らせたい文言
+/// （[`NavDecision::Unopenable`]）が渡る。
 ///
 /// webview を作った直後（イベントループを回す前）に呼ぶ。wry は `build()` の中で最初の
 /// ページの読み込みを始めるが、判定も内線もメインスレッドへ戻ってからしか届かない。
-pub fn install(webview: &wry::WebView, on_ipc: impl Fn(&str) + 'static) -> Hooks {
+pub fn install(
+    webview: &wry::WebView,
+    on_ipc: impl Fn(&str) + 'static,
+    on_notice: impl Fn(&str) + 'static,
+) -> Hooks {
     use wry::WebViewExtMacOS;
 
     let mtm = MainThreadMarker::new().expect("must be on main thread");
@@ -66,7 +71,7 @@ pub fn install(webview: &wry::WebView, on_ipc: impl Fn(&str) + 'static) -> Hooks
     // メインスレッドから呼ぶ。
     let nav = match unsafe { wv.navigationDelegate() } {
         Some(inner) => {
-            let guard = NavGuard::new(mtm, inner);
+            let guard = NavGuard::new(mtm, inner, Box::new(on_notice));
             unsafe { wv.setNavigationDelegate(Some(ProtocolObject::from_ref(&*guard))) };
             Some(guard)
         }
@@ -122,7 +127,8 @@ fn url_of(request: &NSURLRequest) -> Option<String> {
 
 /// 移動の判定。答えを決めるのは [`navigation::decide`] で、ここは事実を集めて開くだけ。
 /// `main_committed` は、メインフレームが最初の読み込みを終えたか（[`NavGuard`] が数える）。
-fn policy_for(action: &WKNavigationAction, main_committed: bool) -> WKNavigationActionPolicy {
+fn policy_for(action: &WKNavigationAction, guard: &NavGuardIvars) -> WKNavigationActionPolicy {
+    let main_committed = guard.main_committed.get();
     // ダウンロードは受けない（受け口も持たない）。wry も受け口が無ければ取り消している。
     // shouldPerformDownload は macOS 11.3 から。
     // SAFETY: どれも WKNavigationAction（と WKFrameInfo）の公開の口。
@@ -161,6 +167,10 @@ fn policy_for(action: &WKNavigationAction, main_committed: bool) -> WKNavigation
             open_externally(&url);
             WKNavigationActionPolicy::Cancel
         }
+        NavDecision::Unopenable => {
+            (guard.on_notice)(navigation::UNOPENABLE_LINK_MSG);
+            WKNavigationActionPolicy::Cancel
+        }
     }
 }
 
@@ -193,6 +203,8 @@ pub struct NavGuardIvars {
     /// メインフレームの最初の読み込みを終えたか。`didCommitNavigation` で立て、中身のプロセスが
     /// 落ちたら下ろす（落ちた後の読み込みは、また最初の読み込みになる）。
     main_committed: Cell<bool>,
+    /// 押した人に知らせる文言の届け先（トースト）。
+    on_notice: Box<dyn Fn(&str)>,
 }
 
 define_class!(
@@ -218,7 +230,7 @@ define_class!(
             action: &WKNavigationAction,
             handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>,
         ) {
-            handler.call((policy_for(action, self.ivars().main_committed.get()),));
+            handler.call((policy_for(action, self.ivars()),));
         }
 
         // これを持つと、WebKit は上の preferences 無しの版を呼ばなくなる。wry は持って
@@ -231,7 +243,7 @@ define_class!(
             preferences: &WKWebpagePreferences,
             handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy, NonNull<WKWebpagePreferences>)>,
         ) {
-            handler.call((policy_for(action, self.ivars().main_committed.get()), NonNull::from(preferences)));
+            handler.call((policy_for(action, self.ivars()), NonNull::from(preferences)));
         }
 
         // wry は、ダウンロードの受け口を持たないときは常に Allow を返す。同じ答えを自分で返す。
@@ -280,8 +292,9 @@ impl NavGuard {
     fn new(
         mtm: MainThreadMarker,
         inner: Retained<ProtocolObject<dyn WKNavigationDelegate>>,
+        on_notice: Box<dyn Fn(&str)>,
     ) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(NavGuardIvars { inner, main_committed: Cell::new(false) });
+        let this = Self::alloc(mtm).set_ivars(NavGuardIvars { inner, main_committed: Cell::new(false), on_notice });
         unsafe { msg_send![super(this), init] }
     }
 

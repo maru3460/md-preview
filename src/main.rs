@@ -830,11 +830,15 @@ fn main() {
     // 内線は wry の受け口を使わず、webview_delegate が自分で受ける（送り元がメインフレームか
     // を見るため。wry はフレームの URL しか渡さない）。ここへ来るのは、メインフレームに読まれた
     // md の画面の script からの本文だけ。
-    // `_webview_hooks` は移動の判定を持つデリゲートを生かしておく札（WKWebView はデリゲートを
-    // weak でしか持たない。落とすと移動が素通りになる）。
+    // `webview_hooks` は移動の判定を持つデリゲートを生かしておく札（WKWebView はデリゲートを
+    // weak でしか持たない。落とすと移動が素通りになる）。イベントループのクロージャに
+    // 持たせて、寿命を窓と揃える（この関数のローカルのままだと、`run` より前の処理を関数に
+    // 切り出した人が札を一緒に落としても、何も言われずに移動が素通りになる）。
     // macOS 以外では内線を受けない（受け口が WebKit のもので、アプリも macOS でしか動かない）。
     #[cfg(target_os = "macos")]
-    let _webview_hooks = webview_delegate::install(&webview, move |body: &str| {
+    let notice_proxy = proxy.clone();
+    #[cfg(target_os = "macos")]
+    let webview_hooks = webview_delegate::install(&webview, move |body: &str| {
         match body {
             "close" => { let _ = proxy.send_event(AppEvent::Close); }
             "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
@@ -906,11 +910,16 @@ fn main() {
                     match navigation::open_url_decision(url) {
                         NavDecision::OpenInBrowser => webview_delegate::open_in_browser(url),
                         NavDecision::OpenExternally => webview_delegate::open_externally(url),
+                        NavDecision::Unopenable => {
+                            let _ = proxy.send_event(AppEvent::Toast(navigation::UNOPENABLE_LINK_MSG.to_string()));
+                        }
                         NavDecision::Allow | NavDecision::Cancel => {}
                     }
                 }
             }
         }
+    }, move |msg: &str| {
+        let _ = notice_proxy.send_event(AppEvent::Toast(msg.to_string()));
     });
 
     // 渡した configuration が build() の後も効いているかを、開発中のビルドで 1 度だけ読み戻す。
@@ -978,6 +987,9 @@ fn main() {
     });
 
     event_loop.run(move |event, _, control_flow| {
+        // 札をクロージャに持たせるためだけの参照（上の `webview_hooks` の説明）。
+        #[cfg(target_os = "macos")]
+        let _ = &webview_hooks;
         *control_flow = ControlFlow::Wait;
 
         match event {
