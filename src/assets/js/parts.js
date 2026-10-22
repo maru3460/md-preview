@@ -6,6 +6,8 @@
 //  - `<button data-md-copy>`（値なし）… すぐ前の兄弟の `<pre>` を写す（html だけ。md では
 //    生 HTML の `<button>` が `<p>` に包まれて、`<pre>` と兄弟にならない）
 //  - `data-md-zoom` を付けた `<figure>`・`<svg>`・`<img>` … 押すと本文の枠いっぱいに広げる
+//  - md では目印が無くても、アプリが描いた mermaid の図と、本文の幅に収めるために縮められた
+//    画像は押せば広がる（`.html` は文書が自分で大きさを決めるので、目印のあるものだけ）
 //
 // イベントは本文の根元に委譲して受ける。md は #preview-pane（本文はアプリの UI と同じ
 // document にあるので、そこより外の目印は拾わない）、html は iframe の document。
@@ -17,7 +19,7 @@
 (function() {
   // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
   if (window.top !== window) return;
-  // 合図を出しておく時間。写した中身を読ませるので、トースト（1500ms）より長い。
+  // 文書のボタンの合図を出しておく時間。写した中身を読ませるので、トースト（1500ms）より長い。
   // 選択即コピーの合図（チェック 1 つ、620ms）より長いのは、あちらは自分で選んだ文字を
   // 見ながらなので文字が要らず、こちらは中身が見えないまま写すため。
   // 中身が長いほど読むのに時間がかかるので、出した文字数に応じて延ばす（上限あり。
@@ -25,6 +27,10 @@
   var SIGNAL_MS = 3200;
   var SIGNAL_MS_PER_CHAR = 4;
   var SIGNAL_MAX_MS = 9000;
+  // コードブロックの Copy の合図は短い固定の時間。コードブロックはアプリが描いたもので、写す
+  // 中身は見えているコードそのもの。合図が防ぐ「見えないものを写させる」手口が効くのは、
+  // 文書が自分で書いたボタンの方。乗せている間は消えないのは同じ。
+  var SIGNAL_CODE_MS = 1500;
   // 合図から外れたあと、消えるまでの時間。読み終えて離したところなので短くてよい。
   var SIGNAL_LEAVE_MS = 1500;
   // 合図に出す中身の上限（文字数と行数）。超えたら頭と尻の行を残して真ん中の行を省く。
@@ -302,7 +308,7 @@
   // 気づける。見えない文字の作り方は数が多すぎるので、取り出す側では除かない。
   // Why not 先頭と末尾の行だけ: 間の行に何が入っていても見えない。省いた真ん中は、
   // 押せば全部出る。
-  function signalCopied(text) {
+  function signalCopied(text, ms) {
     var s = ensureSignal();
     // コードブロックは末尾の改行ごと写すので、1 つだけ外して数える（3 行のコードを 4 行と
     // 言わない）。写したもの自体はそのまま。
@@ -320,7 +326,7 @@
     s.body.hidden = false;
     fillSignalBody(segs);
     var shown = segs.reduce(function(a, g) { return a + Array.from(g.text).length; }, 0);
-    openSignal(Math.min(SIGNAL_MAX_MS, SIGNAL_MS + shown * SIGNAL_MS_PER_CHAR));
+    openSignal(ms || Math.min(SIGNAL_MAX_MS, SIGNAL_MS + shown * SIGNAL_MS_PER_CHAR));
   }
 
   function expandSignal() {
@@ -393,8 +399,10 @@
     hideSignal();
   }
   listen.call(document, 'keydown', onSignalKey);
-  // コードブロックの Copy も同じ合図を出す（受け口は最初の 1 回だけ取れる）。
-  if (window.MdCommon && MdCommon.claimCopySignal) MdCommon.claimCopySignal(signalCopied);
+  // コードブロックの Copy も同じ合図を、短い時間で出す（受け口は最初の 1 回だけ取れる）。
+  if (window.MdCommon && MdCommon.claimCopySignal) {
+    MdCommon.claimCopySignal(function(text) { signalCopied(text, SIGNAL_CODE_MS); });
+  }
 
   // ── コピー ───────────────────────────────────────────────────
   // ボタンが写す相手。見つからなければ null。
@@ -544,8 +552,11 @@
   function injectSheet(doc, inPage) {
     var st = createEl.call(doc, 'style');
     // 広げても大きくならない図（data-md-zoom-off。覗いたときに付け外しする）には出さない。
+    // 目印の無い図（mermaid・縮められた画像）は、覗いたときに付ける印（data-md-zoom-auto）で出す。
     st.textContent = SHEET + (inPage
-      ? '#preview-pane .markdown-body [data-md-zoom]:not([data-md-zoom-off]){cursor:zoom-in;}'
+      ? '#preview-pane .markdown-body [data-md-zoom]:not([data-md-zoom-off]),' +
+        '#preview-pane .markdown-body pre.mermaid>svg[data-md-zoom-auto],' +
+        '#preview-pane .markdown-body img[data-md-zoom-auto]{cursor:zoom-in;}'
       : '[data-md-zoom]:not([data-md-zoom-off]){cursor:zoom-in;}');
     appendTo.call(headOf.call(doc) || rootOf.call(doc), st);
   }
@@ -918,6 +929,38 @@
   // 置いた位置と大きさは開いたときの窓で決めたので、窓の大きさが変わったら畳む。
   listen.call(window, 'resize', function() { if (zoomed) closeZoom(); });
 
+  // 目印（data-md-zoom）の無い、押せば広がるもの。md の本文だけ。
+  //  - アプリが描いた mermaid の図（`pre.mermaid` の直下の svg）。mermaid は本文の幅に
+  //    収めて描くので、大きな図ほど読めない
+  //  - 本文の幅に収めるために縮められた画像（実寸より小さく出ている img）。実寸のまま
+  //    出ている画像は広げても大きくならないので、今までどおり押しても開かない
+  // 文書が目印を書いた要素は、こちらでは拾わない（目印の側の判定に任せる）。
+  // Why not `.html` の中でも: 文書が自分の CSS で画像の大きさを決めている。縮めたのが
+  // 文書の意図なら、押して広がるのは文書の作りと食い違う。md の本文の大きさはアプリが
+  // 決めている（画像は `max-width:100%`）ので、書き手が `width` や style で決めたもの
+  // （autoZoomOffers が外す）を除けば、縮められたのは幅が足りなかっただけ。
+  function autoZoomTarget(t, root, frame) {
+    if (frame) return null;
+    var z = closestOf.call(t, 'pre.mermaid > svg, img');
+    if (!z || !contains.call(root, z) || hasAttr.call(z, 'data-md-zoom')) return null;
+    if (closestOf.call(z, '[data-md-zoom]')) return null;
+    return z;
+  }
+
+  // 目印の無いものを広げる意味があるか。mermaid の svg はベクタなのでいつでも。画像は、幅が
+  // 足りずに縮められているときだけ（zoomOffers は実寸より大きく出せる svg の画像も通すが、
+  // ここでは「縮められた」だけを拾う。実寸で出ている小さなアイコンが、押すたびに広がらないように）。
+  // 書き手が `width` 属性やインラインの style で大きさを決めた画像（Retina のスクリーンショットを
+  // 半分の幅で置くなど）は、縮んでいても書き手の意図なので拾わない。目印を書けば広げられる。
+  function autoZoomOffers(z) {
+    if (tag(z) !== 'IMG') return zoomOffers(z);
+    if (hasAttr.call(z, 'width') || hasAttr.call(z, 'height')) return false;
+    var st = styleOf.call(z);
+    if (st.getPropertyValue('width') || st.getPropertyValue('height')) return false;
+    var m = measureMedia(z);
+    return m.w > 0 && m.cur < 0.99;
+  }
+
   // ── 配線 ─────────────────────────────────────────────────────
   function bindRoot(root, doc, frame) {
     listen.call(root, 'click', function(e) {
@@ -944,6 +987,14 @@
         if (!zoomOffers(z)) return;
         e.preventDefault();
         openZoom(z, frame);
+        return;
+      }
+      var a = autoZoomTarget(t, root, frame);
+      if (a) {
+        if (closestOf.call(t, '.drawio-wrap') || closestOf.call(t, LINK)) return;
+        if (!autoZoomOffers(a)) return;
+        e.preventDefault();
+        openZoom(a, frame);
       }
     });
     // 拡大のカーソルを出すかは、覗いたときに決める。大きさは窓や画像の読み込みで
@@ -952,10 +1003,16 @@
       var t = e.target;
       if (!t || t.nodeType !== 1) return;
       var z = closestOf.call(t, '[data-md-zoom]');
-      if (!z || !contains.call(root, z) || !ZOOM_TAGS[tag(z)]) return;
-      if (zoomed && zoomed.el === z) return;
-      if (zoomOffers(z)) removeAttr.call(z, 'data-md-zoom-off');
-      else setAttr.call(z, 'data-md-zoom-off', '');
+      if (z && contains.call(root, z) && ZOOM_TAGS[tag(z)]) {
+        if (zoomed && zoomed.el === z) return;
+        if (zoomOffers(z)) removeAttr.call(z, 'data-md-zoom-off');
+        else setAttr.call(z, 'data-md-zoom-off', '');
+        return;
+      }
+      var a = autoZoomTarget(t, root, frame);
+      if (!a || (zoomed && zoomed.el === a) || closestOf.call(t, '.drawio-wrap') || closestOf.call(t, LINK)) return;
+      if (autoZoomOffers(a)) setAttr.call(a, 'data-md-zoom-auto', '');
+      else removeAttr.call(a, 'data-md-zoom-auto');
     });
   }
 

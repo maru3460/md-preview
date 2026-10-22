@@ -295,6 +295,26 @@ test('コードブロックの Copy も、写した中身を合図に出す', as
   expect(await page.evaluate(() => MdCommon.claimCopySignal(() => {}))).toBe(false);
 });
 
+test('コードブロックの Copy の合図は短く、文書のボタンの合図より先に消える', async ({ page }) => {
+  await stubClipboard(page);
+  await openFolder(page);
+  await treeItem(page, 'zz-code.md').click();
+  await expect(page.locator('#preview-pane .copy-btn').first()).toBeAttached();
+  await page.locator('#preview-pane .copy-btn').first().click({ force: true });
+  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
+  // 1500ms の固定。文書のボタンの合図（3200ms ＋ 1 字 4ms）なら、まだ出ている時間。
+  await expect.poll(() => probe(page, 'signalShown'), { timeout: 2500 }).toBe(false);
+
+  await page.evaluate(() => {
+    document.querySelector('#preview-pane .markdown-body').insertAdjacentHTML('beforeend',
+      '<p><button data-md-copy="copy-long">写す</button> <code id="copy-long">長く出る</code></p>');
+  });
+  await page.locator('#preview-pane button[data-md-copy]').click();
+  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
+  await page.waitForTimeout(2500);
+  expect(await probe(page, 'signalShown')).toBe(true);
+});
+
 test('コードブロックの Copy も、見えない制御の文字を落とす', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
@@ -855,4 +875,65 @@ test('画面に合わせても 1:1 でも大きさが変わらない図は、手
   expect(await isZoomed(page)).toBe(true);
   expect(await probe(page, 'hintText')).toBe('Esc で閉じる');
   expect(await page.locator('.md-zoom-ov').evaluate((e) => e.classList.contains('md-zoom-actual'))).toBe(false);
+});
+
+// ── 目印の無い図の拡大（md だけ） ─────────────────────────────────
+
+test('md: アプリが描いた mermaid の図は、目印が無くても押せば広がり、閉じれば元の場所へ戻る', async ({ page }) => {
+  await openFolder(page);
+  await treeItem(page, 'zz-mermaid.md').click();
+  const svg = page.locator('#preview-pane pre.mermaid > svg').first();
+  await expect(svg).toBeVisible();
+  await svg.hover();
+  expect(await svg.evaluate((e) => getComputedStyle(e).cursor)).toBe('zoom-in');
+  await svg.click();
+  expect(await isZoomed(page)).toBe(true);
+  await page.keyboard.press('Escape');
+  expect(await isZoomed(page)).toBe(false);
+  expect(await page.evaluate(() => !!document.querySelector('#preview-pane .markdown-body pre.mermaid > svg'))).toBe(true);
+});
+
+test('md: 幅が足りずに縮められた画像は目印なしで広がり、実寸・リンクの中・書き手が幅を決めた画像は広がらない', async ({ page }) => {
+  await openMdWith(page, '<p>x</p>');
+  const src = await pngDataUrl(page);
+  await page.evaluate((src) => {
+    document.querySelector('#preview-pane .markdown-body').insertAdjacentHTML('beforeend',
+      '<p><img id="nat" src="' + src + '"></p>' +
+      '<p><img id="wide" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224000%22 height=%22200%22/%3E"></p>' +
+      '<p><a href="#x"><img id="linked" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224000%22 height=%22200%22/%3E"></a></p>' +
+      // 書き手が幅を決めた画像（Retina のスクリーンショットなど）は、縮んでいても拾わない。
+      '<p><img id="sized" width="100" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224000%22 height=%22200%22/%3E"></p>' +
+      '<p><img id="styled" style="width:100px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224000%22 height=%22200%22/%3E"></p>');
+  }, src);
+  await expect.poll(() => page.locator('#nat').evaluate((e) => e.complete && e.naturalWidth)).toBe(200);
+  await expect.poll(() => page.locator('#wide').evaluate((e) => e.complete && e.naturalWidth)).toBe(4000);
+  const cursor = (sel) => page.locator(sel).evaluate((e) => getComputedStyle(e).cursor);
+  await page.locator('#nat').hover();
+  expect(await cursor('#nat')).not.toBe('zoom-in');
+  await page.locator('#nat').click();
+  expect(await isZoomed(page)).toBe(false);
+
+  await page.locator('#wide').hover();
+  expect(await cursor('#wide')).toBe('zoom-in');
+  await page.locator('#wide').click();
+  expect(await isZoomed(page)).toBe(true);
+  await page.keyboard.press('Escape');
+  expect(await isZoomed(page)).toBe(false);
+
+  for (const id of ['#linked', '#sized', '#styled']) {
+    await page.locator(id).hover();
+    expect(await cursor(id)).not.toBe('zoom-in');
+    await page.locator(id).click();
+    expect(await isZoomed(page)).toBe(false);
+  }
+});
+
+test('html: 目印の無い画像は、縮められていても広がらない（文書が大きさを決めている）', async ({ page }) => {
+  const frame = await openHtmlWith(page,
+    '<img id="wide" style="width:60px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224000%22 height=%22200%22/%3E">');
+  await expect.poll(() => frame.locator('#wide').evaluate((e) => e.complete && e.naturalWidth)).toBe(4000);
+  await frame.locator('#wide').hover();
+  expect(await frame.locator('#wide').evaluate((e) => getComputedStyle(e).cursor)).not.toBe('zoom-in');
+  await frame.locator('#wide').click();
+  expect(await isZoomed(page)).toBe(false);
 });
