@@ -313,7 +313,7 @@ pub fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     };
     print!(
         "{}",
-        // ダンプは設定を読まず、既定の CSP（両方 OFF）で描く。
+        // ダンプは設定を読まず、既定の CSP（文書を信頼しない）で描く。
         build_html(
             &rendered.html,
             &title,

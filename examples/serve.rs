@@ -5,13 +5,13 @@
 //! これは「UI の回帰テストのための足場」であって、ユーザー向けの機能ではない。
 //!
 //! ```sh
-//! cargo run --example serve -- [--port <port>] [--doc-scripts] [--external] <dir|file>...   # 既定ポート 7878
+//! cargo run --example serve -- [--port <port>] [--trusted] <dir|file>...   # 既定ポート 7878
 //! ```
 //!
 //! ファイルを 2 つ以上渡すと製品の `md a.md b.md` と同じ複数タブ起動になる
 //! （ポートを位置引数から `--port` に追い出したのはこのため）。
 //!
-//! CSP の 2 つのスイッチ（`csp::Policy`）は `--doc-scripts` と `--external` で決める。
+//! 設定「文書を信頼する」（`csp::Policy`）は `--trusted` で ON にする。
 //! 利用者の実際の設定は読まない（UI テストが開発機の設定に左右されないように）。
 //! `/__lib/` を許す住所は、本番の `mdpreview://localhost` ではなく自分の origin
 //! （`http://127.0.0.1:<port>`）にする。
@@ -37,7 +37,7 @@ use md_preview::theme;
 fn main() {
     let Args { port, paths, policy } = parse_args(std::env::args().skip(1).collect());
     if paths.is_empty() {
-        eprintln!("使い方: cargo run --example serve -- [--port <port>] [--doc-scripts] [--external] <dir|file>...");
+        eprintln!("使い方: cargo run --example serve -- [--port <port>] [--trusted] <dir|file>...");
         std::process::exit(1);
     }
 
@@ -99,8 +99,7 @@ fn parse_args(args: Vec<String>) -> Args {
                     std::process::exit(1);
                 });
             }
-            "--doc-scripts" => policy.doc_scripts = true,
-            "--external" => policy.external = true,
+            "--trusted" => policy.trusted = true,
             _ => paths.push(arg),
         }
     }
@@ -261,6 +260,16 @@ fn serve_one(mut stream: TcpStream, ctx: &RequestContext, port: u16) {
 
 #[cfg(test)]
 mod tests {
+    /// `--trusted` で文書を信頼する側の方針になること（Playwright の 5 本目のサーバが
+    /// この綴りに依存している）。
+    #[test]
+    fn trusted_flag_turns_the_policy_on() {
+        let args = super::parse_args(vec!["--trusted".into(), "x".into()]);
+        assert!(args.policy.trusted);
+        assert_eq!(args.paths, vec!["x".to_string()]);
+        assert!(!super::parse_args(vec!["x".into()]).policy.trusted);
+    }
+
     use super::*;
 
     /// 起動用の script は CSP の meta より前に入る。後ろに入るとハッシュに無いので止まり、

@@ -1,4 +1,4 @@
-// 外部の読み込みを止めているとき（設定「外部の読み込みを許す」が OFF）、.html の中の外部の
+// 外部の読み込みを止めているとき（設定「文書を信頼する」が OFF）、.html の中の外部の
 // 画像・iframe・動画・音声を、小さな「開く」リンクに置き換える。<head> に inline され
 // window.MdExtMedia を公開する。common.js の bindFrame が、読み込み後の文書に bindDoc() を呼ぶ。
 //
@@ -27,7 +27,7 @@
   // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
   if (window.top !== window) return;
   // 起動時に決めた CSP（page_globals が必ず定義する）。評価した時点で写しておく。
-  var EXTERNAL_ALLOWED = window.MD_EXTERNAL === true;
+  var EXTERNAL_ALLOWED = window.MD_TRUSTED === true;
 
   var SVG_NS = 'http://www.w3.org/2000/svg';
   var XLINK_NS = 'http://www.w3.org/1999/xlink';

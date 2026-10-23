@@ -34,12 +34,9 @@ pub const THEME: &str = "theme";
 /// 窓の初期サイズ（#42）。`1440x900` の形で、意味の解釈は [`crate::app_config`] が持つ。
 pub const WINDOW_SIZE: &str = "window-size";
 
-/// 文書の JavaScript を動かすか。`on` / `off` で、読むのは [`crate::app_config::policy_from`]。
-/// 既定（書いていない）は OFF。
-pub const DOCUMENT_SCRIPTS: &str = "document-scripts";
-
-/// 外部（http / https）からの読み込みを許すか。書式と既定は [`DOCUMENT_SCRIPTS`] と同じ。
-pub const EXTERNAL_RESOURCES: &str = "external-resources";
+/// 文書を信頼するか（文書の JavaScript を動かし、外部からの読み込みを許す）。`on` / `off` で、
+/// 読むのは [`crate::app_config::policy_from`]。既定（書いていない）は OFF。
+pub const TRUST_DOCUMENTS: &str = "trust-documents";
 
 /// ファイルの 1 行。
 #[derive(Debug, PartialEq, Eq)]

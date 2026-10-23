@@ -6,7 +6,7 @@
 <!-- 先読み。CSP では止まらないので、WebKit の機能フラグで切っている。どの設定でも 8765 に来てはいけない。 -->
 <link rel="preconnect" href="http://127.0.0.1:8765">
 <link rel="dns-prefetch" href="http://127.0.0.1:8765">
-<!-- 外部の読み込み。「外部の読み込みを許す」が ON のときだけ 8766 に来る。 -->
+<!-- 外部の読み込み。「文書を信頼する」が ON のときだけ 8766 に来る。 -->
 <link rel="stylesheet" href="http://127.0.0.1:8766/style.css">
 <style>
   @font-face { font-family: probe-font; src: url('http://127.0.0.1:8766/font.woff2'); }
@@ -20,8 +20,7 @@
 <iframe src="http://127.0.0.1:8766/frame.html" width="200" height="40"></iframe>
 <a href="http://127.0.0.1:8765/link">押さないリンク（ホバーやリンクの先読みで 8765 に来ないこと）</a>
 <script>
-  // 文書の JS。「文書の JavaScript を動かす」が ON のときだけ動き、
-  // さらに「外部の読み込みを許す」も ON のときだけ 8766 に届く。
+  // 文書の JS。「文書を信頼する」が ON のときだけ動いて、8766 に届く。
   try { fetch('http://127.0.0.1:8766/fetch', { mode: 'no-cors' }).catch(function() {}); } catch (e) {}
   try { new Image().src = 'http://127.0.0.1:8766/js-image.png'; } catch (e) {}
   try { navigator.sendBeacon('http://127.0.0.1:8766/beacon', 'x'); } catch (e) {}

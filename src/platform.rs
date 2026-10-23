@@ -744,6 +744,18 @@ impl PrefetchOff {
             PrefetchOff::NotApplicable => &[],
         }
     }
+
+    /// webview を作った後に ON のまま読めた名前（[`prefetch_still_on`]）を、切れなかったものに
+    /// 合流させる。切ろうとした記録と読み戻した実態の両方が「切れていない」の印になる。
+    pub fn add_still_on(&mut self, on: Vec<&'static str>) {
+        if let PrefetchOff::Applied { missing } = self {
+            for name in on {
+                if !missing.contains(&name) {
+                    missing.push(name);
+                }
+            }
+        }
+    }
 }
 
 /// `available`（OS が持っている機能フラグの名前）に無い、切りたい名前。
@@ -864,7 +876,6 @@ pub fn without_prefetch<'a>(builder: wry::WebViewBuilder<'a>) -> (wry::WebViewBu
 /// 確かめるため（wry が configuration を写したり、後から設定を上書きしたりしていないか）。
 /// 入る名前は [`PrefetchOff::Applied`] の `missing` と同じ種類。
 #[cfg(target_os = "macos")]
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub fn prefetch_still_on(webview: &wry::WebView) -> Option<Vec<&'static str>> {
     use objc2::rc::Retained;
     use objc2::{msg_send, sel};
@@ -911,5 +922,17 @@ mod tests {
             all.iter().filter(|n| *n != "LinkDNSPrefetchEnabled").cloned().collect();
         assert_eq!(missing_features(&without_dns), vec!["LinkDNSPrefetchEnabled"]);
         assert_eq!(missing_features(&[]), PREFETCH_FEATURES.to_vec());
+    }
+
+    /// 読み戻しで ON のまま残った名前は、切ろうとした記録と重ねて 1 つずつ並ぶ。切る口の
+    /// 無い OS では何も足さない。
+    #[test]
+    fn still_on_names_join_the_missing_list_once() {
+        let mut off = PrefetchOff::Applied { missing: vec!["LinkPreconnect"] };
+        off.add_still_on(vec!["LinkPreconnect", "_setDNSPrefetchingEnabled:"]);
+        assert_eq!(off.missing(), ["LinkPreconnect", "_setDNSPrefetchingEnabled:"]);
+        let mut na = PrefetchOff::NotApplicable;
+        na.add_still_on(vec!["LinkPreconnect"]);
+        assert!(na.missing().is_empty());
     }
 }

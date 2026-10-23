@@ -32,25 +32,23 @@ macOS を更新したら、この手順を回す。
    python3 -u logger.py > server.log
    ```
 
-3. 4 つの設定で開く（窓が開いて、7 秒後に閉じる）
+3. 2 つの設定で開く（窓が開いて、7 秒後に閉じる）
 
    ```sh
    cd tests/manual/security/real-device
    export MDBIN=~/.local/md-dev/bin/md
-   for m in off js ext both; do ./run.sh $m; done
-   ./run.sh both probe.md
+   for m in off on; do ./run.sh $m; done
+   ./run.sh on probe.md
    ```
 
 ## 期待する結果
 
-- `off`（既定・両方 OFF）: 8765 にも 8766 にも来ない
-- `js`（文書の JS だけ ON）: どちらにも来ない。`/fetch`・`/js-image.png`・`/beacon` は CSP で止まる
-- `ext`（外部だけ ON）: 8766 に `/style.css`・`/font.woff2`・`/image.png`・`/frame.html` が来る。8765 には来ない
-- `both`（両方 ON）: `ext` に加えて、8766 に `/fetch`・`/js-image.png`・`/beacon` も来る。8765 には来ない
+- `off`（既定。「文書を信頼する」が OFF）: 8765 にも 8766 にも来ない
+- `on`（「文書を信頼する」が ON）: 8766 に `/style.css`・`/font.woff2`・`/image.png`・`/frame.html`・`/fetch`・`/js-image.png`・`/beacon` が来る。8765 には来ない
 
-- `ext` と `both` で 8766 に来るのは、記録用のサーバが動いていて、文書が本当に読まれていることの確かめでもある。ここで何も来なければ、手順のどこかが間違っている
-- `probe.md` は、`ext` と `both` で `/md-image.png` が、`both` で `/md-onerror` も来る。`<link>` は本文から落とすので、8765 はやはり来ない
-- **8765 に `ACCEPT` が 1 行でも出たら、先読みの停止が効いていない。** 設定画面の「先読みの停止」の表示と、`cargo test --test webkit_flags` の結果も合わせて見る
+- `on` で 8766 に来るのは、記録用のサーバが動いていて、文書が本当に読まれていることの確かめでもある。ここで何も来なければ、手順のどこかが間違っている
+- `probe.md` は、`on` で `/md-image.png` と `/md-onerror` が来る。`<link>` は本文から落とすので、8765 はやはり来ない
+- **8765 に `ACCEPT` が 1 行でも出たら、先読みの停止が効いていない。** 設定画面に出る「⚠ 効いていない」の名前と、`cargo test --test webkit_flags` の結果も合わせて見る
 
 ## 片付け
 

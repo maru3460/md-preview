@@ -246,7 +246,7 @@ pub fn render_body_in(markdown: &str, base: Option<&DocBase>, line_offset: usize
     // 描き終えた HTML に掛けるのは、複数行にまたがる生 HTML の `<picture>` などを 1 個に
     // まとめるため（理由は extmedia.rs の冒頭）。
     if let Some(b) = base {
-        if !b.policy.external {
+        if !b.policy.trusted {
             if let Some(replaced) = crate::extmedia::replace_external(&body) {
                 body = replaced;
             }
@@ -1072,7 +1072,7 @@ pub struct SettingsView<'a> {
     pub themes: &'a [crate::theme::Choice],
     /// 保存してある窓の初期サイズ。`None` は既定のまま。
     pub window_size: Option<(u32, u32)>,
-    /// `settings` に保存してある CSP の 2 つのスイッチ。⌘Q で終了して開き直したときに効く値。
+    /// `settings` に保存してある「文書を信頼する」。⌘Q で終了して開き直したときに効く値。
     pub saved_policy: crate::csp::Policy,
     /// いま効いている CSP（起動時に決めたもの）。
     ///
@@ -1122,15 +1122,14 @@ pub fn settings_script(view: &SettingsView) -> String {
         None => "null".to_string(),
     };
     format!(
-        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},docScripts:{},external:{},prefetch:{}}});",
+        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},trusted:{},prefetch:{}}});",
         json_string(view.theme),
         json_string(crate::theme::DEFAULT_NAME),
         json_string(&crate::theme::auto_dark_bg_hex()),
         themes,
         view.window_size.map(size).unwrap_or_else(|| "null".to_string()),
         size(default_size),
-        switch(view.saved_policy.doc_scripts, view.effective_policy.doc_scripts),
-        switch(view.saved_policy.external, view.effective_policy.external),
+        switch(view.saved_policy.trusted, view.effective_policy.trusted),
         prefetch,
     )
 }
@@ -1278,15 +1277,14 @@ mod tests {
         assert!(script.contains(r##"defaultTheme:"default",autoDarkBg:"#0d1117""##), "{script}");
         assert!(script.contains("defaultWindowSize:{w:1280,h:700}"), "{script}");
 
-        assert!(script.contains("docScripts:{saved:false,effective:false}"), "{script}");
-        assert!(script.contains("external:{saved:false,effective:false}"), "{script}");
+        assert!(script.contains("trusted:{saved:false,effective:false}"), "{script}");
         assert!(script.contains("prefetch:null"), "{script}");
 
         let script = settings_script(&view(Some((1440, 900))));
         assert!(script.contains("windowSize:{w:1440,h:900}"), "{script}");
     }
 
-    /// 保存した値といま効いている値は、スイッチごとに別々に届くこと（⌘Q の後から効くので
+    /// 保存した値といま効いている値は、別々に届くこと（⌘Q の後から効くので
     /// 食い違うことがある）。先読みの停止は、切れなかった名前ごと届くこと。
     #[test]
     fn settings_script_carries_saved_and_effective_policies_apart() {
@@ -1296,12 +1294,11 @@ mod tests {
             theme: "default",
             themes: &[],
             window_size: None,
-            saved_policy: Policy { doc_scripts: true, external: false },
-            effective_policy: Policy { doc_scripts: false, external: true },
+            saved_policy: Policy { trusted: true },
+            effective_policy: Policy { trusted: false },
             prefetch_missing: Some(&missing),
         });
-        assert!(script.contains("docScripts:{saved:true,effective:false}"), "{script}");
-        assert!(script.contains("external:{saved:false,effective:true}"), "{script}");
+        assert!(script.contains("trusted:{saved:true,effective:false}"), "{script}");
         assert!(script.contains(r#"prefetch:{missing:["LinkPreconnect","_setDNSPrefetchingEnabled:"]}"#), "{script}");
 
         let none: [&str; 0] = [];
@@ -1574,8 +1571,8 @@ mod tests {
     }
 
     #[test]
-    fn external_media_is_kept_when_external_is_on() {
-        let on = Policy { external: true, ..Policy::default() };
+    fn external_media_is_kept_when_trusted() {
+        let on = Policy { trusted: true };
         let body = render_with_policy("![a](https://example.com/a.png)\n\n<iframe src=\"https://e.example/x\"></iframe>\n", on);
         assert!(body.contains(r#"<img src="https://example.com/a.png""#), "{body}");
         assert!(body.contains(r#"<iframe src="https://e.example/x">"#), "{body}");

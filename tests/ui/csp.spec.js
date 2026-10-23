@@ -1,4 +1,4 @@
-// 文書の JavaScript を止める CSP（csp.rs）。既定（両方 OFF）のサーバで、md の本文と `.html` の
+// 文書の JavaScript を止める CSP（csp.rs）。既定（「文書を信頼する」が OFF）のサーバで、md の本文と `.html` の
 // 中の script・イベント属性・`javascript:` が動かないこと、アプリ自身の部品は動くこと。
 //
 // わざと止める文書を開くので、ここだけは違反が起きる。数えない違反を `cspAllowed` で渡し、
@@ -47,7 +47,7 @@ test.describe('既定では文書の JavaScript が動かない', () => {
     expect(meta).toContain("script-src 'sha256-");
     expect(meta).not.toContain("'unsafe-inline' 'unsafe-eval'");
     // 起動時の CSP は、文書が同じ名前の要素を置いてもすり替わらないよう必ず定義してある。
-    expect(await page.evaluate(() => [window.MD_DOC_SCRIPTS, window.MD_EXTERNAL])).toEqual([false, false]);
+    expect(await page.evaluate(() => window.MD_TRUSTED)).toBe(false);
   });
 
   test('.html の中の script・イベント属性・javascript: は動かず、アプリの検索とコメントは効く', async ({ page, cspViolations }) => {

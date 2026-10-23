@@ -796,7 +796,7 @@ fn handle_asset(ctx: &RequestContext, url_path: &str, headers: &HeaderMap) -> (R
                 return (not_found_response(), Kind::Other);
             };
             let bytes = inject_src_lines(bytes);
-            let bytes = if ctx.policy.doc_scripts { inject_style_gate(bytes) } else { bytes };
+            let bytes = if ctx.policy.trusted { inject_style_gate(bytes) } else { bytes };
             (ok_response("text/html; charset=utf-8", bytes), Kind::Doc)
         }
         // 画像・CSS・フォントなど。iframe 内の html から参照されるサブリソースを含む。
@@ -2428,12 +2428,12 @@ mod tests {
         csp.split("; ").find(|d| d.starts_with("script-src")).unwrap().to_string()
     }
 
-    const JS_ON: Policy = Policy { doc_scripts: true, external: false };
+    const TRUSTED: Policy = Policy { trusted: true };
 
     #[test]
     fn only_the_bare_index_goes_without_a_header() {
         let d = tmp("idx");
-        for policy in [Policy::default(), JS_ON] {
+        for policy in [Policy::default(), TRUSTED] {
             let ctx = ctx_with(&d.0, policy);
             let index = handle_request(&ctx, "/", "", &HeaderMap::new());
             assert_eq!(index.status(), 200);
@@ -2451,7 +2451,7 @@ mod tests {
         let d = tmp("query");
         std::fs::write(d.0.join("a.md"), "# a").unwrap();
         std::fs::write(d.0.join("p.html"), "<p>x</p>").unwrap();
-        let ctx = ctx_with(&d.0, JS_ON);
+        let ctx = ctx_with(&d.0, TRUSTED);
         let root = d.0.to_string_lossy().into_owned();
         let md = d.0.join("a.md").to_string_lossy().into_owned();
         let html = d.0.join("p.html").to_string_lossy().into_owned();
@@ -2486,8 +2486,8 @@ mod tests {
         std::fs::write(d.0.join("s.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>").unwrap();
 
         let off = ctx_with(&d.0, Policy::default());
-        let on = ctx_with(&d.0, JS_ON);
-        let open = "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:";
+        let on = ctx_with(&d.0, TRUSTED);
+        let open = "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:";
         for path in ["/a.md", "/p.html", "/p.htm"] {
             assert_eq!(script_src(&handle_request(&off, path, "", &HeaderMap::new())), "script-src 'none'", "{path}");
             assert_eq!(script_src(&handle_request(&on, path, "", &HeaderMap::new())), open, "{path}");
@@ -2510,7 +2510,7 @@ mod tests {
             String::from_utf8(resp.body().to_vec()).unwrap()
         };
         assert!(!body(Policy::default()).contains("md:style-gate"));
-        assert!(body(JS_ON).contains("md:style-gate"));
+        assert!(body(TRUSTED).contains("md:style-gate"));
     }
 
     #[test]
@@ -2528,7 +2528,7 @@ mod tests {
         link("pic-as-html.html", "pic.png");
         link("other.png", "pic.png");
 
-        for policy in [Policy::default(), JS_ON] {
+        for policy in [Policy::default(), TRUSTED] {
             let ctx = ctx_with(&d.0, policy);
             let get = |p: &str| handle_request(&ctx, p, "", &HeaderMap::new());
             for p in ["/disguised.png", "/md-as-html.html", "/html-as-md.md", "/pic-as-html.html"] {

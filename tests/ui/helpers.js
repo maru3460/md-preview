@@ -52,12 +52,8 @@ const ONE_FILE_URL = 'http://127.0.0.1:7879/';
 const MULTI_URL = 'http://127.0.0.1:7880/';
 /// root の移動（#34）専用。ここだけ**サーバの root が動く**ので、他と混ぜない。
 const ROOT_URL = 'http://127.0.0.1:7881/';
-/// 設定「文書の JavaScript を動かす」が ON のフォルダ起動（`serve --doc-scripts`）。
-const DOC_SCRIPTS_URL = 'http://127.0.0.1:7882/';
-/// 設定「外部の読み込みを許す」が ON のフォルダ起動（`serve --external`）。
-const EXTERNAL_URL = 'http://127.0.0.1:7883/';
-/// 2 つとも ON のフォルダ起動（`serve --doc-scripts --external`）。
-const BOTH_ON_URL = 'http://127.0.0.1:7884/';
+/// 設定「文書を信頼する」が ON のフォルダ起動（`serve --trusted`）。
+const TRUSTED_URL = 'http://127.0.0.1:7882/';
 
 /// 初回オンボーディング（? のヘルプ自動表示）を抑止して開く。
 /// 出したままだと isOverlayOpen が true になり、素キーが全部止まる。
@@ -110,7 +106,7 @@ async function nextFrames(page) {
 
 module.exports = {
   test, expect,
-  FOLDER_URL, ONE_FILE_URL, MULTI_URL, ROOT_URL, DOC_SCRIPTS_URL, EXTERNAL_URL, BOTH_ON_URL,
+  FOLDER_URL, ONE_FILE_URL, MULTI_URL, ROOT_URL, TRUSTED_URL,
   open, openFolder, nextFrames,
   id, treeItem, tab, display,
 };

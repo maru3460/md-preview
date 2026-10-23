@@ -1,11 +1,9 @@
 #!/bin/bash
 # md で site/ のファイルを 1 つ開き、数秒待って閉じ、その間に記録用のサーバへ来た接続を出す。
 #
-# 使い方: run.sh <off|js|ext|both> [site/ の中のファイル（既定 probe.html）]
-#   off  … 既定（両方 OFF）
-#   js   … 「文書の JavaScript を動かす」だけ ON
-#   ext  … 「外部の読み込みを許す」だけ ON
-#   both … 両方 ON
+# 使い方: run.sh <off|on> [site/ の中のファイル（既定 probe.html）]
+#   off … 既定（「文書を信頼する」が OFF）
+#   on  … 「文書を信頼する」が ON
 # 環境変数 MDBIN で叩く md を選ぶ（既定は PATH の md）。WAIT で待つ秒数を変えられる（既定 7）。
 #
 # 設定は使い捨ての MD_CONFIG_DIR に書くので、日常の md の設定には触れない。MD_NO_IPC で
@@ -17,17 +15,14 @@ WAIT=${WAIT:-7}
 mode=${1:-}
 file=${2:-probe.html}
 case "$mode" in
-  off)  js=off ext=off ;;
-  js)   js=on  ext=off ;;
-  ext)  js=off ext=on ;;
-  both) js=on  ext=on ;;
-  *) echo "使い方: $0 <off|js|ext|both> [file]" >&2; exit 2 ;;
+  off|on) ;;
+  *) echo "使い方: $0 <off|on> [file]" >&2; exit 2 ;;
 esac
 [ -f "$E/server.log" ] || { echo "先に別の端末で python3 -u logger.py > server.log を動かす" >&2; exit 1; }
 
 cfg=$(mktemp -d)
 trap 'rm -rf "$cfg"' EXIT
-printf 'document-scripts=%s\nexternal-resources=%s\n' "$js" "$ext" > "$cfg/settings"
+printf 'trust-documents=%s\n' "$mode" > "$cfg/settings"
 
 n0=$(wc -l < "$E/server.log")
 env MD_NO_IPC=1 MD_NO_DETACH=1 MD_NO_BUNDLE=1 MD_CONFIG_DIR="$cfg" MD_SOCKET="$cfg/md.sock" \
@@ -38,7 +33,7 @@ kill "$pid" 2>/dev/null || true
 sleep 1
 kill -9 "$pid" 2>/dev/null || true
 
-echo "=== $mode（document-scripts=$js external-resources=$ext）$file"
+echo "=== $mode（trust-documents=$mode）$file"
 echo "--- 記録用のサーバに来た接続:"
 tail -n +$((n0 + 1)) "$E/server.log"
 echo "--- （アプリの出力は app-$mode.log）"

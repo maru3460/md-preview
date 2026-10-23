@@ -73,7 +73,7 @@ pub fn format_window_size(w: u32, h: u32) -> String {
     format!("{w}x{h}")
 }
 
-/// `settings` の on / off の値（`document-scripts=` など）を読む。`on` だけが ON で、
+/// `settings` の on / off の値（`trust-documents=` など）を読む。`on` だけが ON で、
 /// 書いていない・空・書き損じは OFF。
 ///
 /// Why not 書き損じを ON に読む余地を残す（`yes`・`true`・`1` も受ける）: どれも守りを外す
@@ -88,14 +88,11 @@ pub fn format_switch(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }
 
-/// 保存してある設定から CSP の 2 つのスイッチを作る。起動時に 1 回だけ呼び、その値を
+/// 保存してある設定から CSP の方針を作る。起動時に 1 回だけ呼び、その値を
 /// プロセスの間ずっと使う（切り替えは ⌘Q で終了して開き直したときから効く）。
 /// 設定画面が「保存した値」を出すときも、同じ読み方をここから引く。
 pub fn policy_from(settings: &crate::settings::Settings) -> Policy {
-    Policy {
-        doc_scripts: switch_on(settings.get(crate::settings::DOCUMENT_SCRIPTS)),
-        external: switch_on(settings.get(crate::settings::EXTERNAL_RESOURCES)),
-    }
+    Policy { trusted: switch_on(settings.get(crate::settings::TRUST_DOCUMENTS)) }
 }
 
 /// 画面を組むのに要る、入力（開くもの）とは関係なく決まる値。3 つの入口（`AppConfig` の
@@ -115,7 +112,7 @@ pub struct PageInputs<'a> {
     pub lib_origin: &'a str,
 }
 
-/// CSS は空、CSP は既定（両方 OFF）、住所は本番のもの。テストが `RequestContext` を作るとき用。
+/// CSS は空、CSP は既定（OFF）、住所は本番のもの。テストが `RequestContext` を作るとき用。
 impl Default for PageInputs<'_> {
     fn default() -> Self {
         PageInputs { theme_css: "", custom_css: "", policy: Policy::default(), lib_origin: crate::csp::APP_ORIGIN }
@@ -171,7 +168,7 @@ impl AppConfig {
     /// - `INITIAL_FILES`     起動時にタブとして開く識別子（`initial_ids`。先頭が最初に見える）。
     ///                       起動のたびに変わるので、ページの inline の script には置かない
     ///                       （CSP のハッシュを定数にできなくなる）。
-    /// - `MD_DOC_SCRIPTS` / `MD_EXTERNAL`  起動時に決めた CSP（`policy`）の 2 つのスイッチ。
+    /// - `MD_TRUSTED`        起動時に決めた CSP（`policy`）の「文書を信頼する」。
     ///                       ON でも OFF でも必ず定義する。未定義だと、文書が同じ名前の id の
     ///                       要素を置くだけで値がすり替わる（window の名前付きプロパティ）。
     ///
@@ -189,7 +186,7 @@ impl AppConfig {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}]; window.INITIAL_FILES = [{}]; window.MD_DOC_SCRIPTS = {}; window.MD_EXTERNAL = {};",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}]; window.INITIAL_FILES = [{}]; window.MD_TRUSTED = {};",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
@@ -203,8 +200,7 @@ impl AppConfig {
                 .join(","),
             self.bell_opened.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
             self.initial_ids.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
-            self.policy.doc_scripts,
-            self.policy.external,
+            self.policy.trusted,
         )
     }
 
@@ -531,7 +527,7 @@ fn canonical(p: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
 
-    /// テストの画面。CSS は空、CSP は既定（両方 OFF）。
+    /// テストの画面。CSS は空、CSP は既定（OFF）。
     fn page() -> PageInputs<'static> {
         PageInputs::default()
     }
@@ -591,23 +587,15 @@ mod tests {
         assert!(!switch_on(Some(format_switch(false))));
     }
 
-    /// 2 つのスイッチは別々のキーから読み、書いていなければ両方 OFF。
+    /// 書いていなければ OFF。古いキー（2 つのスイッチだった頃の綴り）は読まない。
     #[test]
-    fn the_policy_is_read_from_the_two_setting_keys() {
+    fn the_policy_is_read_from_the_trust_key() {
         use crate::settings::parse;
-        assert_eq!(policy_from(&parse("")), Policy { doc_scripts: false, external: false });
-        assert_eq!(
-            policy_from(&parse("document-scripts=on\n")),
-            Policy { doc_scripts: true, external: false }
-        );
-        assert_eq!(
-            policy_from(&parse("external-resources=on\ndocument-scripts=off\n")),
-            Policy { doc_scripts: false, external: true }
-        );
-        assert_eq!(
-            policy_from(&parse("theme=nord\ndocument-scripts = on\nexternal-resources=on\n")),
-            Policy { doc_scripts: true, external: true }
-        );
+        assert_eq!(policy_from(&parse("")), Policy { trusted: false });
+        assert_eq!(policy_from(&parse("trust-documents=on\n")), Policy { trusted: true });
+        assert_eq!(policy_from(&parse("theme=nord\ntrust-documents = on\n")), Policy { trusted: true });
+        assert_eq!(policy_from(&parse("trust-documents=off\n")), Policy { trusted: false });
+        assert_eq!(policy_from(&parse("document-scripts=on\nexternal-resources=on\n")), Policy { trusted: false });
     }
 
     fn paths(list: &[&str]) -> Vec<PathBuf> {
@@ -765,12 +753,10 @@ mod tests {
     fn the_policy_switches_are_always_defined_for_the_page() {
         let mut config = AppConfig::stdin_doc(spooled("policy"), &page(), &None, &Default::default());
         let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
-        assert!(globals.contains("window.MD_DOC_SCRIPTS = false;"), "{globals}");
-        assert!(globals.contains("window.MD_EXTERNAL = false;"), "{globals}");
-        config.policy = Policy { doc_scripts: true, external: true };
+        assert!(globals.contains("window.MD_TRUSTED = false;"), "{globals}");
+        config.policy = Policy { trusted: true };
         let globals = config.page_globals(crate::theme::Appearance::Light, &[]);
-        assert!(globals.contains("window.MD_DOC_SCRIPTS = true;"), "{globals}");
-        assert!(globals.contains("window.MD_EXTERNAL = true;"), "{globals}");
+        assert!(globals.contains("window.MD_TRUSTED = true;"), "{globals}");
     }
 
     #[test]

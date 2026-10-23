@@ -103,10 +103,8 @@ enum SettingsRequest {
     WindowSize(u32, u32),
     /// 初期サイズを既定へ戻す。
     WindowSizeReset,
-    /// 設定「文書の JavaScript を動かす」を保存する。効くのは ⌘Q で終了した後から。
-    DocScripts(bool),
-    /// 設定「外部の読み込みを許す」を保存する。効くのは ⌘Q で終了した後から。
-    External(bool),
+    /// 設定「文書を信頼する」を保存する。効くのは ⌘Q で終了した後から。
+    Trust(bool),
 }
 
 impl SettingsRequest {
@@ -128,18 +126,11 @@ impl SettingsRequest {
             },
             // 値は `on` / `off` のどちらかだけを受ける。読めない値は保存せずに今の状態を
             // 送り返す（初期サイズと同じ）。
-            "document-scripts" | "external-resources" => {
-                let on = match value {
-                    "on" => true,
-                    "off" => false,
-                    _ => return Some(SettingsRequest::Get),
-                };
-                if verb == "document-scripts" {
-                    SettingsRequest::DocScripts(on)
-                } else {
-                    SettingsRequest::External(on)
-                }
-            }
+            "trust-documents" => match value {
+                "on" => SettingsRequest::Trust(true),
+                "off" => SettingsRequest::Trust(false),
+                _ => return Some(SettingsRequest::Get),
+            },
             _ => return None,
         })
     }
@@ -673,7 +664,7 @@ fn main() {
     // without_prefetch の doc）。ページの材料（page_globals・RequestContext）より前に済ませて
     // おくのは、切れなかった名前をそこへ渡せるようにするため。設定画面には「先読みの停止」として
     // 出す（ログはデタッチ後に /dev/null へ行くので、ログだけでは誰も気づかない）。
-    let (webview_builder, prefetch_off) = platform::without_prefetch(WebViewBuilder::new());
+    let (webview_builder, mut prefetch_off) = platform::without_prefetch(WebViewBuilder::new());
     if !prefetch_off.missing().is_empty() {
         eprintln!("md: WebKit の先読みを切れなかった: {}", prefetch_off.missing().join(", "));
     }
@@ -922,12 +913,17 @@ fn main() {
         let _ = notice_proxy.send_event(AppEvent::Toast(msg.to_string()));
     });
 
-    // 渡した configuration が build() の後も効いているかを、開発中のビルドで 1 度だけ読み戻す。
-    // 切る順番（webview を作る前に渡す）が本物のアプリで効いていることの確かめ。
-    #[cfg(all(target_os = "macos", debug_assertions))]
+    // 渡した configuration が build() の後も効いているかを 1 度だけ読み戻し、ON のまま残った
+    // 名前を「切れなかったもの」に合流させる。設定画面の ⚠ は「切ろうとした記録」ではなく
+    // この実態で出す（wry の版上げで configuration が差し替わっても、効いているときは黙って
+    // いるので、記録だけでは気づけない）。
+    #[cfg(target_os = "macos")]
     match platform::prefetch_still_on(&webview) {
         Some(on) if on.is_empty() => {}
-        Some(on) => eprintln!("md: build() の後に先読みが ON のまま: {}", on.join(", ")),
+        Some(on) => {
+            eprintln!("md: build() の後に先読みが ON のまま: {}", on.join(", "));
+            prefetch_off.add_still_on(on);
+        }
         None => eprintln!("md: build() の後の先読みの設定を読み戻せなかった"),
     }
 
@@ -1143,11 +1139,8 @@ fn main() {
                     }
                     // 保存するだけで、いまの CSP（ctx.policy）は変えない。ページの meta は起動時に
                     // 書き込んであり、窓を読み込み直すとタブと読み位置を失うため。
-                    SettingsRequest::DocScripts(on) => {
-                        save_switch(md_preview::settings::DOCUMENT_SCRIPTS, on);
-                    }
-                    SettingsRequest::External(on) => {
-                        save_switch(md_preview::settings::EXTERNAL_RESOURCES, on);
+                    SettingsRequest::Trust(on) => {
+                        save_switch(md_preview::settings::TRUST_DOCUMENTS, on);
                     }
                 }
                 send_settings(&webview, &ctx, &prefetch_off);
@@ -1964,15 +1957,16 @@ mod tests {
         assert!(SettingsRequest::parse("unknown").is_none());
     }
 
-    /// CSP の 2 つのスイッチは `on` / `off` だけを受け、それ以外は保存せずに状態を送り返させる。
+    /// 「文書を信頼する」は `on` / `off` だけを受け、それ以外は保存せずに状態を送り返させる。
+    /// 2 つのスイッチだった頃の綴りは知らない要求として捨てる。
     #[test]
     fn switch_requests_take_only_on_or_off() {
-        assert!(matches!(SettingsRequest::parse("document-scripts:on"), Some(SettingsRequest::DocScripts(true))));
-        assert!(matches!(SettingsRequest::parse("document-scripts:off"), Some(SettingsRequest::DocScripts(false))));
-        assert!(matches!(SettingsRequest::parse("external-resources:on"), Some(SettingsRequest::External(true))));
-        assert!(matches!(SettingsRequest::parse("external-resources:off"), Some(SettingsRequest::External(false))));
-        for bad in ["document-scripts:", "document-scripts:ON", "document-scripts:yes", "external-resources:1"] {
+        assert!(matches!(SettingsRequest::parse("trust-documents:on"), Some(SettingsRequest::Trust(true))));
+        assert!(matches!(SettingsRequest::parse("trust-documents:off"), Some(SettingsRequest::Trust(false))));
+        for bad in ["trust-documents:", "trust-documents:ON", "trust-documents:yes", "trust-documents:1"] {
             assert!(matches!(SettingsRequest::parse(bad), Some(SettingsRequest::Get)), "{bad}");
         }
+        assert!(SettingsRequest::parse("document-scripts:on").is_none());
+        assert!(SettingsRequest::parse("external-resources:on").is_none());
     }
 }

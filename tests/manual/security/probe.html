@@ -22,7 +22,7 @@
 <h1>セキュリティの検証用（html）</h1>
 <p>md 側は <a href="./probe.md">probe.md</a>。読み方（どの設定で何を期待するか）は md 側の冒頭にある。</p>
 <p class="note">各項目は、何もしなければ <span class="r">⚪ 止まった</span> のまま。文書の JS が動いたときだけ <span class="r">🔴 動いた</span> に書き換わる。
-既定（両方 OFF）と「外部の読み込みを許す」だけ ON では全部 ⚪。「文書の JavaScript を動かす」を ON にすると 1 と 2 が 🔴 になる。3 の script と fetch は、両方 ON のときだけ 🔴 になる。</p>
+既定（「文書を信頼する」が OFF）では全部 ⚪。ON にすると 1・2 と、3 の script・fetch が 🔴 になる。</p>
 
 <h2>1. 文書の JavaScript</h2>
 <ul>
@@ -47,11 +47,11 @@
 
 <h2>3. 外部の読み込み</h2>
 <ul>
-  <li>外部の画像（外部が OFF なら「開く」リンクに置き換わる。ON ならバッジが出る）: <img src="https://img.shields.io/badge/外部の画像-読めた-blue" alt="外部の画像"></li>
-  <li>外部の CSS と Web フォント（読めていれば袋文字の Rampart One。読めなければ等幅のまま。md と違い、外部が ON なら効く）: <span class="probe-font">外部フォント ABC</span></li>
-  <li>外部の script（cdnjs の dayjs）: <span class="r" id="r-ext-script">⚪ 止まった</span><span class="note">（インラインの script が動くときだけ判定できる。両方 ON のときだけ 🔴）</span></li>
+  <li>外部の画像（OFF なら「開く」リンクに置き換わる。ON ならバッジが出る）: <img src="https://img.shields.io/badge/外部の画像-読めた-blue" alt="外部の画像"></li>
+  <li>外部の CSS と Web フォント（読めていれば袋文字の Rampart One。読めなければ等幅のまま。md と違い、ON なら効く）: <span class="probe-font">外部フォント ABC</span></li>
+  <li>外部の script（cdnjs の dayjs）: <span class="r" id="r-ext-script">⚪ 止まった</span><span class="note">（インラインの script が動くときだけ判定できる。ON なら 🔴）</span></li>
   <li>外への fetch（<code>example.com</code> へ no-cors で送る）: <span class="r" id="r-fetch">⚪ 止まった</span><span class="note">（同上）</span></li>
-  <li>外部の iframe（外部が OFF なら「開く」リンクに置き換わる。ON なら枠の中に example.com が出る。どちらでも、開いた瞬間に既定のブラウザが開かないこと。枠の中のリンクを押しても何も開かないこと）:
+  <li>外部の iframe（OFF なら「開く」リンクに置き換わる。ON なら枠の中に example.com が出る。どちらでも、開いた瞬間に既定のブラウザが開かないこと。枠の中のリンクを押しても何も開かないこと）:
     <iframe src="https://example.com" width="480" height="160"></iframe></li>
   <li>外部へのリンク（どの設定でも、押すと既定のブラウザで開く）: <a href="https://example.com">example.com</a> / <a href="https://example.com" target="_blank">target=_blank</a></li>
   <li><code>&lt;link rel=preconnect&gt;</code>（head にある）は、どの設定でも WebKit の先読みを切ってあるので接続しない。画面では分からないので、確かめるなら <a href="./real-device/README.md">real-device/</a> の手順で</li>

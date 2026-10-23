@@ -117,7 +117,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   <p>
     タブバーの右端、ベルの隣の歯車か <kbd>⌘,</kbd> で、設定がタブとして開きます。左で「テーマ」「ウィンドウ」「JavaScript・外部」を切り替えます。
     保存ボタンはなく、変えたらその場で保存されます。閉じるのは普通のタブと同じく <kbd>⌘W</kbd>。
-    テーマはその場で変わりますが、窓の初期サイズと「JavaScript・外部」の 2 つのスイッチは <kbd>⌘Q</kbd> で終了した後から効きます（<kbd>⌘W</kbd> や × は窓を隠すだけで、md は終わっていません）。
+    テーマはその場で変わりますが、窓の初期サイズと「文書を信頼する」は <kbd>⌘Q</kbd> で終了した後から効きます（<kbd>⌘W</kbd> や × は窓を隠すだけで、md は終わっていません）。
   </p>
   <div class="flist">
     <div class="fitem">
@@ -129,21 +129,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
       <div class="fdesc">幅と高さを打ち込むか、「いまの大きさに設定する」でいまの窓の大きさを入れます。<kbd>⌘Q</kbd> で終了した後、次に開く窓からその大きさになります（<kbd>⌘W</kbd> で閉じた窓は、閉じたときの大きさのまま出直します）。</div>
     </div>
     <div class="fitem">
-      <div class="fname">文書の JavaScript を動かす</div>
-      <div class="fdesc">既定は OFF。HTML が白紙になる、文書が自前で持つボタンやグラフが動かないときに ON にします。ON にすると、開いた md と HTML の JavaScript が手元のファイルを読んで外へ送れるようになります。コピーボタンと図の拡大は md-preview が用意している部品なので、OFF のままでも動きます。</div>
-    </div>
-    <div class="fitem">
-      <div class="fname">外部の読み込みを許す</div>
-      <div class="fdesc">既定は OFF。ネットの画像やバッジが「開く」リンクになる、Web フォントが効かないときに ON にします。ON にすると、開いた文書が外のサーバへ読み込みを送れるようになり、開いたことや本文の一部が伝わることがあります。</div>
+      <div class="fname">文書を信頼する</div>
+      <div class="fdesc">既定は OFF。HTML が白紙になる、文書が自前で持つボタンやグラフが動かない、ネットの画像やバッジが「開く」リンクになる、Web フォントが効かないときに ON にします。ON にすると、以後に開くすべての md と HTML で JavaScript が動き、ネットからの読み込みも通ります。文書が手元のファイルを読んで外へ送れるようになり、開いたことや本文の一部が伝わることがあります。信頼できない文書を開くときは OFF に戻してください。コピーボタンと図の拡大は md-preview が用意している部品なので、OFF のままでも動きます。</div>
     </div>
     <div class="fitem">
       <div class="fname">保存した値といま効いている値</div>
-      <div class="fdesc">スイッチを切り替えてから <kbd>⌘Q</kbd> するまでは、保存した値といまの md の状態が食い違います。そのあいだはスイッチの下に、いまどちらで動いているかが出ます。リンクの先読み（preconnect・DNS の先読み）を止められているかも、ここに出ます。</div>
+      <div class="fdesc">スイッチを切り替えてから <kbd>⌘Q</kbd> するまでは、保存した値といまの md の状態が食い違います。そのあいだはスイッチの下に、いまどちらで動いているかが出ます。リンクの先読み（preconnect・DNS の先読み）を止められなかったときは、その名前もここに出ます。</div>
     </div>
   </div>
   <p class="note">
     設定は <code>~/.config/md-preview/settings</code> に <code>key=value</code> で残ります。手で開いて書き換えても構いません。
-    2 つのスイッチのキーは <code>document-scripts=on</code> と <code>external-resources=on</code> です（<code>on</code> 以外は OFF）。
+    「文書を信頼する」のキーは <code>trust-documents=on</code> です（<code>on</code> 以外は OFF）。
     何が止まるかは<a href={`${base}/doc/read/#scripts`}>JavaScript とネットの読み込み</a>にまとめています。
   </p>
 

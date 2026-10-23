@@ -34,8 +34,7 @@ async function push(page, over) {
     themes: THEMES,
     windowSize: null,
     defaultWindowSize: { w: 1280, h: 700 },
-    docScripts: { saved: false, effective: false },
-    external: { saved: false, effective: false },
+    trusted: { saved: false, effective: false },
     prefetch: { missing: [] },
   }, over || {}));
 }
@@ -298,13 +297,15 @@ test('いまの大きさに設定する・既定に戻すは、それぞれ Rust
 const item = (page, key) => page.locator(`.st-item[data-switch="${key}"]`);
 const sw = (page, key) => item(page, key).locator('.st-switch');
 
-test('2 つのスイッチは保存してある値で出て、⌘Q の後から効くと書いてある', async ({ page }) => {
-  await openSettings(page, { external: { saved: true, effective: true } });
+test('スイッチは保存してある値で出て、⌘Q の後から効くと書いてある', async ({ page }) => {
+  await openSettings(page, { trusted: { saved: true, effective: true } });
   await navTo(page, 'content');
   await expect(page.locator('.st-title')).toHaveText('JavaScript と外部の読み込み');
-  await expect(sw(page, 'document-scripts')).toHaveAttribute('aria-checked', 'false');
-  await expect(sw(page, 'external-resources')).toHaveAttribute('aria-checked', 'true');
-  // 「⌘Q の後から」は見出しの直下に 1 回だけ。スイッチごとには書かない。
+  await expect(sw(page, 'trust-documents')).toHaveAttribute('aria-checked', 'true');
+  await expect(item(page, 'trust-documents').locator('.st-label')).toHaveText('文書を信頼する');
+  // スイッチは 1 つだけ（2 つだった頃の綴りは残っていない）。
+  await expect(page.locator('.st-item[data-switch]')).toHaveCount(1);
+  // 「⌘Q の後から」は見出しの直下に 1 回だけ。スイッチには書かない。
   await expect(page.locator('.st-pane .st-when')).toHaveCount(1);
   await expect(page.locator('.st-title + .st-when')).toHaveText('⌘Q で終了した後から効きます。');
   // ナビは 1 行に収まる短い名前で、見出しには全部を書く。
@@ -312,14 +313,14 @@ test('2 つのスイッチは保存してある値で出て、⌘Q の後から�
   await expect(nav).toHaveText('JavaScript・外部');
   expect(await nav.evaluate((b) => b.getClientRects().length === 1 && b.offsetHeight < 40)).toBe(true);
   // 説明は症状から引けて、ON にしたときの危険を書いている。
-  await expect(item(page, 'document-scripts')).toContainText('HTML が白紙になる');
-  await expect(item(page, 'document-scripts')).toContainText('手元のファイルを読んで外へ送れる');
-  await expect(item(page, 'external-resources')).toContainText('バッジが文字になる');
-  await expect(item(page, 'external-resources')).toContainText('開いたことや本文の一部が伝わる');
-  // アプリが配る部品は OFF でも動く、と書き分けている。
-  await expect(item(page, 'document-scripts')).toContainText('コピーボタンと図の拡大');
-  await expect(page.locator('.st-pane')).toContainText('2 つとも ON にしたときだけ');
-  await expect(page.locator('.st-pane .st-item:not([data-switch]) .st-label').first()).toHaveText('2 つとも ON のとき');
+  await expect(item(page, 'trust-documents')).toContainText('HTML が白紙になる');
+  await expect(item(page, 'trust-documents')).toContainText('バッジが「開く」リンクになる');
+  await expect(item(page, 'trust-documents')).toContainText('以後に開くすべての md と HTML');
+  await expect(item(page, 'trust-documents')).toContainText('手元のファイルを読んで外へ送れる');
+  await expect(item(page, 'trust-documents')).toContainText('開いたことや本文の一部が伝わる');
+  // アプリが配る部品は OFF でも動く、drawio の拡張図形は ON のときだけ、と書き分けている。
+  await expect(item(page, 'trust-documents')).toContainText('コピーボタンと図の拡大');
+  await expect(item(page, 'trust-documents')).toContainText('ON にしたときだけ描かれます');
   // 保存した値といま効いている値が同じなら、食い違いの文は出ない。
   await expect(page.locator('.st-pending')).toHaveCount(0);
 });
@@ -327,42 +328,35 @@ test('2 つのスイッチは保存してある値で出て、⌘Q の後から�
 test('スイッチを押すと写しが切り替わり、on / off の保存を頼む', async ({ page }) => {
   await openSettings(page);
   await navTo(page, 'content');
-  await sw(page, 'document-scripts').click();
-  await expect(sw(page, 'document-scripts')).toHaveAttribute('aria-checked', 'true');
-  await sw(page, 'external-resources').click();
-  await sw(page, 'external-resources').click();
-  await expect(sw(page, 'external-resources')).toHaveAttribute('aria-checked', 'false');
+  await sw(page, 'trust-documents').click();
+  await expect(sw(page, 'trust-documents')).toHaveAttribute('aria-checked', 'true');
   // 名前（label）を押しても切り替わる。
-  await item(page, 'document-scripts').locator('label').click();
-  await expect(sw(page, 'document-scripts')).toHaveAttribute('aria-checked', 'false');
+  await item(page, 'trust-documents').locator('label').click();
+  await expect(sw(page, 'trust-documents')).toHaveAttribute('aria-checked', 'false');
   expect(await ipc(page)).toEqual([
     'settings:get',
-    'settings:document-scripts:on',
-    'settings:external-resources:on',
-    'settings:external-resources:off',
-    'settings:document-scripts:off',
+    'settings:trust-documents:on',
+    'settings:trust-documents:off',
   ]);
 });
 
 test('ON を保存しても効くのは後からだと、スイッチの真下に出す', async ({ page }) => {
   await openSettings(page);
   await navTo(page, 'content');
-  await sw(page, 'document-scripts').click();
-  const note = item(page, 'document-scripts').locator('.st-pending');
+  await sw(page, 'trust-documents').click();
+  const note = item(page, 'trust-documents').locator('.st-pending');
   await expect(note).toHaveText('保存しました。いまの md は OFF のままです。⌘Q で終了して開き直すと ON になります。');
   await expect(note).not.toHaveClass(/is-warn/);
   // スイッチの行の直後に置く（説明より上）。
-  expect(await item(page, 'document-scripts').evaluate((el) =>
+  expect(await item(page, 'trust-documents').evaluate((el) =>
     el.querySelector('.st-switch-row').nextElementSibling.className)).toContain('st-pending');
-  // もう一方のスイッチには出ない。
-  await expect(item(page, 'external-resources').locator('.st-pending')).toHaveCount(0);
 });
 
 test('OFF にしてもまだ ON のまま動いているときは、止めるには ⌘Q と出す', async ({ page }) => {
-  await openSettings(page, { external: { saved: true, effective: true } });
+  await openSettings(page, { trusted: { saved: true, effective: true } });
   await navTo(page, 'content');
-  await sw(page, 'external-resources').click();
-  const note = item(page, 'external-resources').locator('.st-pending');
+  await sw(page, 'trust-documents').click();
+  const note = item(page, 'trust-documents').locator('.st-pending');
   await expect(note).toHaveText('いまの md では、まだ ON のままです。止めるには ⌘Q で終了してください。');
   await expect(note).toHaveClass(/is-warn/);
   // ただの知らせとは、印と太い左の線で見分けられる。
@@ -371,30 +365,32 @@ test('OFF にしてもまだ ON のまま動いているときは、止めるに
     left: getComputedStyle(el).borderLeftWidth,
   }))).toEqual({ mark: '"⚠ "', left: '4px' });
   // スイッチの下の最後の言葉は食い違いの文（「⌘Q の後から」の決まり文句が後ろに来ない）。
-  await expect(item(page, 'external-resources').locator('.st-when')).toHaveCount(0);
+  await expect(item(page, 'trust-documents').locator('.st-when')).toHaveCount(0);
 
   // Rust から届いた写しでも同じ（`md` を開き直さずに設定ファイルを手で書き換えたとき）。
-  await push(page, { docScripts: { saved: false, effective: true } });
-  await expect(item(page, 'document-scripts').locator('.st-pending')).toHaveText(/まだ ON のままです/);
+  await push(page, { trusted: { saved: false, effective: true } });
+  await expect(item(page, 'trust-documents').locator('.st-pending')).toHaveText(/まだ ON のままです/);
   // 元へ戻せば消える。
-  await push(page, { docScripts: { saved: true, effective: true } });
+  await push(page, { trusted: { saved: true, effective: true } });
   await expect(page.locator('.st-pending')).toHaveCount(0);
 });
 
-test('先読みの停止は、効いているか・切れなかった名前を出し、切る口の無い OS では出さない', async ({ page }) => {
+test('先読みの停止は、切れなかったときだけ名前と一緒に出す。効いているときと、切る口の無い OS では出さない', async ({ page }) => {
   await openSettings(page);
   await navTo(page, 'content');
-  const pre = page.locator('.st-prefetch');
-  await expect(pre.locator('.st-status')).toHaveText('✓ 効いている');
-  await expect(pre.locator('.st-pending')).toHaveCount(0);
+  // 効いているときは何も出さない（読む人に何も求めない）。
+  await expect(page.locator('.st-prefetch')).toHaveCount(0);
 
   await push(page, { prefetch: { missing: ['LinkPreconnect', '_setDNSPrefetchingEnabled:'] } });
+  const pre = page.locator('.st-prefetch');
   await expect(pre.locator('.st-status')).toHaveText('⚠ 効いていない');
   await expect(pre.locator('.st-status')).toHaveCSS('text-decoration-line', 'none');
   // 名前は「」で括って 1 行に分け、句読点とくっつけない。
   await expect(pre.locator('.st-missing')).toHaveText('「LinkPreconnect」「_setDNSPrefetchingEnabled:」');
   await expect(pre.locator('.st-missing')).toHaveCSS('display', 'block');
 
+  await push(page, { prefetch: { missing: [] } });
+  await expect(page.locator('.st-prefetch')).toHaveCount(0);
   await push(page, { prefetch: null });
   await expect(page.locator('.st-prefetch')).toHaveCount(0);
 });

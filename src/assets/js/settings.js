@@ -22,7 +22,7 @@
 
   // Rust から渡された写し。
   // { theme, defaultTheme, autoDarkBg, themes:[{name, group, swatch}], windowSize, defaultWindowSize,
-  //   docScripts:{saved, effective}, external:{saved, effective}, prefetch:{missing:[…]} | null }
+  //   trusted:{saved, effective}, prefetch:{missing:[…]} | null }
   var state = null;
   var pane = 'theme';
   var host = null;    // 描いている先（本文ペイン）
@@ -41,18 +41,21 @@
       icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6 2.6 3.7v4c0 3.2 2.3 5.6 5.4 6.7 3.1-1.1 5.4-3.5 5.4-6.7v-4z"/></svg>' }
   ];
 
-  // CSP の 2 つのスイッチ。`key` は Rust の settings.rs のキーで、`settings:<key>:on|off` で頼む。
+  // CSP のスイッチ。`key` は Rust の settings.rs のキーで、`settings:<key>:on|off` で頼む。
   // 説明は、困っている症状から引けるように先に書き、ON にしたときの危険を具体的に添える。
+  // Why not 「文書の JS」と「外部の読み込み」の 2 つに分ける: 安全の軸として独立していない
+  // （理由は csp.rs の冒頭）。1 つなら「この文書を信じるか」の一言で説明が済む。
   var SWITCHES = [
-    { field: 'docScripts', key: 'document-scripts', label: '文書の JavaScript を動かす',
-      desc: 'HTML が白紙になる、文書が自前で持つボタンやグラフが動かないときは ON。' +
-        'ON にすると、開いた md と HTML の JavaScript が、手元のファイルを読んで外へ送れるようになります。',
+    { field: 'trusted', key: 'trust-documents', label: '文書を信頼する',
+      desc: 'HTML が白紙になる、文書が自前で持つボタンやグラフが動かない、ネットの画像やバッジが「開く」リンクになる、' +
+        'Web フォントが効かないときは ON。ON にすると、以後に開くすべての md と HTML で JavaScript が動き、ネットからの読み込みも通ります。' +
+        '文書が手元のファイルを読んで外へ送れるようになり、開いたことや本文の一部が伝わることがあります。',
       // アプリが配る部品は OFF でも動く。「ボタンが効かない」の中でも、こちらは ON にしても変わらない。
-      extra: 'コピーボタンと図の拡大はアプリが配る部品なので、OFF のままでも動きます。' },
-    { field: 'external', key: 'external-resources', label: '外部の読み込みを許す',
-      desc: 'ネットの画像やバッジが文字になる、Web フォントが効かないときは ON。' +
-        'ON にすると、開いた文書が外のサーバへ読み込みを送れるようになり、開いたことや本文の一部が伝わることがあります。',
-      extra: null }
+      // drawio の拡張図形は向きが逆（ON のときだけ）なので、段落を分ける。
+      extra: [
+        'コピーボタンと図の拡大はアプリが配る部品なので、OFF のままでも動きます。',
+        'draw.io の AWS・Cisco・BPMN などの図形は、ON にしたときだけ描かれます。'
+      ] }
   ];
 
   var GROUPS = [
@@ -248,19 +251,14 @@
   // ── JavaScript と外部の読み込み ─────────────────────────────
   function renderContent(p) {
     p.appendChild(el('div', 'st-title', 'JavaScript と外部の読み込み'));
-    // 2 つのスイッチに共通なので見出しの下に 1 回だけ書く。スイッチごとに書くと、同じ文が
-    // 食い違いの文の後ろに並び、そちらが最後の言葉に見えなくなる。
+    // 見出しの下に 1 回だけ書く。スイッチの中に書くと、食い違いの文の後ろに並び、そちらが
+    // 最後の言葉に見えなくなる。
     // ⌘W と × は窓を隠すだけでプロセスは残る（#49）ので、「窓を閉じたら」とは書かない。
     p.appendChild(el('div', 'st-when', '⌘Q で終了した後から効きます。'));
     SWITCHES.forEach(function(sw) { p.appendChild(switchItem(sw)); });
 
-    var both = el('div', 'st-item');
-    both.appendChild(el('div', 'st-label', '2 つとも ON のとき'));
-    both.appendChild(el('p', 'st-desc',
-      'draw.io の AWS・Cisco・BPMN などの図形は、2 つとも ON にしたときだけ描かれます（図形をネットから取ってきて、JavaScript として取り込むため）。'));
-    p.appendChild(both);
-
-    if (state.prefetch) p.appendChild(prefetchItem(state.prefetch));
+    // 先読みの停止は、効いていないときだけ出す（効いているときの行は、読む人に何も求めない）。
+    if (state.prefetch && state.prefetch.missing.length) p.appendChild(prefetchItem(state.prefetch));
   }
 
   function switchItem(sw) {
@@ -293,7 +291,7 @@
     }
 
     item.appendChild(el('p', 'st-desc', sw.desc));
-    if (sw.extra) item.appendChild(el('p', 'st-desc', sw.extra));
+    (sw.extra || []).forEach(function(t) { item.appendChild(el('p', 'st-desc', t)); });
     return item;
   }
 
@@ -308,25 +306,23 @@
   }
 
   // 先読み（preconnect・DNS の先読み）は設定に関係なく止めている。止める口は WebKit の
-  // 非公開の機能フラグで、macOS の更新で名前が変わると黙って効かなくなるので、ここに出す。
+  // 非公開の機能フラグで、macOS の更新で名前が変わると黙って効かなくなるので、切れなかった
+  // ときだけここに出す（呼ぶ側が見ている）。
   function prefetchItem(prefetch) {
     var item = el('div', 'st-item st-prefetch');
-    var ok = !prefetch.missing.length;
     var row = el('div', 'st-switch-row');
     row.appendChild(el('span', 'st-label', '先読みの停止'));
-    // 2 つの状態は印で分ける（色はテーマ任せなので、色だけでは見分けられない）。
-    row.appendChild(el('span', 'st-status' + (ok ? ' is-ok' : ' is-warn'), ok ? '✓ 効いている' : '⚠ 効いていない'));
+    // 印で分ける（色はテーマ任せなので、色だけでは見分けられない）。
+    row.appendChild(el('span', 'st-status is-warn', '⚠ 効いていない'));
     item.appendChild(row);
     item.appendChild(el('p', 'st-desc',
-      '文書のリンク先へ前もって接続する WebKit の機能（preconnect・DNS の先読み）を、上の設定に関係なく止めています。'));
-    if (!ok) {
-      // 名前は英字の識別子なので、「」で括って 1 行に分け、句読点とくっつけない。
-      var warn = el('p', 'st-pending is-warn', '止められなかったもの:');
-      warn.appendChild(el('span', 'st-missing',
-        prefetch.missing.map(function(n) { return '「' + n + '」'; }).join('')));
-      warn.appendChild(document.createTextNode('macOS の更新で WebKit の中の名前が変わった可能性があります。'));
-      item.appendChild(warn);
-    }
+      '文書のリンク先へ前もって接続する WebKit の機能（preconnect・DNS の先読み）を、上の設定に関係なく止めていますが、一部を止められませんでした。'));
+    // 名前は英字の識別子なので、「」で括って 1 行に分け、句読点とくっつけない。
+    var warn = el('p', 'st-pending is-warn', '止められなかったもの:');
+    warn.appendChild(el('span', 'st-missing',
+      prefetch.missing.map(function(n) { return '「' + n + '」'; }).join('')));
+    warn.appendChild(document.createTextNode('macOS の更新で WebKit の中の名前が変わった可能性があります。'));
+    item.appendChild(warn);
     return item;
   }
 

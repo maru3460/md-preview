@@ -5,9 +5,14 @@
 //! 見るよう、Policy は起動時に 1 回だけ作り、`AppConfig` と `RequestContext` に同じ値を
 //! 渡す。設定の切り替えは ⌘Q で終了して開き直したときから効く（プロセスの間は変えない）。
 //!
-//! 既定（両方 OFF）で塞ぎ、設定の 2 つのスイッチでそれぞれ戻す。
-//! - `doc_scripts`: 文書の JavaScript（md のイベント属性・`javascript:`、`.html` の script）
-//! - `external`: 外部（http / https）からの画像・動画・音声・CSS・フォント・iframe の読み込み
+//! 既定（OFF）で塞ぎ、設定「文書を信頼する」（`trusted`）で戻す。戻るのは次の 2 つ。
+//! - 文書の JavaScript（md のイベント属性・`javascript:`、`.html` の script）
+//! - 外部（http / https）からの画像・動画・音声・CSS・フォント・iframe の読み込み
+//!
+//! Why not 2 つを別のスイッチにする: 安全の軸として独立していない。JS を動かすと、外部を
+//! 止めたままでも、文書の JS がアプリの内線でブラウザに URL を開かせて手元のファイルの中身を
+//! 外へ出せる。「外部を OFF にしておけば送れない」と誤解させるより、「この文書を信じるか」の
+//! 1 点にする（2026-10-23 に利用者が決めた）。失うのは「バッジだけ出したい」の使い方だけ。
 
 /// 本番の md の画面の origin。meta の `script-src` で `/__lib/` を許す住所の頭に使う。
 /// 開発用サーバ（`examples/serve.rs`）は自分の `http://127.0.0.1:<port>` を渡す。
@@ -22,10 +27,8 @@ pub fn lib_files() -> impl Iterator<Item = &'static str> {
 /// 起動時に設定から 1 回だけ作る。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Policy {
-    /// 文書の JavaScript を動かす。
-    pub doc_scripts: bool,
-    /// 外部からの読み込みを許す。
-    pub external: bool,
+    /// 文書を信頼する（文書の JavaScript を動かし、外部からの読み込みを許す）。
+    pub trusted: bool,
 }
 
 /// 応答の種類。ヘッダの中身はこれで決まる。
@@ -38,7 +41,7 @@ pub enum Kind {
     /// md の画面そのもの（クエリの無い `/`）。ヘッダは付けず、meta だけで守る。
     Index,
     /// 文書のページ。`.html` / `.htm`（URL と実体の両方が html のもの）と、md を
-    /// 直接開いた 1 枚ページ。設定で JS を動かすと `script-src` が緩むのはここだけ。
+    /// 直接開いた 1 枚ページ。文書を信頼する設定で `script-src` が緩むのはここだけ。
     Doc,
     /// それ以外すべて（本文の断片・JSON・画像・CSS・`/__lib/`・404 など）。
     Other,
@@ -52,7 +55,7 @@ const EXTERNAL: &str = "https: http:";
 /// iframe なども開いてしまう。
 fn base_directives(policy: &Policy) -> Vec<String> {
     let ext = |v: &str| {
-        if policy.external {
+        if policy.trusted {
             format!("{v} {EXTERNAL}")
         } else {
             v.to_string()
@@ -72,7 +75,7 @@ fn base_directives(policy: &Policy) -> Vec<String> {
     ]
 }
 
-/// 文書の JS を動かすときの `script-src`。
+/// 文書を信頼するときの `script-src`。
 ///
 /// Why not `script-src` を書かない: 書かないと `default-src` に落ちて、inline の script が
 /// アプリ自身のものまで全部止まる。
@@ -80,13 +83,8 @@ fn base_directives(policy: &Policy) -> Vec<String> {
 /// 無視され、イベント属性と `javascript:` が動かない。
 /// `'unsafe-eval'` は drawio の拡張図形が図形の取り込みに eval を使うため。ON の間は文書の
 /// JS を信じる前提なので、足しても守りは変わらない。
-fn open_script_src(policy: &Policy) -> String {
-    let mut v = "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:".to_string();
-    if policy.external {
-        v.push(' ');
-        v.push_str(EXTERNAL);
-    }
-    v
+fn open_script_src() -> String {
+    format!("script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: {EXTERNAL}")
 }
 
 fn join(mut directives: Vec<String>, script_src: String) -> String {
@@ -102,8 +100,8 @@ fn join(mut directives: Vec<String>, script_src: String) -> String {
 /// Why not 本番にも `http://127.0.0.1:*` を足して 1 本にする: 本文の srcdoc から、別のポートで
 /// 動く手元のサーバの同じパスの script が動いた（実測）。
 pub fn meta(policy: &Policy, lib_origin: &str) -> String {
-    let script_src = if policy.doc_scripts {
-        open_script_src(policy)
+    let script_src = if policy.trusted {
+        open_script_src()
     } else {
         let mut v = String::from("script-src");
         for h in script_hashes() {
@@ -127,7 +125,7 @@ pub fn meta(policy: &Policy, lib_origin: &str) -> String {
 pub fn header(policy: &Policy, kind: Kind) -> Option<String> {
     let script_src = match kind {
         Kind::Index => return None,
-        Kind::Doc if policy.doc_scripts => open_script_src(policy),
+        Kind::Doc if policy.trusted => open_script_src(),
         Kind::Doc | Kind::Other => "script-src 'none'".to_string(),
     };
     Some(join(base_directives(policy), script_src))
@@ -191,11 +189,9 @@ fn base64(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    const OFF: Policy = Policy { doc_scripts: false, external: false };
-    const JS: Policy = Policy { doc_scripts: true, external: false };
-    const EXT: Policy = Policy { doc_scripts: false, external: true };
-    const BOTH: Policy = Policy { doc_scripts: true, external: true };
-    const ALL: [Policy; 4] = [OFF, JS, EXT, BOTH];
+    const OFF: Policy = Policy { trusted: false };
+    const ON: Policy = Policy { trusted: true };
+    const ALL: [Policy; 2] = [OFF, ON];
 
     fn directive<'a>(csp: &'a str, name: &str) -> &'a str {
         csp.split("; ")
@@ -239,49 +235,38 @@ mod tests {
     }
 
     #[test]
-    fn documents_run_scripts_only_when_the_setting_is_on() {
+    fn documents_run_scripts_only_when_trusted() {
         assert_eq!(directive(&header(&OFF, Kind::Doc).unwrap(), "script-src"), "script-src 'none'");
-        assert_eq!(directive(&header(&EXT, Kind::Doc).unwrap(), "script-src"), "script-src 'none'");
         assert_eq!(
-            directive(&header(&JS, Kind::Doc).unwrap(), "script-src"),
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:"
-        );
-        assert_eq!(
-            directive(&header(&BOTH, Kind::Doc).unwrap(), "script-src"),
+            directive(&header(&ON, Kind::Doc).unwrap(), "script-src"),
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:"
         );
     }
 
     #[test]
     fn the_page_meta_allows_only_its_own_scripts_and_the_two_libraries_by_default() {
-        for p in [OFF, EXT] {
-            let c = meta_content(&p);
-            let s = directive(&c, "script-src");
-            assert!(!s.contains("'unsafe-inline'") && !s.contains("'self'"), "{s}");
-            assert!(s.contains("'sha256-"), "{s}");
-            for f in lib_files() {
-                assert!(s.contains(&format!(" mdpreview://localhost/__lib/{f}")), "{s}");
-            }
+        let c = meta_content(&OFF);
+        let s = directive(&c, "script-src");
+        assert!(!s.contains("'unsafe-inline'") && !s.contains("'self'"), "{s}");
+        assert!(s.contains("'sha256-"), "{s}");
+        for f in lib_files() {
+            assert!(s.contains(&format!(" mdpreview://localhost/__lib/{f}")), "{s}");
         }
-        for p in [JS, BOTH] {
-            let c = meta_content(&p);
-            let s = directive(&c, "script-src");
-            assert!(s.starts_with("script-src 'self' 'unsafe-inline' 'unsafe-eval'"), "{s}");
-            // ハッシュがあると 'unsafe-inline' が無視される。
-            assert!(!s.contains("'sha256-"), "{s}");
-        }
+        let c = meta_content(&ON);
+        let s = directive(&c, "script-src");
+        assert!(s.starts_with("script-src 'self' 'unsafe-inline' 'unsafe-eval'"), "{s}");
+        // ハッシュがあると 'unsafe-inline' が無視される。
+        assert!(!s.contains("'sha256-"), "{s}");
     }
 
     #[test]
-    fn production_meta_has_no_loopback_or_wildcard_when_external_is_off() {
-        for p in [OFF, JS] {
-            let c = meta_content(&p);
-            assert!(!c.contains("http:") && !c.contains('*') && !c.contains("127.0.0.1"), "{c}");
-        }
+    fn production_meta_has_no_loopback_or_wildcard_by_default() {
+        let c = meta_content(&OFF);
+        assert!(!c.contains("http:") && !c.contains('*') && !c.contains("127.0.0.1"), "{c}");
     }
 
     #[test]
-    fn external_adds_the_web_without_dropping_the_rest() {
+    fn trusting_adds_the_web_without_dropping_the_rest() {
         for (name, base) in [
             ("default-src", "'self' data: blob:"),
             ("img-src", "'self' data: blob:"),
@@ -292,15 +277,11 @@ mod tests {
             ("connect-src", "'self'"),
             ("object-src", "'self'"),
         ] {
-            for p in [OFF, JS] {
-                for csp in [meta_content(&p), header(&p, Kind::Doc).unwrap(), header(&p, Kind::Other).unwrap()] {
-                    assert_eq!(directive(&csp, name), format!("{name} {base}"), "{p:?}");
-                }
+            for csp in [meta_content(&OFF), header(&OFF, Kind::Doc).unwrap(), header(&OFF, Kind::Other).unwrap()] {
+                assert_eq!(directive(&csp, name), format!("{name} {base}"));
             }
-            for p in [EXT, BOTH] {
-                for csp in [meta_content(&p), header(&p, Kind::Doc).unwrap(), header(&p, Kind::Other).unwrap()] {
-                    assert_eq!(directive(&csp, name), format!("{name} {base} https: http:"), "{p:?}");
-                }
+            for csp in [meta_content(&ON), header(&ON, Kind::Doc).unwrap(), header(&ON, Kind::Other).unwrap()] {
+                assert_eq!(directive(&csp, name), format!("{name} {base} https: http:"));
             }
         }
     }
