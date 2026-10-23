@@ -660,14 +660,10 @@ fn main() {
         md_preview::notifications::add_read(&config.initial_ids, &open_flags.origin);
         config.bell_opened = config.initial_ids.clone();
     }
-    // 先読み（preconnect・DNS）を切った configuration は、webview を作る前に渡す（理由は
-    // without_prefetch の doc）。ページの材料（page_globals・RequestContext）より前に済ませて
-    // おくのは、切れなかった名前をそこへ渡せるようにするため。設定画面には「先読みの停止」として
-    // 出す（ログはデタッチ後に /dev/null へ行くので、ログだけでは誰も気づかない）。
-    let (webview_builder, mut prefetch_off) = platform::without_prefetch(WebViewBuilder::new());
-    if !prefetch_off.missing().is_empty() {
-        eprintln!("md: WebKit の先読みを切れなかった: {}", prefetch_off.missing().join(", "));
-    }
+    // Why not WebKit の先読み（preconnect・DNS の先読み）を非公開の機能フラグで切る: 漏れるのは
+    // 「リンク先のホスト名を引いた」事実だけで、ブラウザで開くのと変わらない。非公開の口は OS の
+    // 更新で黙って効かなくなり、見張りの手間の方が大きい（2026-10-23 に利用者が外すと決めた）。
+    let webview_builder = WebViewBuilder::new();
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
     let init_script = format!(
@@ -913,20 +909,6 @@ fn main() {
         let _ = notice_proxy.send_event(AppEvent::Toast(msg.to_string()));
     });
 
-    // 渡した configuration が build() の後も効いているかを 1 度だけ読み戻し、ON のまま残った
-    // 名前を「切れなかったもの」に合流させる。設定画面の ⚠ は「切ろうとした記録」ではなく
-    // この実態で出す（wry の版上げで configuration が差し替わっても、効いているときは黙って
-    // いるので、記録だけでは気づけない）。
-    #[cfg(target_os = "macos")]
-    match platform::prefetch_still_on(&webview) {
-        Some(on) if on.is_empty() => {}
-        Some(on) => {
-            eprintln!("md: build() の後に先読みが ON のまま: {}", on.join(", "));
-            prefetch_off.add_still_on(on);
-        }
-        None => eprintln!("md: build() の後の先読みの設定を読み戻せなかった"),
-    }
-
     // メニューの ⌘Q はイベントループへ流す（#49）。宛先も購読も **NSMenuItem や
     // 通知センター側では保持されない** ので、ここで持ち続ける。`EventLoop::run` は
     // 戻らないので、この束縛はプロセスと寿命を揃えることになる。
@@ -1143,7 +1125,7 @@ fn main() {
                         save_switch(md_preview::settings::TRUST_DOCUMENTS, on);
                     }
                 }
-                send_settings(&webview, &ctx, &prefetch_off);
+                send_settings(&webview, &ctx);
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
@@ -1175,7 +1157,7 @@ fn main() {
                     // 設定タブが開いていれば ✓ を動かす。開いていなければ写しを
                     // 持っているだけで、次に前に出したときに取り直す。
                     if page_ready {
-                        send_settings(&webview, &ctx, &prefetch_off);
+                        send_settings(&webview, &ctx);
                     }
                     return;
                 }
@@ -1674,24 +1656,19 @@ fn save_switch(key: &str, on: bool) {
 ///
 /// CSP のスイッチは、保存した値（読み直したもの）といま効いている値（`ctx.policy`。起動時に
 /// 決めたもの）を両方渡す。
-fn send_settings(webview: &wry::WebView, ctx: &request::RequestContext, prefetch_off: &platform::PrefetchOff) {
+fn send_settings(webview: &wry::WebView, ctx: &request::RequestContext) {
     let theme_name = theme::read_active_name();
     let saved = md_preview::settings::load();
     let window_size = saved
         .get(md_preview::settings::WINDOW_SIZE)
         .and_then(app_config::parse_window_size);
     let themes = theme::choices();
-    let prefetch_missing = match prefetch_off {
-        platform::PrefetchOff::Applied { missing } => Some(missing.as_slice()),
-        platform::PrefetchOff::NotApplicable => None,
-    };
     let view = md_preview::html::SettingsView {
         theme: &theme_name,
         themes: &themes,
         window_size,
         saved_policy: app_config::policy_from(&saved),
         effective_policy: ctx.policy,
-        prefetch_missing,
     };
     let _ = webview.evaluate_script(&md_preview::html::settings_script(&view));
 }

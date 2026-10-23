@@ -6,6 +6,4 @@
 
 ![外部の画像](http://127.0.0.1:8766/md-image.png)
 
-<link rel="preconnect" href="http://127.0.0.1:8765">
-
 <img src="http://127.0.0.1:8766/md-missing.png" onerror="fetch('http://127.0.0.1:8766/md-onerror',{mode:'no-cors'})" alt="イベント属性">

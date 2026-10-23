@@ -1080,9 +1080,6 @@ pub struct SettingsView<'a> {
     /// 文書の JS は動いたままである。画面が保存した値だけを見て「OFF」と出すと、止まったと
     /// 思わせてしまう（安全にかかわるのはこちらの向き）。
     pub effective_policy: crate::csp::Policy,
-    /// WebKit の先読みの停止。`None` は切る口の無い OS（出さない）。`Some` の中身は
-    /// 切れなかった名前で、空なら全部切れている。
-    pub prefetch_missing: Option<&'a [&'a str]>,
 }
 
 /// 設定タブの状態を**まるごと**ページへ渡すスクリプト。差分にしない理由は
@@ -1114,15 +1111,8 @@ pub fn settings_script(view: &SettingsView) -> String {
         crate::app_config::WINDOW_HEIGHT as u32,
     );
     let switch = |saved: bool, effective: bool| format!("{{saved:{saved},effective:{effective}}}");
-    let prefetch = match view.prefetch_missing {
-        Some(missing) => format!(
-            "{{missing:[{}]}}",
-            missing.iter().map(|m| json_string(m)).collect::<Vec<_>>().join(",")
-        ),
-        None => "null".to_string(),
-    };
     format!(
-        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},trusted:{},prefetch:{}}});",
+        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},trusted:{}}});",
         json_string(view.theme),
         json_string(crate::theme::DEFAULT_NAME),
         json_string(&crate::theme::auto_dark_bg_hex()),
@@ -1130,7 +1120,6 @@ pub fn settings_script(view: &SettingsView) -> String {
         view.window_size.map(size).unwrap_or_else(|| "null".to_string()),
         size(default_size),
         switch(view.saved_policy.trusted, view.effective_policy.trusted),
-        prefetch,
     )
 }
 
@@ -1263,7 +1252,6 @@ mod tests {
             window_size,
             saved_policy: off,
             effective_policy: off,
-            prefetch_missing: None,
         };
         let script = settings_script(&view(None));
         assert!(script.starts_with("window.MdSettings && window.MdSettings.push({"), "{script}");
@@ -1278,39 +1266,24 @@ mod tests {
         assert!(script.contains("defaultWindowSize:{w:1280,h:700}"), "{script}");
 
         assert!(script.contains("trusted:{saved:false,effective:false}"), "{script}");
-        assert!(script.contains("prefetch:null"), "{script}");
 
         let script = settings_script(&view(Some((1440, 900))));
         assert!(script.contains("windowSize:{w:1440,h:900}"), "{script}");
     }
 
     /// 保存した値といま効いている値は、別々に届くこと（⌘Q の後から効くので
-    /// 食い違うことがある）。先読みの停止は、切れなかった名前ごと届くこと。
+    /// 食い違うことがある）。
     #[test]
     fn settings_script_carries_saved_and_effective_policies_apart() {
         use crate::csp::Policy;
-        let missing = ["LinkPreconnect", "_setDNSPrefetchingEnabled:"];
         let script = settings_script(&SettingsView {
             theme: "default",
             themes: &[],
             window_size: None,
             saved_policy: Policy { trusted: true },
             effective_policy: Policy { trusted: false },
-            prefetch_missing: Some(&missing),
         });
         assert!(script.contains("trusted:{saved:true,effective:false}"), "{script}");
-        assert!(script.contains(r#"prefetch:{missing:["LinkPreconnect","_setDNSPrefetchingEnabled:"]}"#), "{script}");
-
-        let none: [&str; 0] = [];
-        let script = settings_script(&SettingsView {
-            theme: "default",
-            themes: &[],
-            window_size: None,
-            saved_policy: Policy::default(),
-            effective_policy: Policy::default(),
-            prefetch_missing: Some(&none),
-        });
-        assert!(script.contains("prefetch:{missing:[]}"), "{script}");
     }
 
     /// テーマの CSS に `</style>` や `</script>` の綴りがあっても、渡す文字列から

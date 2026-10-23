@@ -35,7 +35,6 @@ async function push(page, over) {
     windowSize: null,
     defaultWindowSize: { w: 1280, h: 700 },
     trusted: { saved: false, effective: false },
-    prefetch: { missing: [] },
   }, over || {}));
 }
 
@@ -373,24 +372,4 @@ test('OFF にしてもまだ ON のまま動いているときは、止めるに
   // 元へ戻せば消える。
   await push(page, { trusted: { saved: true, effective: true } });
   await expect(page.locator('.st-pending')).toHaveCount(0);
-});
-
-test('先読みの停止は、切れなかったときだけ名前と一緒に出す。効いているときと、切る口の無い OS では出さない', async ({ page }) => {
-  await openSettings(page);
-  await navTo(page, 'content');
-  // 効いているときは何も出さない（読む人に何も求めない）。
-  await expect(page.locator('.st-prefetch')).toHaveCount(0);
-
-  await push(page, { prefetch: { missing: ['LinkPreconnect', '_setDNSPrefetchingEnabled:'] } });
-  const pre = page.locator('.st-prefetch');
-  await expect(pre.locator('.st-status')).toHaveText('⚠ 効いていない');
-  await expect(pre.locator('.st-status')).toHaveCSS('text-decoration-line', 'none');
-  // 名前は「」で括って 1 行に分け、句読点とくっつけない。
-  await expect(pre.locator('.st-missing')).toHaveText('「LinkPreconnect」「_setDNSPrefetchingEnabled:」');
-  await expect(pre.locator('.st-missing')).toHaveCSS('display', 'block');
-
-  await push(page, { prefetch: { missing: [] } });
-  await expect(page.locator('.st-prefetch')).toHaveCount(0);
-  await push(page, { prefetch: null });
-  await expect(page.locator('.st-prefetch')).toHaveCount(0);
 });

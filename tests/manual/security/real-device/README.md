@@ -1,18 +1,12 @@
 # 実機で外へ出る接続を確かめる
 
-先読み（`<link rel=preconnect>`・DNS の先読み）、外部の読み込み、文書の JavaScript が、本物の WKWebView から外へ出ていかないことを確かめる手順。
-
-先読みは CSP では止まらないので、WebKit の非公開の機能フラグで切っている（`platform::without_prefetch`）。
-`cargo test` の `tests/webkit_flags.rs` は名前が残っていることまでしか見られない。
-名前が残ったまま効かなくなる変化は、実際に接続が来るかで見るしかない。
-macOS を更新したら、この手順を回す。
+外部の読み込みと文書の JavaScript が、設定「文書を信頼する」が OFF のとき本物の WKWebView から外へ出ていかないこと（ON のときは出ること）を確かめる手順。
+Playwright の WebKit は本物の WKWebView ではないので、CSP の扱いが OS の更新で変わっていないかは、ここで見る。
 
 ## 仕組み
 
-- `logger.py` … 127.0.0.1 の 2 つのポートで待つ記録用のサーバ
-  - 8765 … 先読みの行き先。**どの設定でも、ここに来てはいけない**
-  - 8766 … 画像・CSS・フォント・iframe・fetch などの行き先
-- `site/probe.html`・`site/probe.md` … 上の 2 つのポートを指す文書
+- `logger.py` … 127.0.0.1 の 8766 で待つ記録用のサーバ（画像・CSS・フォント・iframe・fetch などの行き先）
+- `site/probe.html`・`site/probe.md` … 上のポートを指す文書
 - `run.sh` … 設定を変えて md でファイルを開き、数秒後に閉じて、その間に来た接続を出す
 
 設定は使い捨ての `MD_CONFIG_DIR` に書くので、日常の md の設定には触れない。
@@ -43,12 +37,12 @@ macOS を更新したら、この手順を回す。
 
 ## 期待する結果
 
-- `off`（既定。「文書を信頼する」が OFF）: 8765 にも 8766 にも来ない
-- `on`（「文書を信頼する」が ON）: 8766 に `/style.css`・`/font.woff2`・`/image.png`・`/frame.html`・`/fetch`・`/js-image.png`・`/beacon` が来る。8765 には来ない
+- `off`（既定。「文書を信頼する」が OFF）: 8766 に何も来ない
+- `on`（「文書を信頼する」が ON）: 8766 に `/style.css`・`/font.woff2`・`/image.png`・`/frame.html`・`/fetch`・`/js-image.png`・`/beacon` が来る
 
 - `on` で 8766 に来るのは、記録用のサーバが動いていて、文書が本当に読まれていることの確かめでもある。ここで何も来なければ、手順のどこかが間違っている
-- `probe.md` は、`on` で `/md-image.png` と `/md-onerror` が来る。`<link>` は本文から落とすので、8765 はやはり来ない
-- **8765 に `ACCEPT` が 1 行でも出たら、先読みの停止が効いていない。** 設定画面に出る「⚠ 効いていない」の名前と、`cargo test --test webkit_flags` の結果も合わせて見る
+- `probe.md` は、`on` で `/md-image.png` と `/md-onerror` が来る
+- **`off` で 8766 に 1 行でも来たら、CSP の守りが効いていない**
 
 ## 片付け
 

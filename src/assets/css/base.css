@@ -2843,7 +2843,7 @@ body.md-cmt-mode .source-main .copy-btn {
     font-size: 13px;
     border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
 }
-/* 安全にかかわる向き（まだ ON のまま）と、先読みを止められていないとき。色はテーマが
+/* 安全にかかわる向き（まだ ON のまま）。色はテーマが
    決めた文字の色のままにして、印と太い左の線と太さで、ただの知らせ（上の .st-pending）と
    分ける（テーマは警告色を持っていないので、固定の赤だと暗いテーマで読めないことがある）。 */
 .st-pending.is-warn {
@@ -2852,7 +2852,5 @@ body.md-cmt-mode .source-main .copy-btn {
     font-weight: 600;
 }
 .st-pending.is-warn::before { content: "⚠ "; }
-/* 切れなかった名前。前後の文と 1 行ずつ分ける。 */
-.st-missing { display: block; margin: 2px 0; }
 /* 見出しの直下に置く「⌘Q で終了した後から効きます。」。上の余白は見出しの線が持つ。 */
 .st-title + .st-when { margin-top: 0; margin-bottom: 8px; }

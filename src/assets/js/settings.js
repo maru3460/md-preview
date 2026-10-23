@@ -22,7 +22,7 @@
 
   // Rust から渡された写し。
   // { theme, defaultTheme, autoDarkBg, themes:[{name, group, swatch}], windowSize, defaultWindowSize,
-  //   trusted:{saved, effective}, prefetch:{missing:[…]} | null }
+  //   trusted:{saved, effective} }
   var state = null;
   var pane = 'theme';
   var host = null;    // 描いている先（本文ペイン）
@@ -256,9 +256,6 @@
     // ⌘W と × は窓を隠すだけでプロセスは残る（#49）ので、「窓を閉じたら」とは書かない。
     p.appendChild(el('div', 'st-when', '⌘Q で終了した後から効きます。'));
     SWITCHES.forEach(function(sw) { p.appendChild(switchItem(sw)); });
-
-    // 先読みの停止は、効いていないときだけ出す（効いているときの行は、読む人に何も求めない）。
-    if (state.prefetch && state.prefetch.missing.length) p.appendChild(prefetchItem(state.prefetch));
   }
 
   function switchItem(sw) {
@@ -303,27 +300,6 @@
     state[sw.field] = { saved: next, effective: v.effective };
     render();
     send(sw.key + ':' + (next ? 'on' : 'off'));
-  }
-
-  // 先読み（preconnect・DNS の先読み）は設定に関係なく止めている。止める口は WebKit の
-  // 非公開の機能フラグで、macOS の更新で名前が変わると黙って効かなくなるので、切れなかった
-  // ときだけここに出す（呼ぶ側が見ている）。
-  function prefetchItem(prefetch) {
-    var item = el('div', 'st-item st-prefetch');
-    var row = el('div', 'st-switch-row');
-    row.appendChild(el('span', 'st-label', '先読みの停止'));
-    // 印で分ける（色はテーマ任せなので、色だけでは見分けられない）。
-    row.appendChild(el('span', 'st-status is-warn', '⚠ 効いていない'));
-    item.appendChild(row);
-    item.appendChild(el('p', 'st-desc',
-      '文書のリンク先へ前もって接続する WebKit の機能（preconnect・DNS の先読み）を、上の設定に関係なく止めていますが、一部を止められませんでした。'));
-    // 名前は英字の識別子なので、「」で括って 1 行に分け、句読点とくっつけない。
-    var warn = el('p', 'st-pending is-warn', '止められなかったもの:');
-    warn.appendChild(el('span', 'st-missing',
-      prefetch.missing.map(function(n) { return '「' + n + '」'; }).join('')));
-    warn.appendChild(document.createTextNode('macOS の更新で WebKit の中の名前が変わった可能性があります。'));
-    item.appendChild(warn);
-    return item;
   }
 
   // 窓の中身の大きさ。webview は窓の中身いっぱいなので、窓を作るときに渡す大きさと
