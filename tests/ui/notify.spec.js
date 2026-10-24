@@ -73,7 +73,7 @@ test('j/k でカーソルが動き、Enter でタブが開いて既読の要求�
   await pushSample(page);
   await page.keyboard.press('b');
 
-  // 開いた直後は先頭。そのまま Enter で最新を開ける。
+  // 開いた直後は最初の未読（ここでは先頭）。そのまま Enter で最新を開ける。
   await expect(rows(page).nth(0)).toHaveClass(/is-cursor/);
   await page.keyboard.press('j');
   await expect(rows(page).nth(1)).toHaveClass(/is-cursor/);
@@ -86,8 +86,36 @@ test('j/k でカーソルが動き、Enter でタブが開いて既読の要求�
   await page.keyboard.press('Enter');
   await expect(tab(page, 'a.md')).toHaveClass(/active/);
   expect(await ipc(page)).toEqual(['notify:read:' + id(page, 'a.md')]);
-  // 開いても一覧は閉じない。
-  await expect(panel(page)).toBeVisible();
+  // 開いたら一覧は閉じる（本文に重ならない）。
+  await expect(panel(page)).toHaveCount(0);
+});
+
+test('開き直すとカーソルは最初の未読に居て、b と Enter だけで未読を順に開ける', async ({ page }) => {
+  await openFolder(page);
+  await push(page, [
+    { path: id(page, 'long.md'), ago: 1, read: true },
+    { path: id(page, 'a.md'), ago: 120 },
+    { path: id(page, 'sub/a.md'), ago: 4000 },
+  ]);
+  await page.keyboard.press('b');
+  await expect(rows(page).nth(1)).toHaveClass(/is-cursor/);
+
+  // serve.rs は既読の要求に応えないので、Rust から既読の一覧が返った形を手で送る。
+  await page.keyboard.press('Enter');
+  await expect(tab(page, 'a.md')).toHaveClass(/active/);
+  await push(page, [
+    { path: id(page, 'long.md'), ago: 1, read: true },
+    { path: id(page, 'a.md'), ago: 120, read: true },
+    { path: id(page, 'sub/a.md'), ago: 4000 },
+  ]);
+  await page.keyboard.press('b');
+  await expect(rows(page).nth(2)).toHaveClass(/is-cursor/);
+
+  // 未読が無ければ先頭。
+  await page.keyboard.press('b');
+  await push(page, [{ path: id(page, 'a.md'), ago: 120, read: true }]);
+  await page.keyboard.press('b');
+  await expect(rows(page).nth(0)).toHaveClass(/is-cursor/);
 });
 
 test('行をクリックしても同じ経路を通る', async ({ page }) => {
@@ -99,6 +127,7 @@ test('行をクリックしても同じ経路を通る', async ({ page }) => {
   expect(await display(page, await page.locator('.md-tab.active').getAttribute('data-path')))
     .toBe('sub/a.md');
   expect(await ipc(page)).toEqual(['notify:read:' + id(page, 'sub/a.md')]);
+  await expect(panel(page)).toHaveCount(0);
 });
 
 test('「すべて既読」は未読があるときだけ出る', async ({ page }) => {

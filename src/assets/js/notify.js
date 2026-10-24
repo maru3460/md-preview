@@ -94,6 +94,12 @@
     return -1;
   }
 
+  // 未読が無ければ先頭、1 件も無ければ -1。
+  function firstUnread() {
+    for (var i = 0; i < list.length; i++) if (!list[i].read) return i;
+    return list.length ? 0 : -1;
+  }
+
   function unreadCount() {
     var n = 0;
     for (var i = 0; i < list.length; i++) if (!list[i].read) n++;
@@ -143,8 +149,10 @@
     panel.className = 'md-bell-panel';
     panel.id = 'md-bell-panel';
     document.body.appendChild(panel);
-    // 最初の 1 件にカーソルを置く。開いてすぐ Enter で最新を開けるようにするため。
-    cursor = list.length ? 0 : -1;
+    // 最初の未読にカーソルを置く。開いてすぐ Enter で、まだ読んでいない最新を開ける。
+    // Why not 常に先頭: 開いたら一覧が閉じる（#78）ので、未読を上から順に読むと、
+    // 既読になって残った行のぶんだけ毎回 j を押し直すことになる。
+    cursor = firstUnread();
     redraw();
     bellEl.classList.add('is-open');
     document.addEventListener('mousedown', onDocMouseDown, true);
@@ -287,8 +295,11 @@
     return row;
   }
 
-  // カーソルの行を開く。**開いても一覧は閉じない**——続けて次を開けるようにする
-  // （閉じるのは Esc とベルの押し直し）。行も消さず、既読になって残る。
+  // カーソルの行を開いて、一覧を閉じる。行は消さず、既読になって残る。
+  //
+  // Why not 開いたまま残す（続けて次を開けるように）: 一覧は本文の上に重なるので、
+  // 開いたファイルを読むたびに自分で閉じることになる（#78）。続けて開くときは
+  // `b` → `Enter` で次の未読が開く（open() のカーソル）。
   function activate() {
     var item = list[cursor];
     if (!item) return;
@@ -296,6 +307,7 @@
     if (window.MdTabs && MdTabs.markFromBell) MdTabs.markFromBell(item.path);
     if (opts && opts.openFile) opts.openFile(item.path);
     send('read:' + item.path);
+    close();
   }
 
   function send(verb) {
