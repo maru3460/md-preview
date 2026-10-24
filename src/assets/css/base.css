@@ -996,6 +996,16 @@ body.folder-mode {
     user-select: none;
 }
 
+/* フォルダの項目を上限で打ち切ったときの注記（folder.js の renderItems）。 */
+.tree-note {
+    padding: 4px 8px;
+    margin: 0 4px;
+    font-size: 0.85em;
+    opacity: 0.6;
+    white-space: normal;
+    user-select: none;
+}
+
 .tree-item .icon {
     margin-right: 5px;
     flex-shrink: 0;
@@ -1961,6 +1971,38 @@ details[open] {
     padding: 32px 0;
 }
 
+/* 外部の読み込みを止めたとき、外部の画像・iframe・動画・音声の代わりに置く「開く」リンク
+   （extmedia.rs）。中身が来ないことが一目で分かる小さな札にする。`.md-ext-chip` は `<a>` の
+   中（README のバッジ）に置く文字だけの札で、押すと外側のリンクが開く。
+   `.html` の中は app の CSS が届かないので、extmedia.js が形（枠・下線・大きさ）を同じにした
+   style 属性を付ける。色だけは違う: こちらはテーマのリンクの色、`.html` は周りの文字の色
+   （テーマが届かず、文書のリンクの色が読める色とは限らないため）。 */
+.markdown-body a.md-ext-media,
+.markdown-body .md-ext-chip {
+    display: inline-block;
+    max-width: 100%;
+    padding: 1px 8px;
+    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+    border-radius: 4px;
+    font-size: 0.85em;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    vertical-align: middle;
+}
+/* 枠だけだと押せるものに見えないので、リンクには下線も引く。 */
+.markdown-body a.md-ext-media {
+    text-decoration: underline;
+}
+.markdown-body .md-ext-chip {
+    padding: 0 6px;
+    font-size: 0.8em;
+}
+.markdown-body svg text.md-ext-media {
+    font-size: 12px;
+    fill: currentColor;
+    text-decoration: underline;
+}
+
 /* ── プレビューにコメント（c キー）─────────────────────────────
    difit 風に、レンダリング済み本文の行/要素へその場でコメントを付け、まとめて
    コピーして Claude Code へ貼る。
@@ -2759,3 +2801,56 @@ body.md-cmt-mode .source-main .copy-btn {
     font-size: 13px;
     background: color-mix(in srgb, var(--md-accent, Highlight) 9%, transparent);
 }
+
+/* ── JavaScript と外部の読み込み ── */
+.st-switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.st-switch-row .st-label { margin-bottom: 0; }
+
+/* スイッチ。ON のときだけアクセントで塗る（OFF が既定で、塗られている方が「外している」）。 */
+.st-switch {
+    all: unset;
+    cursor: pointer;
+    position: relative;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 20px;
+    border-radius: 10px;
+    background: color-mix(in srgb, currentColor 22%, transparent);
+    transition: background-color .12s;
+}
+.st-switch .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+    transition: left .12s;
+}
+.st-switch.is-on { background: var(--md-accent, Highlight); }
+.st-switch.is-on .knob { left: 16px; }
+.st-switch:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-accent, Highlight) 45%, transparent); }
+
+.st-switch-state, .st-status { font-size: 12.5px; font-weight: 600; }
+
+/* 保存した値といま効いている値が違うときの文。スイッチの真下に置く。 */
+.st-pending {
+    margin: 0 0 12px;
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-size: 13px;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+/* 安全にかかわる向き（まだ ON のまま）。色はテーマが
+   決めた文字の色のままにして、印と太い左の線と太さで、ただの知らせ（上の .st-pending）と
+   分ける（テーマは警告色を持っていないので、固定の赤だと暗いテーマで読めないことがある）。 */
+.st-pending.is-warn {
+    border-color: currentColor;
+    border-left-width: 4px;
+    font-weight: 600;
+}
+.st-pending.is-warn::before { content: "⚠ "; }
+/* 見出しの直下に置く「⌘Q で終了した後から効きます。」。上の余白は見出しの線が持つ。 */
+.st-title + .st-when { margin-top: 0; margin-bottom: 8px; }

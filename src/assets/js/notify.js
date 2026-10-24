@@ -18,6 +18,8 @@
 // `/`（検索）は同じ制約に「開くだけ」と割り切って応えているが、ベルは押した指で
 // 閉じられる方がよい（開けたまま離れる用事が無い）ので、1 キーで開閉させている。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // Rust から渡された全件。ここは写しであって持ち主ではない。
   var list = [];
   var opts = null;          // { openFile(id) }

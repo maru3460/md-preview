@@ -2,10 +2,13 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="script-src 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' 'sha256-…' mdpreview://localhost/__lib/mermaid.min.js mdpreview://localhost/__lib/drawio-viewer.min.js; default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'">
 <title>kitchen-sink.md</title>
 <style>…</style>
 <style id="md-theme">…</style>
 <style>…</style>
+<script>…</script>
+<script>…</script>
 <script>…</script>
 <script>…</script>
 <script>…</script>
@@ -72,6 +75,9 @@ three</code></pre></div><p data-src-line="61">脚注つきの文<sup class="foot
 <div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup><p data-src-line="63">脚注の中身なのだ。</p>
 </div>
 <p data-src-line="65"><del>打ち消し線</del> と <a href="/WikiLink">WikiLink</a> 。</p>
+<p data-src-line="67" data-src-end-line="68">外部の画像は既定で「開く」リンクになる: <a class="md-ext-media" href="https://example.com/arch.png" title="https://example.com/arch.png">外部の画像: 構成図（example.com）</a>
+バッジ: <a href="https://example.com/ci"><span class="md-ext-chip" title="img.shields.io">build-passing-green</span></a></p>
+<a class="md-ext-media" href="https://example.com/a.png" title="https://example.com/a.png">外部の画像: &lt;b&gt;太字&lt;/b&gt; &amp; 記号（example.com）</a>
 
 </article>
 </body>

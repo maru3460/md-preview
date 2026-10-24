@@ -16,6 +16,8 @@
 // window と document.addEventListener のスタブを差して評価する）、キーの取りこぼしを
 // 突き合わせている。トップレベルで他の DOM API を触るとサイトのビルドが落ちる。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // カテゴリ。BINDS の並びもこの順に揃える。`?` 一覧は見出しを出さず平坦に流すので、
   // ここでの順序がそのまま表示順になる。
   var CATEGORIES = [

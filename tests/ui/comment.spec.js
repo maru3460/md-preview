@@ -4,8 +4,7 @@
 // 非 md はソースしか無い）ので、どの表示で付けたかを覚えて戻れるかが要。
 const fs = require('fs');
 const path = require('path');
-const { test, expect } = require('@playwright/test');
-const { id, openFolder, nextFrames, treeItem } = require('./helpers');
+const { test, expect, id, openFolder, nextFrames, treeItem } = require('./helpers');
 
 /// 追跡済みのフィクスチャは常にクリーンで差分が空になり、行数も閾値に遠い。
 /// 錨れない表示（git 差分 / 巨大ソース）を作るには、その場でファイルを置くしかない。

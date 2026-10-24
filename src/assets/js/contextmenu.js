@@ -7,6 +7,8 @@
 //  - サイドバーのヘッダ（#sidebar-header）→ いまの root が対象。ツリーに行が無い
 //    root 自身にも、パスのコピーと Finder 表示を効かせるため。
 //  - それ以外（プレビュー領域など）→ 現在プレビュー中のファイル。
+//  - 本文（#preview-pane）の中は、何が書かれていても常に現在のファイル。タブ・ツリーの
+//    行・ヘッダとして扱うのは、それぞれアプリの領域（#tabbar / #sidebar-col）の中だけ。
 //
 // 安全性の考え方:
 //  - 相対パス / 選択テキストのコピーは MdCommon.copyText。navigator.clipboard が
@@ -14,14 +16,33 @@
 //  - 絶対パスのコピー・Finder表示・既定アプリで開く は常に Rust へ IPC する。
 //    Rust 側は `?file=` と同じ関門（id_to_path）でパスを解決し、
 //    実行系拡張子（.app/.command 等）は弾く。
-//  - ページに CSP は張っていないので、本文に書かれた <script> もこの IPC を叩ける。
-//    止めているのは Rust 側のパス解決と拡張子ガードだけで、本文を信頼できない前提の
-//    防御ではない（`.html` の忠実描画と同じ信頼モデルに揃えた結果）。
+//  - 既定では文書の JS は CSP で止まっているが、設定で動かすと、文書の JS もこの IPC を
+//    叩ける。その間に止めているのは Rust 側のパス解決と拡張子ガードだけで、本文を
+//    信頼できない前提の防御ではない。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // 現在プレビュー中ファイルの識別子（絶対パス）。
   // 何も開いていない（`md .` で起動した直後など）間は null。
   var currentId = null;
   var menuEl = null;
+
+  // アプリの領域（サイドバーの列・タブ帯・本文）。対象探しはこの中に縛る。
+  // 本文は同じ document にあるので、`closest('#sidebar')` や `.tree-item` を素で探すと、
+  // 本文に同じ id・クラスの要素を書かれただけで「サイドバーの項目」として通ってしまう。
+  // 参照は MdCommon が本文の入る前に取ったもの（1 枚ページではどれも null）。
+  function regionsNow() {
+    return (window.MdCommon && MdCommon.regions)
+      ? MdCommon.regions()
+      : { sidebarCol: null, tabbar: null, pane: null, resizer: null };
+  }
+
+  // `target` から `selector` を辿った要素が、`region` の中にあるときだけ返す。
+  function closestIn(region, target, selector) {
+    if (!region || !region.contains(target) || !target.closest) return null;
+    var el = target.closest(selector);
+    return el && region.contains(el) ? el : null;
+  }
 
   // 右クリック位置から操作対象を決める。
   //   id    … IPC / コピーに使う識別子（何も開いていなければ ''）
@@ -29,8 +50,12 @@
   //   has   … パス系の操作（絶対/Finder/開く）が可能か
   //   dir   … フォルダか（「ここを root にする」が意味を持つか）
   function resolveContext(e) {
+    var t = e.target;
+    var regions = regionsNow();
+    // 本文の中なら、何が書かれていても「今開いているファイル」。
+    if (regions.pane && regions.pane.contains(t)) return currentContext();
     // タブを右クリック → そのタブが対象（開閉の操作が増える）。
-    var tab = e.target.closest && e.target.closest('.md-tab');
+    var tab = closestIn(regions.tabbar, t, '.md-tab');
     if (tab && tab.dataset && tab.dataset.path) {
       // 設定タブ（#38）はファイルではない。開閉の操作だけを出し、パス系は灰色にする。
       if (window.MdSettings && MdSettings.isTab(tab.dataset.path)) {
@@ -40,14 +65,20 @@
     }
     // サイドバーのヘッダ（フォルダ名）→ いまの root が対象（#34）。パスのコピーや
     // Finder 表示を、ツリーに行が無い root 自身に対しても効かせる。
-    if (e.target.closest && e.target.closest('#sidebar-header')) {
+    if (closestIn(regions.sidebarCol, t, '#sidebar-header')) {
       var root = (window.MdCommon && MdCommon.rootDir) ? MdCommon.rootDir() : '';
       if (root) return { id: root, relOk: true, has: true, dir: true };
     }
-    var ti = e.target.closest && e.target.closest('.tree-item');
+    // ツリーと Quick Access の行。`#sidebar` ではなく列全体で縛るのは、Quick Access の
+    // 一覧（#quick-access-list）が `#sidebar` の兄弟にあるため。
+    var ti = closestIn(regions.sidebarCol, t, '.tree-item');
     if (ti && ti.dataset && ti.dataset.path) {
       return { id: ti.dataset.path, relOk: true, has: true, dir: ti.dataset.kind === 'dir' };
     }
+    return currentContext();
+  }
+
+  function currentContext() {
     if (currentId) return { id: currentId, relOk: relOk(currentId), has: true };
     return { id: '', relOk: false, has: false };
   }
@@ -248,7 +279,8 @@
     // ネイティブメニューは常に抑止する。
     e.preventDefault();
     // サイドバーのリサイザ上・ドラッグ中は出さない。
-    if (e.target.closest && e.target.closest('#resizer')) { close(); return; }
+    var resizer = regionsNow().resizer;
+    if (resizer && resizer.contains(e.target)) { close(); return; }
     if (document.body.style.cursor === 'col-resize') { close(); return; }
 
     // 選択テキストは発火時点で同期取得（後続の DOM 追加で消えないように）。

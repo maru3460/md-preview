@@ -8,7 +8,8 @@ import { runInNewContext } from 'node:vm';
 // 拾えているかだけを突き合わせる。文言はサイト側の自由。
 //
 // keymap.js は IIFE で window.MdKeymap に生やすだけなので import はできないが、
-// トップレベルで触るのは window と document.addEventListener の 2 つだけ。
+// トップレベルで触るのは window（と、トップのフレームかを見る window.top）と
+// document.addEventListener だけ。
 // スタブを差して評価すれば binds がそのまま取れる（正規表現で抜くより、desc に
 // 引用符が混ざっても壊れない）。
 // keymap.js のトップレベルが他の DOM API を触り始めたらここが落ちる。そのときは
@@ -16,7 +17,10 @@ import { runInNewContext } from 'node:vm';
 const SRC = resolve(process.cwd(), '../src/assets/js/keymap.js');
 
 function loadKeymap() {
-  const sandbox = { window: {}, document: { addEventListener() {} } };
+  const win = {};
+  // keymap.js は先頭で `window.top !== window` なら抜ける（iframe の中では動かない）。
+  win.top = win;
+  const sandbox = { window: win, document: { addEventListener() {} } };
   runInNewContext(readFileSync(SRC, 'utf8'), sandbox);
   const km = sandbox.window.MdKeymap;
   if (!km || !Array.isArray(km.binds) || km.binds.length === 0) {

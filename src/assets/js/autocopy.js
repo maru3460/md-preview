@@ -25,6 +25,8 @@
 // 親 document ぶんはここで張り、.html-frame の中は common.js の bindFrame が
 // bindDoc() を呼んで張る（iframe の mouseup は親に届かないため）。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var TICK_MS = 620;   // 読ませる文字が無いぶん、トースト（1500ms）より短くてよい
 
   // 入力欄の中の選択か。ドラッグを欄の外で離すと mouseup の target は本文に化けるので、
@@ -134,7 +136,11 @@
     // クリップボードへはマークダウンのソース寄りの形で入れる（`コード` のバッククォート・
     // コードブロックのフェンス）。見えている文字のままだと、貼った先でコードが地の文に
     // 化ける。本文以外（raw 表示・html フレーム）では plain がそのまま返る。
-    var text = MdCommon.selectionMarkdown(doc) || plain;
+    // 空が返るのは、画面に出ていない文字だけを選んでいたとき（common.js の
+    // selectionMarkdown）。何も入れず、合図も出さない。
+    // Why not `|| plain` で埋める: 埋めると、外したはずの見えない文字がそのまま入る。
+    var text = MdCommon.selectionMarkdown(doc);
+    if (!text) return;
 
     var x = e.clientX, y = e.clientY;
     if (frame) {
@@ -148,7 +154,9 @@
     MdCommon.copyText(
       text,
       function() { showTick(x, y); },
-      function() { MdCommon.toast('コピーに失敗しました'); }
+      // 見えない制御の文字だけをなぞったときは、落とすと何も残らない（'empty'）。
+      // 写すものが無かっただけなので、失敗とは言わない。
+      function(why) { if (why !== 'empty') MdCommon.toast('コピーに失敗しました'); }
     );
   }
 

@@ -307,13 +307,22 @@ pub fn run_html_dump(arg: &str, theme_override: Option<&str>) {
     // 単体のファイルなので root はその親ディレクトリ。相対 src / href は
     // ライブプレビューでそのファイルを開いたときと同じ URL に畳まれる。
     let root = path.parent().unwrap_or(Path::new("."));
-    let Some(rendered) = request::render_file(path, root, ViewMode::Normal) else {
+    let Some(rendered) = request::render_file(path, root, ViewMode::Normal, crate::csp::Policy::default()) else {
         eprintln!("md: '{}' を読み込めませんでした", arg);
         std::process::exit(1);
     };
     print!(
         "{}",
-        build_html(&rendered.html, &title, &theme_css, &custom_css, rendered.body_class)
+        // ダンプは設定を読まず、既定の CSP（文書を信頼しない）で描く。
+        build_html(
+            &rendered.html,
+            &title,
+            &theme_css,
+            &custom_css,
+            rendered.body_class,
+            &crate::csp::Policy::default(),
+            crate::csp::APP_ORIGIN,
+        )
     );
 }
 

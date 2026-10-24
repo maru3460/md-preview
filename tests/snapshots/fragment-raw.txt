@@ -1,5 +1,8 @@
 status: 200
+cache-control: no-store
+content-security-policy: script-src 'none'; default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'
 content-type: text/html; charset=utf-8
+x-content-type-options: nosniff
 ----
 <div class="markdown-body source-page"><div class="source-view"><div class="source-titlebar"><span class="source-fname">kitchen-sink.md</span><span class="source-lang">Markdown</span></div><div class="source-main"><pre><code class="language-markdown">---
 title: スナップショット用
@@ -66,4 +69,9 @@ A--&gt;B
 [^1]: 脚注の中身なのだ。
 
 ~~打ち消し線~~ と [[WikiLink]] 。
+
+外部の画像は既定で「開く」リンクになる: ![構成図](https://example.com/arch.png "題")
+バッジ: [![](https://img.shields.io/badge/build-passing-green.svg)](https://example.com/ci)
+
+&lt;img src="https://example.com/a.png" alt="&lt;b&gt;太字&lt;/b&gt; &amp; 記号"&gt;
 </code></pre></div></div></div>

@@ -13,11 +13,25 @@ rust-version = "1.89"
 name = "md"
 path = "src/main.rs"
 
+# 開発用サーバの中のテスト（起動用の script を差し込む位置）も `cargo test` で回す。
+# examples の単体テストは既定では走らない。
+[[example]]
+name = "serve"
+test = true
+
 [dependencies]
-wry = { version = "0.55", features = ["transparent"] }
+# 版を固定するのは、src/webview_delegate.rs が wry のナビゲーションのデリゲートを包み、内線の
+# 受け口の名前（`ipc`）を借り、UI のデリゲートも包んで wry が持つメソッドだけを転送しているため。
+# wry の中身が変わると、包んだ側が黙って食い違う（転送すべき通知やメソッドが増える、受け口の
+# 名前が変わる）。
+# 上げるときはあちらを読み直す。
+wry = { version = "=0.55.0", features = ["transparent"] }
 tao = "0.35"
 pulldown-cmark = "0.13"
 notify-debouncer-mini = "0.4"
+# fsread.rs が open の O_NONBLOCK / O_NOCTTY と fcntl を、git.rs が killpg を使う。
+# wry・tao・objc2 が既に引いている版なので、依存ツリーは増えない。
+libc = "0.2"
 
 [profile.dev]
 opt-level = 2
@@ -29,7 +43,10 @@ opt-level = 2
 # ビルドは通るのに使用実態と食い違い、次に触る人が足すべき feature を判断できない。
 # default を切らないと objc2-app-kit の default(ほぼ全クラス)に乗ってしまい、
 # 何を書いても結果が変わらない。
-objc2 = { version = "0.6", default-features = false, features = ["std"] }
+#
+# objc2 の exception は、内線の受け口の登録で ObjC の例外を受けるため（webview_delegate.rs）。
+# wry が既に有効にしている feature なので、依存ツリーは増えない。
+objc2 = { version = "0.6", default-features = false, features = ["std", "exception"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     # NSRunningApplication の pid 系メソッドが libc::pid_t を受け渡しする
@@ -37,13 +54,36 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSAppearance", "NSApplication", "NSEvent", "NSImage", "NSMenu",
     "NSMenuItem", "NSPasteboard", "NSRunningApplication", "NSWindow",
     "NSWorkspace",
+    # 「デフォルトアプリで開く」で、判定したアプリを指定して開く
+    # （openURLs:withApplicationAtURL:configuration:completionHandler:。platform.rs の open_with_app）。
+    # このメソッドは block2 の feature が揃わないと生えない。
+    "block2",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std", "NSArray", "NSData", "NSString",
+    # 移動と内線の送り元の URL を読む（webview_delegate.rs）。
+    "NSURL", "NSURLRequest",
+    # 「デフォルトアプリで開く」の判定の事実を集める（platform.rs の open_facts）。ファイルの
+    # 資源の値（getResourceValue:forKey:error: の NSError、真偽値の NSNumber は NSValue）と、
+    # 担当アプリのバンドル ID（NSBundle）。
+    "NSError", "NSValue", "NSBundle",
     # 全画面から抜け終わった合図（NSWindowDidExitFullScreenNotification）を受けるため。
     # addObserverForName:object:queue:usingBlock: は NSOperation と block2 も要求する。
     "NSNotification", "NSOperation", "block2",
 ] }
+# wry が既に引いている版（0.3.2）なので、依存ツリーは増えない。
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std", "WKWebViewConfiguration",
+    # 移動の判定と内線の受け口を自分で持つ（webview_delegate.rs）。デリゲートの
+    # メソッドは block2 と objc2-app-kit の feature も揃わないと生えない。
+    "WKNavigation", "WKNavigationAction", "WKNavigationDelegate", "WKNavigationResponse",
+    "WKWebpagePreferences", "WKFrameInfo", "WKScriptMessage", "WKScriptMessageHandler",
+    "WKUserContentController", "WKWebView", "block2", "objc2-app-kit",
+    # 新しい窓の拒否のため、UI のデリゲートも包む（webview_delegate.rs）。wry の UI のデリゲートが
+    # 持つメソッドの引数の型も要る。
+    "WKUIDelegate", "WKWindowFeatures", "WKOpenPanelParameters", "WKSecurityOrigin",
+] }
 # 上の通知をブロックで受けるためだけに要る。wry と objc2-foundation が既に引いて
 # いるので依存ツリーは増えない（Cargo.lock の block2 0.6.2 と同じもの）。
 block2 = "0.6"
+

@@ -6,8 +6,7 @@
 // 確定させずに開き直しで拾い直すこと。
 //
 // 1 本目だけは実サーバ相手にして、残りの stub がワイヤ契約から浮かないようにする。
-const { test, expect } = require('@playwright/test');
-const { FOLDER_URL, open, openFolder, treeItem } = require('./helpers');
+const { test, expect, FOLDER_URL, open, openFolder, treeItem } = require('./helpers');
 
 /// `?has_md=` だけを横取りする。glob ではなく述語で見るのは、クエリ無しの `/`
 /// （ページ本体）を巻き込まないため。

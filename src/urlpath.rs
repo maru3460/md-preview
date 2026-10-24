@@ -161,14 +161,22 @@ fn has_scheme(url: &str) -> bool {
 
 /// 相対 URL を解決する基準。`dir` は描画中のファイルがあるディレクトリ、
 /// `root` は配信ルート（URL をどちらの形に畳むかの判定に使う）。
+/// `policy` は起動時に決めた CSP（[`crate::csp::Policy`]）。外部の読み込みを止めているとき、
+/// 外部の画像などを「開く」リンクへ置き換えるのに使う（[`crate::extmedia`]）。
 pub struct DocBase<'a> {
     pub dir: &'a Path,
     pub root: &'a Path,
+    pub policy: crate::csp::Policy,
 }
 
 impl<'a> DocBase<'a> {
+    /// policy は既定（いちばん閉じた側）。描く経路は [`DocBase::with_policy`] で起動時の値を渡す。
     pub fn new(dir: &'a Path, root: &'a Path) -> Self {
-        DocBase { dir, root }
+        DocBase { dir, root, policy: crate::csp::Policy::default() }
+    }
+
+    pub fn with_policy(self, policy: crate::csp::Policy) -> Self {
+        DocBase { policy, ..self }
     }
 
     /// md 中の `src` / `href` を WebView が引ける URL へ書き換える。

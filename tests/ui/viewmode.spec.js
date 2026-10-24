@@ -2,8 +2,7 @@
 //
 // 2 つが同時に active にならないこと、非 md ではそもそも raw を出さないことを見る。
 // 読み位置は行（data-src-line）で持ち回っているので、ピクセルではなく行で測る。
-const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 // 画面上端に来ている行番号。レンダリング結果とソースで高さが違うので、ピクセルの
 // scrollTop ではなくこの値が保たれることを見る。背の高いユニット（埋め込み）は

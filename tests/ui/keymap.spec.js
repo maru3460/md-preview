@@ -4,8 +4,7 @@
 // 打ち間違えても例外にはならず、そのキーが無反応になるだけで気付けない。
 // window.MdX 越しのモジュール間契約は型が無いので、ここだけは実際に起動した
 // ページへ訊きに行って照合する。
-const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 /// 表に載っている run のうち、担当モジュールが居ないもの。
 function orphanRuns(page) {

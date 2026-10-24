@@ -64,10 +64,9 @@ fn get(root: &Path, url_path: &str, query: &str) -> Resp {
     let ctx = RequestContext::new(
         root.to_path_buf(),
         b"<!-- index -->".to_vec(),
-        String::new(),
-        String::new(),
+        &md_preview::app_config::PageInputs::default(),
     );
-    let resp = handle_request(&ctx, url_path, query);
+    let resp = handle_request(&ctx, url_path, query, &md_preview::request::HeaderMap::new());
     Resp {
         status: resp.status().as_u16(),
         body: String::from_utf8_lossy(resp.body()).into_owned(),

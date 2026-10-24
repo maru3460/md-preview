@@ -9,6 +9,8 @@
 //
 // 入出力（対象ファイルの URL・コンテナ・スクロール主体）は folder.js が initAll() で渡す。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // モードの定義。ここに 1 行足せば、ボタン・ショートカット・排他・再取得が揃う。
   // CSS は `.md-<id>-toggle` / `.md-<id>-count` を見る（並び順は base.css の order）。
   // キー割り当ては keymap.js の `view-<id>` 行が持つ（ここには書かない）。
@@ -116,7 +118,8 @@
           // 応答が届くまでに OFF / 別ファイル / 別モードで無効化されていたら捨てる。
           if (myReq !== reqSeq || !isActive()) return;
           if (html == null) { fail(); return; }
-          el.innerHTML = html;
+          // 差分には文書の生 HTML が入るので、本文と同じく繋ぐ前に塞ぐ（docguard.js）。
+          MdDocGuard.fill(el, html);
           applyWidth(el);
           MdCommon.hydrate(el);
           // 錨れなかった（差分表示・巨大ソース）ならピクセルで妥協する。

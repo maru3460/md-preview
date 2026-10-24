@@ -113,10 +113,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     履歴は <code>~/.config/md-preview/notifications</code> に残るので、ウィンドウを閉じても次に開いたときに並んでいます。持つのは新しい順に 100 件までです。
   </p>
 
-  <h2>設定</h2>
+  <h2 id="settings">設定</h2>
   <p>
-    タブバーの右端、ベルの隣の歯車か <kbd>⌘,</kbd> で、設定がタブとして開きます。左で「テーマ」と「ウィンドウ」を切り替えます。
+    タブバーの右端、ベルの隣の歯車か <kbd>⌘,</kbd> で、設定がタブとして開きます。左で「テーマ」「ウィンドウ」「JavaScript・外部」を切り替えます。
     保存ボタンはなく、変えたらその場で保存されます。閉じるのは普通のタブと同じく <kbd>⌘W</kbd>。
+    テーマはその場で変わりますが、窓の初期サイズと「文書を信頼する」は <kbd>⌘Q</kbd> で終了した後から効きます（<kbd>⌘W</kbd> や × は窓を隠すだけで、md は終わっていません）。
   </p>
   <div class="flist">
     <div class="fitem">
@@ -127,9 +128,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
       <div class="fname">窓の初期サイズ</div>
       <div class="fdesc">幅と高さを打ち込むか、「いまの大きさに設定する」でいまの窓の大きさを入れます。<kbd>⌘Q</kbd> で終了した後、次に開く窓からその大きさになります（<kbd>⌘W</kbd> で閉じた窓は、閉じたときの大きさのまま出直します）。</div>
     </div>
+    <div class="fitem">
+      <div class="fname">文書を信頼する</div>
+      <div class="fdesc">既定は OFF。HTML が白紙になる、文書が自前で持つボタンやグラフが動かない、ネットの画像やバッジが「開く」リンクになる、Web フォントが効かないときに ON にします。ON にすると、以後に開くすべての md と HTML で JavaScript が動き、ネットからの読み込みも通ります。文書が手元のファイルを読んで外へ送れるようになり、開いたことや本文の一部が伝わることがあります。信頼できない文書を開くときは OFF に戻してください。</div>
+    </div>
+    <div class="fitem">
+      <div class="fname">保存した値といま効いている値</div>
+      <div class="fdesc">スイッチを切り替えてから <kbd>⌘Q</kbd> するまでは、保存した値といまの md の状態が食い違います。そのあいだはスイッチの下に、いまどちらで動いているかが出ます。</div>
+    </div>
   </div>
   <p class="note">
     設定は <code>~/.config/md-preview/settings</code> に <code>key=value</code> で残ります。手で開いて書き換えても構いません。
+    「文書を信頼する」のキーは <code>trust-documents=on</code> です（<code>on</code> 以外は OFF）。
+    何が止まるかは<a href={`${base}/doc/read/#scripts`}>JavaScript とネットの読み込み</a>にまとめています。
   </p>
 
   <h2>相対パスの基準</h2>
@@ -141,5 +152,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
   <p>
     <code>../assets/fig.png</code> のようにフォルダの外を指すパスも解決します。
     外のファイルを開いた場合、ツリーには行がありませんがタブには並び、編集すれば自動リロードも効きます。
+  </p>
+  <p>
+    本文の中のリンクは、<code>target="_blank"</code> が付いていても新しい窓にはならず、タブで開きます。
+    md・html 以外のファイルへのリンクは、画像・PDF・動画なら表示用のタブ、それ以外はソースのタブです。
+    Web のリンクはクリックしたときだけデフォルトのブラウザで開き、クリックせずに外へ開くことはありません。
+    ほかのアプリへ渡すリンクは <code>mailto:</code>（宛先だけ）と <code>vscode://file/</code>（ファイルを開くだけ）に限ります。md の本文でそれ以外の形（<code>file:</code> など）を押すと「md では開けない形のリンクです」と出ます。<code>.html</code> の中では黙って何も起きません。
   </p>
 </DocLayout>

@@ -13,6 +13,9 @@
 // 起動時に焼き込まれるので、ページとサーバで root が食い違って木が 404 になる）。
 // spec 側でも毎回戻すが、漏れたときの被害を構造的に断つためポートごと分ける。
 //
+// 4 つ目までは設定「文書を信頼する」が OFF の既定。5 つ目はそれを ON にしたとき（`--trusted`）を
+// 試す専用。設定は起動時に 1 回だけ決まり、ページの meta に焼き込まれるので、サーバごとに分ける。
+//
 // ── このスイートが守れないもの ──────────────────────────────────
 // Playwright の WebKit は本番の WKWebView とは別のビルドで、macOS には WKWebView
 // 用の WebDriver が無いため実機を直接は叩けない。つまり **ここが全部緑でも実機が
@@ -47,6 +50,7 @@ const FOLDER_PORT = 7878;
 const ONE_FILE_PORT = 7879;
 const MULTI_PORT = 7880;
 const ROOT_PORT = 7881;
+const TRUSTED_PORT = 7882;
 
 const ROOT = __dirname;
 // ファイルを渡す 2 つのサーバは cwd を一時ディレクトリにして起動する。cwd 配下の
@@ -99,6 +103,13 @@ module.exports = defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 180000,
     },
+    {
+      // 設定「文書を信頼する」が ON。フォルダ起動と同じ形。
+      command: `cargo run -q --example serve -- --port ${TRUSTED_PORT} --trusted tests/ui-fixtures`,
+      url: `http://127.0.0.1:${TRUSTED_PORT}/`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180000,
+    },
   ],
 });
 
@@ -106,3 +117,4 @@ module.exports.FOLDER_PORT = FOLDER_PORT;
 module.exports.ONE_FILE_PORT = ONE_FILE_PORT;
 module.exports.MULTI_PORT = MULTI_PORT;
 module.exports.ROOT_PORT = ROOT_PORT;
+module.exports.TRUSTED_PORT = TRUSTED_PORT;

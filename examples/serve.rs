@@ -5,16 +5,23 @@
 //! これは「UI の回帰テストのための足場」であって、ユーザー向けの機能ではない。
 //!
 //! ```sh
-//! cargo run --example serve -- [--port <port>] <dir|file>...   # 既定ポート 7878
+//! cargo run --example serve -- [--port <port>] [--trusted] <dir|file>...   # 既定ポート 7878
 //! ```
 //!
 //! ファイルを 2 つ以上渡すと製品の `md a.md b.md` と同じ複数タブ起動になる
 //! （ポートを位置引数から `--port` に追い出したのはこのため）。
 //!
+//! 設定「文書を信頼する」（`csp::Policy`）は `--trusted` で ON にする。
+//! 利用者の実際の設定は読まない（UI テストが開発機の設定に左右されないように）。
+//! `/__lib/` を許す住所は、本番の `mdpreview://localhost` ではなく自分の origin
+//! （`http://127.0.0.1:<port>`）にする。
+//!
+//! `Host` が `127.0.0.1:<port>` か `localhost:<port>` でない要求には 403 を返す（理由は `host_allowed`）。
+//!
 //! ウィンドウ表示との違い:
 //!   - 起動スクリプト（`MD_*` グローバル＋ folder.js）は WKUserScript が無いので、
-//!     配信する index HTML の `<head>` 直後へ差し込む。CSP を緩めないよう、
-//!     ページが持っている nonce を読み出して使い回す。
+//!     配信する index HTML の `<head>` 直後へ差し込む。CSP の meta より前に置くので、
+//!     meta はこの script を縛らない（meta はそれより後ろにしか効かない）。ハッシュも要らない。
 //!   - IPC（`window.ipc`）が無いので、`ready` / `close` / メニュー操作を捨てる
 //!     スタブを置く。これが無いと初回描画の最後で例外になり、以降が動かない。
 
@@ -22,14 +29,15 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
-use md_preview::app_config::AppConfig;
-use md_preview::request::{handle_request, percent_decode, RequestContext};
+use md_preview::app_config::{AppConfig, PageInputs};
+use md_preview::csp::Policy;
+use md_preview::request::{handle_request, percent_decode, HeaderMap, RequestContext};
 use md_preview::theme;
 
 fn main() {
-    let (port, paths) = parse_args(std::env::args().skip(1).collect());
+    let Args { port, paths, policy } = parse_args(std::env::args().skip(1).collect());
     if paths.is_empty() {
-        eprintln!("使い方: cargo run --example serve -- [--port <port>] <dir|file>...");
+        eprintln!("使い方: cargo run --example serve -- [--port <port>] [--trusted] <dir|file>...");
         std::process::exit(1);
     }
 
@@ -37,9 +45,11 @@ fn main() {
     let (paint, appearance, _) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &paint);
     let current_dir = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok());
+    let origin = format!("http://127.0.0.1:{}", port);
 
     // 1 つなら from_path、2 つ以上なら全部をタブに乗せる。製品の main.rs と同じ入口。
-    let config = AppConfig::from_paths(&paths, &theme_css, &custom_css, &current_dir);
+    let page = PageInputs { theme_css: &theme_css, custom_css: &custom_css, policy, lib_origin: &origin };
+    let config = AppConfig::from_paths(&paths, &page, &current_dir);
 
     let boot = format!(
         "{}\n{}\n{}",
@@ -51,7 +61,7 @@ fn main() {
     );
     let index = inject_boot_script(&config.html_bytes, &boot);
 
-    let ctx = Arc::new(RequestContext::new(config.root_dir.clone(), index, theme_css, custom_css));
+    let ctx = Arc::new(RequestContext::new(config.root_dir.clone(), index, &page));
 
     let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| {
         eprintln!("ポート {} を開けませんでした: {}", port, e);
@@ -64,15 +74,22 @@ fn main() {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let ctx = ctx.clone();
-        std::thread::spawn(move || serve_one(stream, &ctx));
+        std::thread::spawn(move || serve_one(stream, &ctx, port));
     }
 }
 
-/// `--port <port>` を取り出し、残りをパスとして返す。ポートを位置引数のままに
-/// すると複数ファイル指定と区別が付かないので、フラグに切ってある。
-fn parse_args(args: Vec<String>) -> (u16, Vec<String>) {
+struct Args {
+    port: u16,
+    paths: Vec<String>,
+    policy: Policy,
+}
+
+/// `--port <port>` と CSP のスイッチを取り出し、残りをパスとして返す。ポートを位置引数の
+/// ままにすると複数ファイル指定と区別が付かないので、フラグに切ってある。
+fn parse_args(args: Vec<String>) -> Args {
     let mut port = 7878;
     let mut paths = Vec::new();
+    let mut policy = Policy::default();
     let mut rest = args.into_iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -82,10 +99,11 @@ fn parse_args(args: Vec<String>) -> (u16, Vec<String>) {
                     std::process::exit(1);
                 });
             }
+            "--trusted" => policy.trusted = true,
             _ => paths.push(arg),
         }
     }
-    (port, paths)
+    Args { port, paths, policy }
 }
 
 /// `window.ipc` のスタブ。ウィンドウ側では Rust が受けるものを、ここでは記録だけする
@@ -110,20 +128,33 @@ window.ipc = { postMessage: function(m) { \
   }); \
 } };";
 
-/// 起動スクリプトを `<head>` 直後へ差し込む。CSP を維持するため、ページが持っている
-/// nonce を読み出して同じものを付ける。
+/// 起動スクリプトを `<head>` 直後へ差し込む。
+///
+/// 置き場所は CSP の meta より前でなければならない。meta はそれより後ろの script だけを
+/// 縛るので、ここに置けばハッシュに載っていなくても動く（後ろに置くと止まる）。
+/// 本番の初期化スクリプト（WKUserScript）が CSP の外で走るのと同じ立場にするため。
+/// 位置はテスト（`boot_script_lands_before_the_csp_meta`）で押さえる。
 fn inject_boot_script(page: &[u8], boot: &str) -> Vec<u8> {
     let html = String::from_utf8_lossy(page).into_owned();
-    let nonce = html
-        .split_once("nonce=\"")
-        .and_then(|(_, rest)| rest.split_once('"').map(|(n, _)| n.to_string()))
-        .unwrap_or_default();
-    let tag = format!("\n<script nonce=\"{}\">{}</script>", nonce, boot);
+    let tag = format!("\n<script>{}</script>", boot);
     // 最初の `<head>` が本物（生成ページは `<html>\n<head>` で始まる）。
     html.replacen("<head>", &format!("<head>{}", tag), 1).into_bytes()
 }
 
-fn serve_one(mut stream: TcpStream, ctx: &RequestContext) {
+/// `Host` が自分（`127.0.0.1:<port>` か `localhost:<port>`）を指しているか。
+///
+/// 127.0.0.1 で待ち受けていても、ブラウザで開いた外のページは DNS の向け直し（DNS rebinding）で
+/// 自分の名前のまま 127.0.0.1 へ繋げ、同じ origin として応答を読める。このサーバは root の中を
+/// 何でも配り、`/__setroot` で root も動かせるので、名前の違う要求には答えない。
+/// Playwright とテストは `http://127.0.0.1:<port>` で叩くので通る。
+fn host_allowed(host: Option<&str>, port: u16) -> bool {
+    let Some(host) = host else { return false };
+    let host = host.trim();
+    host.eq_ignore_ascii_case(&format!("127.0.0.1:{port}"))
+        || host.eq_ignore_ascii_case(&format!("localhost:{port}"))
+}
+
+fn serve_one(mut stream: TcpStream, ctx: &RequestContext, port: u16) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -132,15 +163,39 @@ fn serve_one(mut stream: TcpStream, ctx: &RequestContext) {
     if reader.read_line(&mut line).is_err() {
         return;
     }
-    // ヘッダは読み捨てる（GET だけを相手にする）。
+    // ヘッダは `handle_request` へ渡す（動画の Range を見る）。GET だけを相手にするので
+    // 本文は読まない。
+    let mut req_headers = HeaderMap::new();
     loop {
         let mut h = String::new();
         match reader.read_line(&mut h) {
             Ok(0) => break,
             Ok(_) if h.trim().is_empty() => break,
-            Ok(_) => {}
+            Ok(_) => {
+                if let Some((name, value)) = h.split_once(':') {
+                    if let (Ok(n), Ok(v)) = (
+                        md_preview::request::HeaderName::from_bytes(name.trim().as_bytes()),
+                        md_preview::request::HeaderValue::from_str(value.trim()),
+                    ) {
+                        req_headers.append(n, v);
+                    }
+                }
+            }
             Err(_) => return,
         }
+    }
+
+    let host = req_headers.get("host").and_then(|v| v.to_str().ok());
+    if !host_allowed(host, port) {
+        let body = "forbidden host";
+        let head = format!(
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes());
+        let _ = stream.write_all(body.as_bytes());
+        let _ = stream.flush();
+        return;
     }
 
     // "GET /path?query HTTP/1.1"
@@ -180,24 +235,69 @@ fn serve_one(mut stream: TcpStream, ctx: &RequestContext) {
         return;
     }
 
-    let resp = handle_request(ctx, &url_path, query);
-    let status = resp.status().as_u16();
-    let ctype = resp
-        .headers()
-        .get("Content-Type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
+    let resp = handle_request(ctx, &url_path, query, &req_headers);
+    let status = resp.status();
     let body = resp.body().to_vec();
 
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
-        status,
-        if status == 200 { "OK" } else { "Not Found" },
-        ctype,
-        body.len()
+    // 応答のヘッダは全部そのまま通す（CSP・nosniff・Content-Range など、ウィンドウの側で
+    // WebKit が受け取るものと同じものをブラウザにも見せる）。長さと接続はここで決める。
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\n",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("")
     );
+    for (name, value) in resp.headers() {
+        if name == "content-length" || name == "connection" {
+            continue;
+        }
+        head.push_str(&format!("{}: {}\r\n", name, value.to_str().unwrap_or("")));
+    }
+    head.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", body.len()));
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(&body);
     let _ = stream.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    /// `--trusted` で文書を信頼する側の方針になること（Playwright の 5 本目のサーバが
+    /// この綴りに依存している）。
+    #[test]
+    fn trusted_flag_turns_the_policy_on() {
+        let args = super::parse_args(vec!["--trusted".into(), "x".into()]);
+        assert!(args.policy.trusted);
+        assert_eq!(args.paths, vec!["x".to_string()]);
+        assert!(!super::parse_args(vec!["x".into()]).policy.trusted);
+    }
+
+    use super::*;
+
+    /// 起動用の script は CSP の meta より前に入る。後ろに入るとハッシュに無いので止まり、
+    /// Playwright のページが初期化されない。
+    #[test]
+    fn boot_script_lands_before_the_csp_meta() {
+        let page = md_preview::html::build_folder_html("t", "", "", &Policy::default(), "http://127.0.0.1:1");
+        let out = String::from_utf8(inject_boot_script(page.as_bytes(), "BOOT")).unwrap();
+        let boot = out.find("<script>BOOT</script>").expect("差し込まれていない");
+        let meta = out.find("Content-Security-Policy").unwrap();
+        assert!(boot < meta, "起動用の script が meta より後ろにある");
+    }
+
+    #[test]
+    fn only_its_own_host_and_port_are_answered() {
+        assert!(host_allowed(Some("127.0.0.1:7878"), 7878));
+        assert!(host_allowed(Some("localhost:7878"), 7878));
+        assert!(host_allowed(Some("LocalHost:7878"), 7878));
+    }
+
+    #[test]
+    fn other_hosts_ports_and_a_missing_host_are_refused() {
+        assert!(!host_allowed(None, 7878));
+        assert!(!host_allowed(Some(""), 7878));
+        assert!(!host_allowed(Some("127.0.0.1"), 7878), "ポートが無い");
+        assert!(!host_allowed(Some("127.0.0.1:7879"), 7878), "別のポート");
+        assert!(!host_allowed(Some("evil.example:7878"), 7878), "DNS を向け直した名前");
+        assert!(!host_allowed(Some("127.0.0.1.evil.example:7878"), 7878));
+        assert!(!host_allowed(Some("[::1]:7878"), 7878), "待ち受けていない住所");
+    }
 }

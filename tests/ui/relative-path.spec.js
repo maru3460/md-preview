@@ -4,8 +4,7 @@
 // 本文に相対 src が残っていると、ブラウザが root 基準で解決して 404 になる——
 // サーバ側の HTML を見るだけでは「相対のまま」が壊れていると分からない。
 // なので実際に画像が読めたか（naturalWidth）まで確かめる。
-const { test, expect } = require('@playwright/test');
-const { id, openFolder, treeItem, tab } = require('./helpers');
+const { test, expect, id, openFolder, treeItem, tab } = require('./helpers');
 
 /// 折り畳まれている sub/ を開いて、子の行が出るまで待つ。
 async function openSubA(page) {

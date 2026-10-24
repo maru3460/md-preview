@@ -9,8 +9,7 @@
 // クリップボードの中身は window.__mdIpc（serve.rs の IPC スタブ）で見る。
 // そのためには navigator.clipboard 側を失敗させて Rust への経路へ落とす必要がある
 // ——実機の mdpreview:// でも、ユーザー ジェスチャの外から呼ぶと同じ道を通る。
-const { test, expect } = require('@playwright/test');
-const { MULTI_URL, open, openFolder, treeItem } = require('./helpers');
+const { test, expect, MULTI_URL, open, openFolder, treeItem } = require('./helpers');
 
 /// clipboard を必ず失敗させて IPC 経路に寄せる。中身を観測するのはこの道しかない。
 async function stubClipboard(page) {
@@ -239,18 +238,18 @@ test('チェックは画面の端で内側へ折り返す', async ({ page }) => 
   expect(origin.top).toBeGreaterThanOrEqual(0);
 });
 
-test('NUL を含むテキストは黙って切らずに失敗として返す', async ({ page }) => {
+test('NUL を含むテキストは途中で切らず、NUL だけを落として入れる', async ({ page }) => {
   await stubClipboard(page);
   await openFolder(page);
 
-  // wry は IPC の本文を CStr で読むので、NUL 以降が落ちる。
-  // 一部だけ入れて成功と言うと、コピーできたつもりで貼りに行くことになる。
+  // wry は IPC の本文を CStr で読むので、NUL 以降が落ちる。copyText は見えない制御の
+  // 文字を入れる前に落とすので、NUL も落ちて前後は両方残る。
   await clearIpc(page);
   const outcome = await page.evaluate(() => new Promise((res) => {
     MdCommon.copyText('a' + String.fromCharCode(0) + 'b', () => res('done'), () => res('fail'));
   }));
-  expect(outcome).toBe('fail');
-  expect(await copies(page)).toHaveLength(0);
+  expect(outcome).toBe('done');
+  expect(await copies(page)).toEqual(['ab']);
 });
 
 // ── マークダウンの記法（バッククォート）を戻す ──────────────────────

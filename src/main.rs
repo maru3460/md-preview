@@ -19,10 +19,13 @@ use tao::window::{Theme as OsTheme, WindowBuilder};
 use wry::{RequestAsyncResponder, WebViewBuilder};
 
 mod platform;
+#[cfg(target_os = "macos")]
+mod webview_delegate;
 
 use md_preview::app_config::{self, AppConfig};
 use md_preview::cli;
 use md_preview::html::json_string;
+use md_preview::navigation::{self, NavDecision, NavFacts, NavKind, Source, Target};
 use md_preview::quick_access;
 use md_preview::request::{self, handle_request, percent_decode};
 use md_preview::theme;
@@ -77,6 +80,9 @@ enum AppEvent {
     /// IPC ハンドラで直に書かないのは、テーマの切り替えが窓と webview と
     /// 配信の文脈を触るから。どれもイベントループの持ち物である。
     Settings(SettingsRequest),
+    /// ページにトーストで出す文言。内線の受け口（webview のデリゲートの中）から webview を
+    /// 触らずに、イベントループで `evaluate_script` する。
+    Toast(String),
 }
 
 /// [`AppEvent::Settings`] の中身。
@@ -97,6 +103,8 @@ enum SettingsRequest {
     WindowSize(u32, u32),
     /// 初期サイズを既定へ戻す。
     WindowSizeReset,
+    /// 設定「文書を信頼する」を保存する。効くのは ⌘Q で終了した後から。
+    Trust(bool),
 }
 
 impl SettingsRequest {
@@ -115,6 +123,13 @@ impl SettingsRequest {
                     Some((w, h)) => SettingsRequest::WindowSize(w, h),
                     None => SettingsRequest::Get,
                 },
+            },
+            // 値は `on` / `off` のどちらかだけを受ける。読めない値は保存せずに今の状態を
+            // 送り返す（初期サイズと同じ）。
+            "trust-documents" => match value {
+                "on" => SettingsRequest::Trust(true),
+                "off" => SettingsRequest::Trust(false),
+                _ => return Some(SettingsRequest::Get),
             },
             _ => return None,
         })
@@ -616,13 +631,22 @@ fn main() {
     let (theme_paint, appearance, mut active_theme) = theme::resolve(&theme::read_active_name());
     let theme_css = theme::style_layer(appearance, &theme_paint);
 
+    // CSP はここで 1 回だけ設定から作り、プロセスの間ずっと同じものを使う（設定の切り替えは
+    // ⌘Q の後から効く）。設定画面が出す「いま効いている値」は、これを持つ RequestContext から引く。
+    let policy = app_config::policy_from(&md_preview::settings::load());
+    let page = md_preview::app_config::PageInputs {
+        theme_css: &theme_css,
+        custom_css: &custom_css,
+        policy,
+        lib_origin: md_preview::csp::APP_ORIGIN,
+    };
     let mut config = if stdin_mode {
-        AppConfig::from_stdin(&theme_css, &custom_css, &current_dir, &open_flags.origin)
+        AppConfig::from_stdin(&page, &current_dir, &open_flags.origin)
     } else if open_flags.notify {
         // 受け取る md が居なかった `--notify`。積む先が無いので普通に開く（#36）。
-        AppConfig::from_notify(&targets, &theme_css, &custom_css, &current_dir)
+        AppConfig::from_notify(&targets, &page, &current_dir)
     } else {
-        AppConfig::from_paths(&targets, &theme_css, &custom_css, &current_dir)
+        AppConfig::from_paths(&targets, &page, &current_dir)
     };
     // 積む先が無かった `--notify` も、ベルに既読の行として残し、開くタブを「ベルから
     // 開いた」扱いにする（#68）。名乗りの出る場所はベルの行と、ベルから開いたタブの帯
@@ -636,6 +660,10 @@ fn main() {
         md_preview::notifications::add_read(&config.initial_ids, &open_flags.origin);
         config.bell_opened = config.initial_ids.clone();
     }
+    // Why not WebKit の先読み（preconnect・DNS の先読み）を非公開の機能フラグで切る: 漏れるのは
+    // 「リンク先のホスト名を引いた」事実だけで、ブラウザで開くのと変わらない。非公開の口は OS の
+    // 更新で黙って効かなくなり、見張りの手間の方が大きい（2026-10-23 に利用者が外すと決めた）。
+    let webview_builder = WebViewBuilder::new();
     // ページへ注入する起動スクリプト。ウィンドウを作る前に組み立てる（下で config を
     // 部分ムーブするため）。
     let init_script = format!(
@@ -651,6 +679,7 @@ fn main() {
         origins: _,
         initial_ids: _,
         bell_opened: _,
+        policy: _,
     } = config;
 
     // 転送で開かれるたびに更新する（#49）ので mut。
@@ -730,28 +759,37 @@ fn main() {
     // 色の中身が使われるのは underPageBackgroundColor（行き過ぎスクロールの
     // 跳ね返り、macOS 12 以降）だけ。透けた先に見えるのは窓側に塗った色なので、
     // ここを別の色にしても隙間の見え方は変わらない。
-    let mut webview_builder = WebViewBuilder::new();
+    let mut webview_builder = webview_builder;
     if let Some(color) = bg {
         webview_builder = webview_builder.with_background_color(color);
+    }
+    // リンクのプレビュー（強めのクリック・三本指のタップ）は移動の判定を通らずに、リンク先を
+    // 小窓に読み込む。外部のページも本文の `.html` もそこで開けてしまうので切る。wry の既定は ON。
+    #[cfg(target_os = "macos")]
+    {
+        use wry::WebViewBuilderExtDarwin;
+        webview_builder = webview_builder.with_allow_link_preview(false);
     }
 
     // 配信の文脈はクロージャの外で作る。root は実行中に動く（#34）ので、
     // イベントループ側からも同じものを触れる必要がある。
-    let ctx = std::sync::Arc::new(request::RequestContext::new(
-        root_dir.clone(),
-        html_bytes,
-        theme_css,
-        custom_css,
-    ));
+    let ctx = std::sync::Arc::new(request::RequestContext::new(root_dir.clone(), html_bytes, &page));
     let webview = webview_builder
         .with_initialization_script(&init_script)
+        // 移動の判定は webview_delegate が wry のデリゲートを包んで自分で答えるので、ここは
+        // 包めなかったときの受け皿（来ないはず）。wry は移動の種類もフレームも渡さないので、
+        // どれも送り元の分からない、クリックでないメインフレームの最初の読み込みとして判定する。
+        // 外へは何も開かず、通るのは md の画面だけ（`.html` のプレビューの iframe も止まり、
+        // 画面の読み込み直しは止められないが、閉じる側に倒す）。
         .with_navigation_handler(|url: String| {
-            if url.starts_with("http://") || url.starts_with("https://") {
-                std::process::Command::new("open").arg(&url).spawn().ok();
-                false
-            } else {
-                true
-            }
+            navigation::decide(NavFacts {
+                url: &url,
+                kind: NavKind::Other,
+                target: Target::Main,
+                target_url: "",
+                source: Source::Unknown,
+                main_committed: false,
+            }) == NavDecision::Allow
         })
         .with_asynchronous_custom_protocol("mdpreview".to_string(), {
             // macOS では WKWebView がこのクロージャをメインスレッドで呼ぶ。ここで
@@ -768,90 +806,108 @@ fn main() {
                 let query = request.uri().query().unwrap_or("").to_string();
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
-                    responder.respond(handle_request(&ctx, &url_path, &query));
+                    responder.respond(handle_request(&ctx, &url_path, &query, request.headers()));
                 });
-            }
-        })
-        .with_ipc_handler(move |msg| {
-            // 正規の IPC はすべて自前のスクリプト（＝トップフレーム）から来る。
-            // html ファイルを描く iframe は sandbox 無しなので、その中の script も
-            // top.ipc を叩けてしまう。クリップボードもパス操作も渡さない。
-            // Why not: 悪意ある html への対策にはならない（同一オリジンなのでシェルを
-            // 読み込んだフレームを自前で作ればトップと区別が付かない）。事故を減らす衛生。
-            if !is_top_frame(msg.uri()) {
-                return;
-            }
-            let body = msg.body().as_str();
-            match body {
-                "close" => { let _ = proxy.send_event(AppEvent::Close); }
-                "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
-                _ => {
-                    if let Some(rest) = body.strip_prefix("menu:") {
-                        let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
-                        handle_menu(verb, payload);
-                    } else if let Some(id) = body.strip_prefix("watch:") {
-                        // 識別子は `id_to_path` を通す。ここだけ素通しにすると
-                        // 「識別子とファイルの唯一の関門」が嘘になり、次に触る者が
-                        // その嘘を根拠に検証を省く。
-                        if let Some(path) = request::id_to_path(id) {
-                            watch_extra(&ipc_watcher, &path);
-                        }
-                    } else if let Some(id) = body.strip_prefix("root:") {
-                        // `watch:` と同じ理由で `id_to_path` を通す。ここを素通しに
-                        // すると「識別子とファイルの唯一の関門」が嘘になる。
-                        match request::id_to_path(id) {
-                            Some(path) => { let _ = proxy.send_event(AppEvent::SetRoot(path)); }
-                            None => {
-                                let _ = proxy.send_event(AppEvent::RootFailed(id.to_string()));
-                            }
-                        }
-                    } else if let Some(rest) = body.strip_prefix("quick:") {
-                        // Quick Access の台帳（#35）。**並びを持っているのはページ**で、
-                        // ここは足す / 外すを受けてディスクへ写すだけ。ページは自分の
-                        // 行を先に書き換えるので、結果を返す経路は要らない。
-                        let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
-                        match verb {
-                            // `watch:` / `root:` と同じ関門を通す。無いものは登録できない。
-                            // **積むのは関門を通った実体ではなく識別子そのもの。**
-                            // `id_to_path` は canonicalize なので、symlink の下では
-                            // ページが持つ並びと別の文字列になり、同じ行を外せなくなる
-                            // （ツリーの識別子は symlink を辿らない。#33 の決め）。
-                            "add" => {
-                                if let Some(path) = request::id_to_path(id) {
-                                    quick_access::add(id, path.is_dir());
-                                }
-                            }
-                            // 外す側は素の識別子で引く。`id_to_path` は
-                            // `canonicalize` なので、**消えたパスを外せなくなる**。
-                            "remove" => quick_access::remove(id),
-                            _ => {}
-                        }
-                    } else if let Some(rest) = body.strip_prefix("notify:") {
-                        // 既読（#32）。理由は `notifications::mark_read` の doc。
-                        // 識別子を `id_to_path` に通さないのもあちらに書いてある。
-                        let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
-                        match verb {
-                            "read" => {
-                                let _ = proxy.send_event(AppEvent::NotifyRead(Some(id.to_string())));
-                            }
-                            "read-all" => { let _ = proxy.send_event(AppEvent::NotifyRead(None)); }
-                            _ => {}
-                        }
-                    } else if let Some(rest) = body.strip_prefix("settings:") {
-                        if let Some(req) = SettingsRequest::parse(rest) {
-                            let _ = proxy.send_event(AppEvent::Settings(req));
-                        }
-                    } else if let Some(id) = body.strip_prefix("closed:") {
-                        let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
-                    } else if let Some(text) = body.strip_prefix("copy:") {
-                        platform::copy_to_clipboard(text);
-                    }
-                }
             }
         })
         .with_url("mdpreview://localhost/")
         .build(&window)
         .expect("Failed to create WebView");
+
+    // 内線は wry の受け口を使わず、webview_delegate が自分で受ける（送り元がメインフレームか
+    // を見るため。wry はフレームの URL しか渡さない）。ここへ来るのは、メインフレームに読まれた
+    // md の画面の script からの本文だけ。
+    // `webview_hooks` は移動の判定を持つデリゲートを生かしておく札（WKWebView はデリゲートを
+    // weak でしか持たない。落とすと移動が素通りになる）。イベントループのクロージャに
+    // 持たせて、寿命を窓と揃える（この関数のローカルのままだと、`run` より前の処理を関数に
+    // 切り出した人が札を一緒に落としても、何も言われずに移動が素通りになる）。
+    // macOS 以外では内線を受けない（受け口が WebKit のもので、アプリも macOS でしか動かない）。
+    #[cfg(target_os = "macos")]
+    let notice_proxy = proxy.clone();
+    #[cfg(target_os = "macos")]
+    let webview_hooks = webview_delegate::install(&webview, move |body: &str| {
+        match body {
+            "close" => { let _ = proxy.send_event(AppEvent::Close); }
+            "ready" => { let _ = proxy.send_event(AppEvent::Ready); }
+            _ => {
+                if let Some(rest) = body.strip_prefix("menu:") {
+                    let (verb, payload) = rest.split_once(':').unwrap_or((rest, ""));
+                    if let Some(msg) = handle_menu(verb, payload) {
+                        let _ = proxy.send_event(AppEvent::Toast(msg));
+                    }
+                } else if let Some(id) = body.strip_prefix("watch:") {
+                    // 識別子は `id_to_path` を通す。ここだけ素通しにすると
+                    // 「識別子とファイルの唯一の関門」が嘘になり、次に触る者が
+                    // その嘘を根拠に検証を省く。
+                    if let Some(path) = request::id_to_path(id) {
+                        watch_extra(&ipc_watcher, &path);
+                    }
+                } else if let Some(id) = body.strip_prefix("root:") {
+                    // `watch:` と同じ理由で `id_to_path` を通す。ここを素通しに
+                    // すると「識別子とファイルの唯一の関門」が嘘になる。
+                    match request::id_to_path(id) {
+                        Some(path) => { let _ = proxy.send_event(AppEvent::SetRoot(path)); }
+                        None => {
+                            let _ = proxy.send_event(AppEvent::RootFailed(id.to_string()));
+                        }
+                    }
+                } else if let Some(rest) = body.strip_prefix("quick:") {
+                    // Quick Access の台帳（#35）。**並びを持っているのはページ**で、
+                    // ここは足す / 外すを受けてディスクへ写すだけ。ページは自分の
+                    // 行を先に書き換えるので、結果を返す経路は要らない。
+                    let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
+                    match verb {
+                        // `watch:` / `root:` と同じ関門を通す。無いものは登録できない。
+                        // **積むのは関門を通った実体ではなく識別子そのもの。**
+                        // `id_to_path` は canonicalize なので、symlink の下では
+                        // ページが持つ並びと別の文字列になり、同じ行を外せなくなる
+                        // （ツリーの識別子は symlink を辿らない。#33 の決め）。
+                        "add" => {
+                            if let Some(path) = request::id_to_path(id) {
+                                quick_access::add(id, path.is_dir());
+                            }
+                        }
+                        // 外す側は素の識別子で引く。`id_to_path` は
+                        // `canonicalize` なので、**消えたパスを外せなくなる**。
+                        "remove" => quick_access::remove(id),
+                        _ => {}
+                    }
+                } else if let Some(rest) = body.strip_prefix("notify:") {
+                    // 既読（#32）。理由は `notifications::mark_read` の doc。
+                    // 識別子を `id_to_path` に通さないのもあちらに書いてある。
+                    let (verb, id) = rest.split_once(':').unwrap_or((rest, ""));
+                    match verb {
+                        "read" => {
+                            let _ = proxy.send_event(AppEvent::NotifyRead(Some(id.to_string())));
+                        }
+                        "read-all" => { let _ = proxy.send_event(AppEvent::NotifyRead(None)); }
+                        _ => {}
+                    }
+                } else if let Some(rest) = body.strip_prefix("settings:") {
+                    if let Some(req) = SettingsRequest::parse(rest) {
+                        let _ = proxy.send_event(AppEvent::Settings(req));
+                    }
+                } else if let Some(id) = body.strip_prefix("closed:") {
+                    let _ = proxy.send_event(AppEvent::TabClosed(id.to_string()));
+                } else if let Some(text) = body.strip_prefix("copy:") {
+                    platform::copy_to_clipboard(text);
+                } else if let Some(url) = body.strip_prefix("open-url:") {
+                    // `.html` のプレビューの中の外部リンク（common.js の bindFrame）。移動の
+                    // 判定へ届かない分なので、開いてよいかを同じ考え方でここで見直す。
+                    match navigation::open_url_decision(url) {
+                        NavDecision::OpenInBrowser => webview_delegate::open_in_browser(url),
+                        NavDecision::OpenExternally => webview_delegate::open_externally(url),
+                        NavDecision::Unopenable => {
+                            let _ = proxy.send_event(AppEvent::Toast(navigation::UNOPENABLE_LINK_MSG.to_string()));
+                        }
+                        NavDecision::Allow | NavDecision::Cancel => {}
+                    }
+                }
+            }
+        }
+    }, move |msg: &str| {
+        let _ = notice_proxy.send_event(AppEvent::Toast(msg.to_string()));
+    });
 
     // メニューの ⌘Q はイベントループへ流す（#49）。宛先も購読も **NSMenuItem や
     // 通知センター側では保持されない** ので、ここで持ち続ける。`EventLoop::run` は
@@ -909,6 +965,9 @@ fn main() {
     });
 
     event_loop.run(move |event, _, control_flow| {
+        // 札をクロージャに持たせるためだけの参照（上の `webview_hooks` の説明）。
+        #[cfg(target_os = "macos")]
+        let _ = &webview_hooks;
         *control_flow = ControlFlow::Wait;
 
         match event {
@@ -1022,6 +1081,9 @@ fn main() {
                     let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
                 }
             }
+            Event::UserEvent(AppEvent::Toast(msg)) => {
+                let _ = webview.evaluate_script(&md_preview::html::toast_script(&msg));
+            }
             Event::UserEvent(AppEvent::RootFailed(id)) => {
                 let _ = webview.evaluate_script(&md_preview::html::root_failed_script(&id));
             }
@@ -1057,8 +1119,13 @@ fn main() {
                         // （`app_config::window_size`）ので、それで足りる。
                         save_window_size("");
                     }
+                    // 保存するだけで、いまの CSP（ctx.policy）は変えない。ページの meta は起動時に
+                    // 書き込んであり、窓を読み込み直すとタブと読み位置を失うため。
+                    SettingsRequest::Trust(on) => {
+                        save_switch(md_preview::settings::TRUST_DOCUMENTS, on);
+                    }
                 }
-                send_settings(&webview);
+                send_settings(&webview, &ctx);
             }
             Event::UserEvent(AppEvent::Reload(id)) => {
                 let script = format!("window.MdReload && window.MdReload({});", json_string(&id));
@@ -1090,7 +1157,7 @@ fn main() {
                     // 設定タブが開いていれば ✓ を動かす。開いていなければ写しを
                     // 持っているだけで、次に前に出したときに取り直す。
                     if page_ready {
-                        send_settings(&webview);
+                        send_settings(&webview, &ctx);
                     }
                     return;
                 }
@@ -1577,15 +1644,32 @@ fn save_window_size(value: &str) {
     }
 }
 
+/// 設定のスイッチ（`on` / `off`）を保存する。
+fn save_switch(key: &str, on: bool) {
+    if let Err(e) = md_preview::settings::set(key, app_config::format_switch(on)) {
+        eprintln!("md: 設定 {} を保存できませんでした: {}", key, e);
+    }
+}
+
 /// 設定タブへ状態を渡す（#38）。毎回 `settings` を読み直すのは、`md theme` や
 /// 手で書き換えたぶんも拾うため。読むのは数十バイトのファイル 1 つ。
-fn send_settings(webview: &wry::WebView) {
+///
+/// CSP のスイッチは、保存した値（読み直したもの）といま効いている値（`ctx.policy`。起動時に
+/// 決めたもの）を両方渡す。
+fn send_settings(webview: &wry::WebView, ctx: &request::RequestContext) {
     let theme_name = theme::read_active_name();
-    let window_size = md_preview::settings::load()
+    let saved = md_preview::settings::load();
+    let window_size = saved
         .get(md_preview::settings::WINDOW_SIZE)
         .and_then(app_config::parse_window_size);
     let themes = theme::choices();
-    let view = md_preview::html::SettingsView { theme: &theme_name, themes: &themes, window_size };
+    let view = md_preview::html::SettingsView {
+        theme: &theme_name,
+        themes: &themes,
+        window_size,
+        saved_policy: app_config::policy_from(&saved),
+        effective_policy: ctx.policy,
+    };
     let _ = webview.evaluate_script(&md_preview::html::settings_script(&view));
 }
 
@@ -1601,42 +1685,65 @@ fn window_bg_rgba(
 /// ここに来るのは絶対パスコピー / Finder表示 / 既定アプリで開く の 3 つ——
 /// いずれも payload が「パス」なので、`resolve_target` で解決してから触る。
 /// 任意テキストのクリップボード書き込みはパス解決を通さない別の口（`copy:`）。
-fn handle_menu(verb: &str, payload: &str) {
-    let Some(path) = resolve_target(payload) else { return };
+///
+/// 返すのはページにトーストで出す文言（既定アプリで開かずに Finder で表示したときの理由）。
+fn handle_menu(verb: &str, payload: &str) -> Option<String> {
+    // `resolve_target` は canonicalize するので、シンボリックリンクはここで解けている
+    // （開く判定はリンク先の実体で見る）。
+    let Some(path) = resolve_target(payload) else {
+        // 開く操作は黙らせない。メニューを開いた後でファイルが消えていると、押しても何も
+        // 起きないように見える。
+        if verb == "open" && !payload.trim().is_empty() {
+            return Some(md_preview::open_with::Refusal::Missing.message());
+        }
+        return None;
+    };
     match verb {
         "abs" => platform::copy_to_clipboard(&path.to_string_lossy()),
         "reveal" => platform::reveal_in_finder(&path),
-        "open" => {
-            if !is_blocked_ext(&path) {
-                platform::open_default(&path);
-            }
-        }
+        "open" => return open_checked(&path),
         _ => {}
     }
+    None
 }
 
-/// IPC の送信元がトップフレーム（自前のスクリプトが動く文書）か。
+/// 「デフォルトアプリで開く」。開いてよいかは `open_with::decide` が決める（規則はあちらの doc）。
+/// 開くときは判定したアプリを指定して開き、開かないときは Finder で表示して理由を返す。
 ///
-/// wry は `WKScriptMessage.frameInfo` の URL を `Request` の URI に載せてくる。
-/// トップは `with_url` で読んだ `mdpreview://localhost/` のままなので、そこに
-/// 完全一致するかで見る。html を描く iframe の src は必ずファイルのパス
-/// （`/rel` か `/__abs/abs`）なので一致しない。
-///
-/// 判定は必ず許可制で書く。「iframe だと分かる形だけ弾く」という否定形にすると、
-/// `about:blank` / `about:srcdoc` の無名サブフレームを通してしまう——`http::Uri` は
-/// `//` を持たない `scheme:opaque` を authority として読むので、あれらは
-/// scheme=None・path="" になり、パスだけを見る判定では素通りする。
-///
-/// これで塞げない経路が 1 つ残る。悪意ある html が `<iframe src="/">` を作ると
-/// アプリのシェルがそのフレームに読み込まれ、URL は `mdpreview://localhost/` に
-/// なる。`frameInfo` は「messageHandlers を持つフレーム」に紐づくので、そこ経由で
-/// 投げられた IPC はトップと見分けが付かない。URI では原理的に判定できないため、
-/// ここは「事故を減らす衛生」であって信頼できない html への対策ではない。
-/// 本来の防御は README のとおり「信頼できない .html を開かない」ことである。
-fn is_top_frame(uri: &wry::http::Uri) -> bool {
-    uri.scheme_str() == Some("mdpreview")
-        && uri.authority().map(|a| a.as_str()) == Some("localhost")
-        && uri.path() == "/"
+/// 内線の口なので、設定で文書の JavaScript を動かすと文書の script からも叩ける。拡張子だけで
+/// 弾いていた頃は、拡張子の無い実行ファイルや `.inetloc` が素通りしていた。
+fn open_checked(path: &Path) -> Option<String> {
+    use md_preview::open_with::{self, Decision, FileFacts, Handler, Refusal};
+    let facts = platform::open_facts(path);
+    let Some(kind) = facts.kind else {
+        // 種類が分からないのは、ファイルの情報を読めなかったとき。メニューを開いてから押すまでに
+        // 消えていたなら、Finder で表示するものも無い。
+        if !path.exists() {
+            return Some(Refusal::Missing.message());
+        }
+        platform::reveal_in_finder(path);
+        return Some(Refusal::Unreadable.message());
+    };
+    let types: Vec<&str> = facts.content_types.iter().map(String::as_str).collect();
+    let file = FileFacts { kind, executable: facts.executable, content_types: &types, looks_text: facts.looks_text };
+    let handler = facts.handler.as_ref().map(|h| Handler {
+        bundle_id: h.bundle_id.as_deref(),
+        name: &h.name,
+        opens_executables: h.opens_executables,
+    });
+    match open_with::decide(path, &file, handler.as_ref()) {
+        Decision::Open => {
+            #[cfg(target_os = "macos")]
+            if let Some(h) = &facts.handler {
+                platform::open_with_app(path, &h.app);
+            }
+            None
+        }
+        Decision::Reveal(why) => {
+            platform::reveal_in_finder(path);
+            Some(why.message())
+        }
+    }
 }
 
 /// メニュー操作対象の絶対パスを解決する。`id` は `?file=` と同じ識別子（絶対パス）。
@@ -1714,28 +1821,6 @@ fn watch_extra(watcher: &SharedWatcher, file: &Path) {
     if let Some(d) = guard.as_mut() {
         let _ = d.watcher().watch(dir, RecursiveMode::NonRecursive);
     }
-}
-
-/// `open` で起動すると任意コード実行・任意URL遷移になりうる拡張子を弾く。
-/// ページに CSP は無く、本文の script もこの IPC を叩けるので、ここが実行系に対する
-/// 唯一のガードになる。
-/// （`open` はテキスト系拡張子を実行せず既定エディタで開くだけなので、ここでは
-/// 実際に「起動/遷移」しうる型だけを対象にする。）
-fn is_blocked_ext(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some(
-            "app" | "command" | "terminal" | "workflow" | "scpt" | "scptd" | "applescript"
-                | "osascript" | "action" | "webloc" | "url" | "fileloc" | "shortcut"
-                | "appex" | "xpc" | "prefpane" | "qlgenerator" | "vbs"
-                // Java 実行系。html を iframe 描画するようになり、悪意ある html が
-                // top.ipc 経由で menu:open を叩ける経路が増えたため実行系を塞いでおく。
-                | "jar" | "jnlp"
-        )
-    )
 }
 
 fn spawn_watcher(
@@ -1821,10 +1906,6 @@ mod tests {
         assert_eq!(dirs, vec![mine]);
     }
 
-    fn top(s: &str) -> bool {
-        is_top_frame(&s.parse::<wry::http::Uri>().unwrap())
-    }
-
     /// 外付け画面で保存した大きさを、ノートの画面だけで開いたときに掴めなくならないこと。
     /// 幅と高さは別々に、つながっている中でいちばん大きい画面に収める。
     #[test]
@@ -1853,42 +1934,16 @@ mod tests {
         assert!(SettingsRequest::parse("unknown").is_none());
     }
 
+    /// 「文書を信頼する」は `on` / `off` だけを受け、それ以外は保存せずに状態を送り返させる。
+    /// 2 つのスイッチだった頃の綴りは知らない要求として捨てる。
     #[test]
-    fn top_frame_accepts_only_the_app_page() {
-        // with_url が読む URL そのもの。query / fragment が付いても本体は同じ。
-        assert!(top("mdpreview://localhost/"));
-        assert!(top("mdpreview://localhost"));  // path は "/" に正規化される
-        assert!(top("mdpreview://localhost/?file=a.md"));
-        assert!(top("mdpreview://localhost/#sec"));
-    }
-
-    #[test]
-    fn html_iframes_are_rejected() {
-        // html を描く iframe。src は asset_url が組むファイルのパス。
-        assert!(!top("mdpreview://localhost/docs/page.html"));
-        assert!(!top("mdpreview://localhost/__abs/Users/me/page.html"));
-        assert!(!top("mdpreview://localhost/a.html?x=1"));
-    }
-
-    #[test]
-    fn anonymous_subframes_are_rejected() {
-        // これを通すのが「パスだけ見る」判定の穴だった。`http::Uri` は `//` の無い
-        // `scheme:opaque` を authority として読むので、どれも path == "" になる。
-        for u in ["about:blank", "about:srcdoc", "javascript:void(0)"] {
-            assert_eq!(u.parse::<wry::http::Uri>().unwrap().path(), "", "{u}");
-            assert!(!top(u), "{u}");
+    fn switch_requests_take_only_on_or_off() {
+        assert!(matches!(SettingsRequest::parse("trust-documents:on"), Some(SettingsRequest::Trust(true))));
+        assert!(matches!(SettingsRequest::parse("trust-documents:off"), Some(SettingsRequest::Trust(false))));
+        for bad in ["trust-documents:", "trust-documents:ON", "trust-documents:yes", "trust-documents:1"] {
+            assert!(matches!(SettingsRequest::parse(bad), Some(SettingsRequest::Get)), "{bad}");
         }
-        // パスだけの相対 URI も、トップとは名乗れない。
-        assert!(!top("/"));
-        assert!(!is_top_frame(&wry::http::Uri::default()));
-    }
-
-    #[test]
-    fn other_origins_are_rejected() {
-        assert!(!top("mdpreview://evil/"));
-        assert!(!top("https://localhost/"));
-        // file:/// は http::Uri がパースできない（authority が空）。wry がここへ
-        // 届ける前に捨てるので、到達しないことだけ記録しておく。
-        assert!("file:///".parse::<wry::http::Uri>().is_err());
+        assert!(SettingsRequest::parse("document-scripts:on").is_none());
+        assert!(SettingsRequest::parse("external-resources:on").is_none());
     }
 }

@@ -4,8 +4,7 @@
 // 起動時の INITIAL_FILES しか知らない。つまりここが唯一の砦なので、実装中に
 // 使い捨てのハーネスで見つかった 2 件（最初の 1 枚が作られない / タブ 0 枚の
 // ⌘W が無反応）も回帰として残してある。
-const { test, expect } = require('@playwright/test');
-const { MULTI_URL, open, openFolder, treeItem, tab, display } = require('./helpers');
+const { test, expect, MULTI_URL, open, openFolder, treeItem, tab, display } = require('./helpers');
 
 /// ツリーからファイルを開く。`relPath` は root 相対で書くが、data-path が持つのは
 /// 識別子（絶対パス）なので helpers 側で組む。同名ファイル（a.md と sub/a.md）でも

@@ -3,8 +3,7 @@
 // オーバーレイの譲り合い（Esc が 1 回で 1 つだけ閉じる）、素キーのスクロール、
 // ヘルプが keymap から作られていること、iframe 越しのクリックでメニューが閉じること。
 // どれも「本文にフォーカスがある」という前提が崩れると一斉に死ぬ部分。
-const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 test('Esc は最前面のオーバーレイを 1 つずつ閉じる', async ({ page }) => {
   await openFolder(page);
@@ -78,4 +77,33 @@ test('html プレビュー(iframe)内のクリックで右クリックメニュ�
   // 届かないので、bindFrame の橋渡しが無いとメニューが開いたまま残る。
   await frame.locator('p').last().click();
   await expect(menu).toHaveCount(0);
+});
+
+// 本文はアプリの UI と同じ document にある。本文にタブ・ツリーの行・ヘッダに似せた
+// 要素を書かれても、右クリックの対象は「今開いているファイル」のまま変わらないこと。
+test('本文にタブやツリーの行に似せた要素があっても、右クリックの対象は開いているファイル', async ({ page }) => {
+  await openFolder(page);
+  await page.keyboard.press(']'); // a.md を開く
+  await expect(page.locator('#preview-pane .markdown-body')).toContainText('見出し A');
+  const current = await page.evaluate(() => window.MD_ROOT_DIR + '/a.md');
+
+  await page.evaluate(() => {
+    const body = document.querySelector('#preview-pane .markdown-body');
+    body.insertAdjacentHTML('beforeend',
+      '<div class="md-tab" data-path="/etc/fake-tab" id="fake-tab">タブもどき</div>' +
+      '<div id="sidebar-header"><span id="fake-header">ヘッダもどき</span></div>' +
+      '<div id="sidebar"><div class="tree-item" data-path="/etc" data-kind="dir" id="fake-tree">行もどき</div></div>');
+  });
+
+  for (const sel of ['#fake-tab', '#fake-header', '#fake-tree']) {
+    await page.locator('#preview-pane ' + sel).click({ button: 'right' });
+    const menu = page.locator('#md-context-menu');
+    await expect(menu).toBeVisible();
+    // タブ・フォルダのときにだけ出る行が無いこと。
+    await expect(menu).not.toContainText('閉じる (⌘W)');
+    await expect(menu).not.toContainText('ここを root にする');
+    await page.evaluate(() => { window.__mdIpc.length = 0; });
+    await menu.locator('.md-context-menu-item', { hasText: '絶対パスをコピー' }).click();
+    expect(await page.evaluate(() => window.__mdIpc.filter((m) => m.startsWith('menu:')))).toEqual(['menu:abs:' + current]);
+  }
 });

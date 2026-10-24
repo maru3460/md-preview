@@ -2,6 +2,7 @@ use std::path::Path;
 
 use pulldown_cmark::{html, BlockQuoteKind, CodeBlockKind, CowStr, Event, LinkType, Options, Parser, Tag, TagEnd};
 
+use crate::csp::Policy;
 use crate::embed;
 use crate::urlpath::DocBase;
 use std::ops::Range;
@@ -103,8 +104,14 @@ pub fn json_string(s: &str) -> String {
 
 pub const BASE_CSS: &str = include_str!("assets/css/base.css");
 pub const HLJS_JS: &str = include_str!("assets/vendor/highlight.min.js");
-pub const MERMAID_JS: &str = include_str!("assets/vendor/mermaid.min.js");
-pub const DRAWIO_JS: &str = include_str!("assets/vendor/drawio-viewer.min.js");
+
+/// `/__lib/` で配る同梱ライブラリ（名前, 中身）。配る側（`request.rs` の `serve_builtin_lib`）も
+/// md の画面の meta が許すファイル（[`crate::csp::lib_files`]）もこの表から作るので、
+/// 片方にだけ足して「配っているのに CSP で止まる」「許しているのに 404」にはならない。
+pub const BUILTIN_LIBS: &[(&str, &str)] = &[
+    ("mermaid.min.js", include_str!("assets/vendor/mermaid.min.js")),
+    ("drawio-viewer.min.js", include_str!("assets/vendor/drawio-viewer.min.js")),
+];
 
 /// ページの `<head>` に inline する自前スクリプト。**この配列の順序が読み込み順**で、
 /// モジュールを足すときはここに 1 行加えるだけでよい。
@@ -120,8 +127,24 @@ pub const DRAWIO_JS: &str = include_str!("assets/vendor/drawio-viewer.min.js");
 ///
 /// 起動スクリプト（`FOLDER_JS`）はここには含めない。あちらは `<head>` ではなく
 /// 初期化スクリプトとして注入される。
+///
+/// 自前の各スクリプト（と `FOLDER_JS`・シェルの 3 本）は、先頭でトップのフレームでなければ
+/// 何もせずに抜ける（`highlight.min.js` だけは同梱のライブラリで、`hljs` を定義するほかは
+/// 呼ばれるまで何もしないので抜けない）。抜けないと、文書の iframe の中でアプリの部品
+/// （キー操作・右クリックメニュー・コメントなど）が動き出す。
+///
+/// この抜け道は守りの 2 枚目で、1 枚目は移動の判定（`navigation::decide`）がサブフレームの
+/// `/`（md の画面）を常に取り消すこと。md の画面がサブフレームに開かれることはまず無い。
+/// いまこの抜け道が実際に効くのは、`.html` や md の本文の iframe が `.md` を指したときに出る
+/// md の 1 枚ページ（`build_html`）を、文書の JS を ON にして開いた場合だけ。ヘッダの
+/// `script-src` が緩むので、この列の script も動きうる。OFF ではヘッダの `script-src 'none'`
+/// で何も動かない。
+///
+/// 引き換えに、iframe の中に開いた `.md` は色付けと図の無い素の HTML で出る（OFF のときは
+/// この抜け道ではなく、`script-src 'none'` のせい）。
 const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("keymap.js", include_str!("assets/js/keymap.js")),
+    ("docguard.js", include_str!("assets/js/docguard.js")),
     ("common.js", include_str!("assets/js/common.js")),
     ("highlight.min.js", include_str!("assets/vendor/highlight.min.js")),
     ("search.js", include_str!("assets/js/search.js")),
@@ -129,6 +152,7 @@ const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("toc.js", include_str!("assets/js/toc.js")),
     ("contextmenu.js", include_str!("assets/js/contextmenu.js")),
     ("autocopy.js", include_str!("assets/js/autocopy.js")),
+    ("extmedia.js", include_str!("assets/js/extmedia.js")),
     ("viewmode.js", include_str!("assets/js/viewmode.js")),
     ("help.js", include_str!("assets/js/help.js")),
     ("keyscroll.js", include_str!("assets/js/keyscroll.js")),
@@ -158,6 +182,26 @@ const NOTIFY_JS: &str = include_str!("assets/js/notify.js");
 /// `NOTIFY_JS` と同じくシェル専用。CSS はベルと同じく base.css に置く（ユーザーの
 /// style.css が後から上書きできるように）。
 const SETTINGS_JS: &str = include_str!("assets/js/settings.js");
+
+/// シェル（`build_folder_html`）だけが `<head>` に足す 3 本。`PAGE_SCRIPTS` の後ろに続く。
+const SHELL_SCRIPTS: &[(&str, &str)] = &[
+    ("tabs.js", TABS_JS),
+    ("notify.js", NOTIFY_JS),
+    ("settings.js", SETTINGS_JS),
+];
+
+/// md の画面に inline する自前の script の中身を、全部。
+///
+/// CSP のハッシュ（[`crate::csp::script_hashes`]）はこの列から作り、タグもこの列からしか
+/// 出さない。タグとハッシュを別々の列で持つと、script を足したときにハッシュが漏れて、
+/// その script だけが黙って止まる。
+pub fn inline_script_sources() -> impl Iterator<Item = &'static str> {
+    PAGE_SCRIPTS.iter().chain(SHELL_SCRIPTS).map(|(_name, src)| *src)
+}
+
+fn script_tags(list: &[(&str, &str)]) -> String {
+    list.iter().map(|(_name, src)| format!("<script>{}</script>\n", src)).collect()
+}
 
 const ICON_NOTE: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>"##;
 const ICON_TIP: &str = r##"<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"/></svg>"##;
@@ -197,6 +241,16 @@ pub fn render_body_in(markdown: &str, base: Option<&DocBase>, line_offset: usize
     }
     let mut body = String::new();
     html::push_html(&mut body, events.into_iter());
+    // 外部の読み込みを止めているときは、外部の画像などを「開く」リンクに置き換える。
+    // 描き終えた HTML に掛けるのは、複数行にまたがる生 HTML の `<picture>` などを 1 個に
+    // まとめるため（理由は extmedia.rs の冒頭）。
+    if let Some(b) = base {
+        if !b.policy.trusted {
+            if let Some(replaced) = crate::extmedia::replace_external(&body) {
+                body = replaced;
+            }
+        }
+    }
     body
 }
 
@@ -227,10 +281,11 @@ fn rewrite_urls(events: &mut [Event<'_>], base: &DocBase) {
     }
 }
 
-/// 生 HTML の `src` / `href` / `poster` 属性値だけを書き換える。書き換えが無ければ None。
+/// 生 HTML の `src` / `href` / `poster` / `srcset` 属性値だけを書き換える。書き換えが無ければ None。
 /// HTML を丸ごと構文解析はせず、「空白 + 属性名 + `=` + クォート」の並びだけを見る。
+/// `srcset` は候補（`a.png 1x, b.png 2x`）ごとに URL だけを畳む。
 fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
-    const ATTRS: [&str; 3] = ["src", "href", "poster"];
+    const ATTRS: [&str; 4] = ["src", "href", "poster", "srcset"];
     let bytes = src.as_bytes();
     let mut out = String::new();
     let mut copied = 0usize;
@@ -267,7 +322,13 @@ fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
         let value_start = k + 1;
         let Some(rel_end) = src[value_start..].find(quote) else { break };
         let value_end = value_start + rel_end;
-        if let Some(url) = base.resolve_url(&src[value_start..value_end]) {
+        let value = &src[value_start..value_end];
+        let resolved = if name.eq_ignore_ascii_case("srcset") {
+            resolve_srcset(value, base)
+        } else {
+            base.resolve_url(value)
+        };
+        if let Some(url) = resolved {
             out.push_str(&src[copied..value_start]);
             out.push_str(&url);
             copied = value_end;
@@ -279,6 +340,22 @@ fn rewrite_html_attrs(src: &str, base: &DocBase) -> Option<String> {
     }
     out.push_str(&src[copied..]);
     Some(out)
+}
+
+/// `srcset` の各候補の URL を [`DocBase::resolve_url`] で畳む。1 つも畳まなければ None。
+fn resolve_srcset(value: &str, base: &DocBase) -> Option<String> {
+    let mut changed = false;
+    let parts: Vec<String> = crate::extmedia::srcset_candidates(value)
+        .into_iter()
+        .map(|(url, candidate)| match base.resolve_url(url) {
+            Some(resolved) => {
+                changed = true;
+                format!("{resolved}{}", &candidate[url.len()..])
+            }
+            None => candidate.to_string(),
+        })
+        .collect();
+    changed.then(|| parts.join(", "))
 }
 
 /// fence 直後の Text イベントを CodeBlock の End まで集めて生テキストを返す。
@@ -705,38 +782,45 @@ pub fn swap_theme_style(page: &str, old: &str, new: &str) -> String {
     page.replacen(&theme_style(old), &theme_style(new), 1)
 }
 
-/// 共通の `<head>` 中身を組み立てる。base/theme/custom の CSS と、`PAGE_SCRIPTS` の
-/// 各モジュールを inline する。
-/// `extra_head` は呼び出し側で追加したい追記（folder 用の INITIAL_FILES 等）を末尾に差し込む。
-fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str) -> String {
-    let scripts: String = PAGE_SCRIPTS
-        .iter()
-        .map(|(_name, src)| format!("<script>{}</script>\n", src))
-        .collect();
-    // CSP は張らない（本文の <script> も外部リソースの埋め込みもそのまま動く）。
-    // Why not: `.html` は忠実描画のため sandbox 無しの同一オリジン iframe で JS ごと
-    // 動かしている。同じアプリで開く `.md` だけを締めても信頼境界にはならず、
-    // YouTube の埋め込み・Web フォント・外部 CSS を落とす代償の方が大きい。
-    // IPC 側のガード（is_top_frame / id_to_path / is_blocked_ext）は CSP とは独立に残る。
+/// 共通の `<head>` 中身を組み立てる。CSP の meta、base/theme/custom の CSS と、
+/// `PAGE_SCRIPTS` の各モジュールを inline する。
+/// `extra_head` は呼び出し側で追加したい追記（シェルの 3 本）を末尾に差し込む。
+///
+/// CSP の meta は `<meta charset>` の直後に置く。meta はそれより後ろにしか効かないので、
+/// 最初の `<script>` より前でなければならない。md の本文の `<link>` と `@import`・
+/// `@font-face` は、これとは別に docguard.js が差し込む前に落としている。
+fn head(title: &str, theme_css: &str, custom_css: &str, extra_head: &str, policy: &Policy, lib_origin: &str) -> String {
     format!(
         r#"<meta charset="utf-8">
+{csp}
 <title>{title}</title>
 <style>{base_css}</style>
 {theme_style}
 <style>{custom_css}</style>
 {scripts}{extra_head}"#,
+        csp = crate::csp::meta(policy, lib_origin),
         title = html_escape(title),
         base_css = BASE_CSS,
         theme_style = theme_style(theme_css),
         custom_css = custom_css,
-        scripts = scripts,
+        scripts = script_tags(PAGE_SCRIPTS),
         extra_head = extra_head,
     )
 }
 
 /// `body_class` は `.markdown-body` に足す追加クラス（空文字なら無し）。
 /// ソース表示は `"source-page"` を渡して 720px 中央制約を外し全幅にする。
-pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, body_class: &str) -> String {
+///
+/// `policy` と `lib_origin` は CSP の meta のため（[`crate::csp::meta`]）。
+pub fn build_html(
+    body: &str,
+    title: &str,
+    theme_css: &str,
+    custom_css: &str,
+    body_class: &str,
+    policy: &Policy,
+    lib_origin: &str,
+) -> String {
     let class_attr = if body_class.is_empty() {
         "markdown-body".to_string()
     } else {
@@ -754,7 +838,7 @@ pub fn build_html(body: &str, title: &str, theme_css: &str, custom_css: &str, bo
 </article>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, ""),
+        head = head(title, theme_css, custom_css, "", policy, lib_origin),
         class_attr = class_attr,
         body = body,
     )
@@ -844,23 +928,18 @@ pub fn render_frontmatter_html(pairs: &[(String, String)], lines: usize) -> Stri
     format!(r#"<div class="frontmatter"{}>{}</div>"#, attrs, rows)
 }
 
-/// `initial_files` は起動時にタブとして開く識別子（絶対パス。先頭が最初に表示される）。
-/// 空なら何も開かずツリーだけを出す。
+/// md の画面（シェル）。起動時に開くタブ（`INITIAL_FILES`）はここには焼かない。
+/// [`crate::app_config::AppConfig::page_globals`] が初期化スクリプトで渡す。
+///
+/// Why not ここで inline の script にする: 中身が起動のたびに変わるので、CSP のハッシュを
+/// 定数にできない。
 pub fn build_folder_html(
     title: &str,
     theme_css: &str,
     custom_css: &str,
-    initial_files: &[String],
+    policy: &Policy,
+    lib_origin: &str,
 ) -> String {
-    let initial_files_json = initial_files
-        .iter()
-        .map(|s| json_string(s))
-        .collect::<Vec<_>>()
-        .join(",");
-    let folder_head = format!(
-        "<script>var INITIAL_FILES = [{}];</script>\n<script>{}</script>\n<script>{}</script>\n<script>{}</script>",
-        initial_files_json, TABS_JS, NOTIFY_JS, SETTINGS_JS
-    );
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -895,7 +974,7 @@ pub fn build_folder_html(
 </div>
 </body>
 </html>"#,
-        head = head(title, theme_css, custom_css, &folder_head),
+        head = head(title, theme_css, custom_css, &script_tags(SHELL_SCRIPTS), policy, lib_origin),
     )
 }
 
@@ -976,6 +1055,12 @@ pub fn root_failed_script(id: &str) -> String {
     format!("window.MdRootFailed && window.MdRootFailed({});", json_string(id))
 }
 
+/// ページにトーストを出すスクリプト。アプリの操作の結果を知らせる（「デフォルトアプリで開く」を
+/// 断って Finder で表示したときの理由など）。
+pub fn toast_script(msg: &str) -> String {
+    format!("window.MdCommon && MdCommon.toast && MdCommon.toast({});", json_string(msg))
+}
+
 /// 設定タブ（#38）に映す状態。持ち主は Rust 側の `settings` で、ページは写しを
 /// 受けて描くだけ（ベルの一覧と同じ形）。
 pub struct SettingsView<'a> {
@@ -986,6 +1071,14 @@ pub struct SettingsView<'a> {
     pub themes: &'a [crate::theme::Choice],
     /// 保存してある窓の初期サイズ。`None` は既定のまま。
     pub window_size: Option<(u32, u32)>,
+    /// `settings` に保存してある「文書を信頼する」。⌘Q で終了して開き直したときに効く値。
+    pub saved_policy: crate::csp::Policy,
+    /// いま効いている CSP（起動時に決めたもの）。
+    ///
+    /// Why not 保存した値だけを渡す: 切り替えは ⌘Q の後から効くので、OFF にした直後も
+    /// 文書の JS は動いたままである。画面が保存した値だけを見て「OFF」と出すと、止まったと
+    /// 思わせてしまう（安全にかかわるのはこちらの向き）。
+    pub effective_policy: crate::csp::Policy,
 }
 
 /// 設定タブの状態を**まるごと**ページへ渡すスクリプト。差分にしない理由は
@@ -1016,14 +1109,16 @@ pub fn settings_script(view: &SettingsView) -> String {
         crate::app_config::WINDOW_WIDTH as u32,
         crate::app_config::WINDOW_HEIGHT as u32,
     );
+    let switch = |saved: bool, effective: bool| format!("{{saved:{saved},effective:{effective}}}");
     format!(
-        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{}}});",
+        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},trusted:{}}});",
         json_string(view.theme),
         json_string(crate::theme::DEFAULT_NAME),
         json_string(&crate::theme::auto_dark_bg_hex()),
         themes,
         view.window_size.map(size).unwrap_or_else(|| "null".to_string()),
         size(default_size),
+        switch(view.saved_policy.trusted, view.effective_policy.trusted),
     )
 }
 
@@ -1041,11 +1136,97 @@ pub fn theme_script(theme_css: &str, appearance: crate::theme::Appearance) -> St
 mod tests {
     use super::*;
 
+    /// ページが持つ `<script>` の中身を全部抜き出す。
+    fn inline_scripts(page: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = page;
+        while let Some(i) = rest.find("<script") {
+            rest = &rest[i..];
+            let gt = rest.find('>').unwrap();
+            let end = rest.find("</script>").unwrap();
+            out.push(&rest[gt + 1..end]);
+            rest = &rest[end + "</script>".len()..];
+        }
+        out
+    }
+
+    #[test]
+    fn every_script_the_pages_emit_is_covered_by_a_hash() {
+        let hashes = crate::csp::script_hashes();
+        let policy = Policy::default();
+        let shell = build_folder_html("t", "", "", &policy, crate::csp::APP_ORIGIN);
+        let doc = build_html("<p>hi</p>", "t", "", "", "", &policy, crate::csp::APP_ORIGIN);
+        for (name, page) in [("shell", &shell), ("doc", &doc)] {
+            let scripts = inline_scripts(page);
+            assert!(!scripts.is_empty(), "{name}");
+            for src in scripts {
+                assert!(
+                    hashes.contains(&crate::csp::hash_of(src)),
+                    "{name} のハッシュに無い script: {}",
+                    &src[..src.len().min(80)]
+                );
+            }
+        }
+        // シェルは自前の script を全部持つ（列に余りが無い）。
+        assert_eq!(inline_scripts(&shell).len(), hashes.len());
+    }
+
+    /// 先頭の空白と行コメント（`//`）を読み飛ばす。
+    fn skip_leading_comments(mut s: &str) -> &str {
+        loop {
+            s = s.trim_start();
+            match s.strip_prefix("//") {
+                Some(rest) => s = rest.split_once('\n').map_or("", |(_, after)| after),
+                None => return s,
+            }
+        }
+    }
+
+    #[test]
+    fn every_app_script_returns_early_outside_the_top_frame() {
+        let guarded = inline_script_sources().filter(|src| *src != HLJS_JS).chain([FOLDER_JS]);
+        let mut count = 0;
+        for src in guarded {
+            let head: String = src.chars().take(60).collect();
+            let body = skip_leading_comments(src)
+                .strip_prefix("(function() {")
+                .unwrap_or_else(|| panic!("即時関数で始まっていない: {head}"));
+            assert!(
+                skip_leading_comments(body).starts_with("if (window.top !== window) return;"),
+                "トップのフレームでないときに抜けていない: {head}"
+            );
+            count += 1;
+        }
+        // 自前の script の列（PAGE_SCRIPTS とシェルの 3 本から hljs を除いたもの）と FOLDER_JS。
+        assert_eq!(count, PAGE_SCRIPTS.len() + SHELL_SCRIPTS.len() - 1 + 1);
+    }
+
+    #[test]
+    fn the_csp_meta_comes_right_after_the_charset_and_before_any_script() {
+        let policy = Policy::default();
+        for page in [
+            build_folder_html("t", "", "", &policy, crate::csp::APP_ORIGIN),
+            build_html("<p>hi</p>", "t", "", "", "", &policy, crate::csp::APP_ORIGIN),
+        ] {
+            let meta = page.find("<meta http-equiv=\"Content-Security-Policy\"").expect("meta が無い");
+            let charset = page.find("<meta charset=\"utf-8\">\n").unwrap();
+            assert_eq!(meta, charset + "<meta charset=\"utf-8\">\n".len());
+            assert!(meta < page.find("<script").unwrap());
+        }
+    }
+
+    #[test]
+    fn the_shell_carries_no_per_launch_script() {
+        // 起動のたびに変わる中身（INITIAL_FILES）が inline に残ると、ハッシュが合わずに止まる。
+        let page = build_folder_html("t", "", "", &Policy::default(), crate::csp::APP_ORIGIN);
+        assert!(!page.contains("INITIAL_FILES ="), "{}", &page[..200]);
+    }
+
     /// 起動後にテーマを変えても、配信し直す初期ページが新しい層を持つこと。
     /// 古い層が残ると、WebContent が落ちて読み込み直したときに起動時のテーマへ戻る。
     #[test]
     fn swapping_the_theme_replaces_only_the_theme_layer() {
-        let page = build_folder_html("t", "THEME_OLD", "CUSTOM", &[]);
+        let page = build_folder_html("t", "THEME_OLD", "CUSTOM", &Policy::default(), crate::csp::APP_ORIGIN);
         let swapped = swap_theme_style(&page, "THEME_OLD", "THEME_NEW");
         assert!(swapped.contains(r#"<style id="md-theme">THEME_NEW</style>"#), "{swapped}");
         assert!(!swapped.contains("THEME_OLD"));
@@ -1063,7 +1244,15 @@ mod tests {
             },
             crate::theme::Choice { name: "my\"theme".to_string(), group: "user", swatch: None },
         ];
-        let script = settings_script(&SettingsView { theme: "nord", themes: &themes, window_size: None });
+        let off = crate::csp::Policy::default();
+        let view = |window_size| SettingsView {
+            theme: "nord",
+            themes: &themes,
+            window_size,
+            saved_policy: off,
+            effective_policy: off,
+        };
+        let script = settings_script(&view(None));
         assert!(script.starts_with("window.MdSettings && window.MdSettings.push({"), "{script}");
         assert!(script.contains(r#"theme:"nord""#), "{script}");
         assert!(script.contains(r#"{name:"my\"theme",group:"user",swatch:null}"#), "{script}");
@@ -1075,8 +1264,25 @@ mod tests {
         assert!(script.contains(r##"defaultTheme:"default",autoDarkBg:"#0d1117""##), "{script}");
         assert!(script.contains("defaultWindowSize:{w:1280,h:700}"), "{script}");
 
-        let script = settings_script(&SettingsView { theme: "nord", themes: &themes, window_size: Some((1440, 900)) });
+        assert!(script.contains("trusted:{saved:false,effective:false}"), "{script}");
+
+        let script = settings_script(&view(Some((1440, 900))));
         assert!(script.contains("windowSize:{w:1440,h:900}"), "{script}");
+    }
+
+    /// 保存した値といま効いている値は、別々に届くこと（⌘Q の後から効くので
+    /// 食い違うことがある）。
+    #[test]
+    fn settings_script_carries_saved_and_effective_policies_apart() {
+        use crate::csp::Policy;
+        let script = settings_script(&SettingsView {
+            theme: "default",
+            themes: &[],
+            window_size: None,
+            saved_policy: Policy { trusted: true },
+            effective_policy: Policy { trusted: false },
+        });
+        assert!(script.contains("trusted:{saved:true,effective:false}"), "{script}");
     }
 
     /// テーマの CSS に `</style>` や `</script>` の綴りがあっても、渡す文字列から
@@ -1148,7 +1354,7 @@ mod tests {
     #[test]
     fn build_html_no_longer_inlines_diagram_libs() {
         // mermaid だけで約 3MB。遅延ロードにより、ページは小さく保たれるはず。
-        let page = build_html("<p>hi</p>", "t", "", "", "");
+        let page = build_html("<p>hi</p>", "t", "", "", "", &Policy::default(), crate::csp::APP_ORIGIN);
         assert!(page.len() < 1_000_000, "page too large, libs likely inlined: {} bytes", page.len());
         assert!(page.contains("<p>hi</p>"));
     }
@@ -1301,6 +1507,56 @@ mod tests {
         assert!(!body.contains("code-embed"), "should not embed inline link: {body}");
     }
 
+    // ── 外部の画像などの置き換え（extmedia） ──
+
+    fn render_with_policy(md: &str, policy: Policy) -> String {
+        let dir = std::path::PathBuf::from("/proj/docs");
+        let root = std::path::PathBuf::from("/proj");
+        render_body_in(md, Some(&DocBase::new(&dir, &root).with_policy(policy)), 0)
+    }
+
+    #[test]
+    fn external_markdown_image_becomes_an_open_link_when_external_is_off() {
+        let body = render_with_policy("![構成図](https://example.com/arch.png)\n", Policy::default());
+        assert!(body.contains(r#"<a class="md-ext-media" href="https://example.com/arch.png""#), "{body}");
+        assert!(body.contains("外部の画像: 構成図（example.com）"), "{body}");
+        assert!(!body.contains("<img"), "{body}");
+        // 手元の画像はそのまま（相対パスは文書の場所で畳んだうえで）。
+        let body = render_with_policy("![a](fig.png)\n", Policy::default());
+        assert!(body.contains(r#"<img src="/docs/fig.png" alt="a" />"#), "{body}");
+    }
+
+    #[test]
+    fn readme_badge_becomes_a_chip_inside_its_link() {
+        let md = "[![CI](https://github.com/o/r/actions/workflows/ci.yml/badge.svg)](https://github.com/o/r/actions)\n";
+        let body = render_with_policy(md, Policy::default());
+        assert!(body.contains(r#"<a href="https://github.com/o/r/actions"><span class="md-ext-chip" title="github.com">CI</span></a>"#), "{body}");
+        assert_eq!(body.matches("<a ").count(), 1, "{body}");
+    }
+
+    #[test]
+    fn multi_line_raw_picture_becomes_one_link() {
+        let md = "<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://e.example/d.png\">\n  <img src=\"https://e.example/l.png\" alt=\"ロゴ\">\n</picture>\n";
+        let body = render_with_policy(md, Policy::default());
+        assert_eq!(body.matches("md-ext-media").count(), 1, "{body}");
+        assert!(!body.contains("<source") && !body.contains("<img"), "{body}");
+    }
+
+    #[test]
+    fn external_media_is_kept_when_trusted() {
+        let on = Policy { trusted: true };
+        let body = render_with_policy("![a](https://example.com/a.png)\n\n<iframe src=\"https://e.example/x\"></iframe>\n", on);
+        assert!(body.contains(r#"<img src="https://example.com/a.png""#), "{body}");
+        assert!(body.contains(r#"<iframe src="https://e.example/x">"#), "{body}");
+        assert!(!body.contains("md-ext-"), "{body}");
+    }
+
+    #[test]
+    fn raw_srcset_candidates_resolve_against_the_document() {
+        let body = render_with_policy("<img srcset=\"fig.png 1x, ../big.png 2x\" src=\"fig.png\">\n", Policy::default());
+        assert!(body.contains(r#"srcset="/docs/fig.png 1x, /big.png 2x""#), "{body}");
+    }
+
     #[test]
     fn embedding_is_off_without_base_dir() {
         // 基準が無ければ（単体テストの render_body 経路）展開も URL 書き換えもしない。
@@ -1449,6 +1705,13 @@ mod tests {
     fn root_failed_script_escapes_the_identifier() {
         let s = root_failed_script(r#"/tmp/a"b\c"#);
         assert_eq!(s, "window.MdRootFailed && window.MdRootFailed(\"/tmp/a\\\"b\\\\c\");");
+    }
+
+    #[test]
+    fn toast_script_passes_the_message_as_a_js_string() {
+        let s = toast_script("a\"</script>");
+        assert!(s.starts_with("window.MdCommon && MdCommon.toast && MdCommon.toast(\""), "{s}");
+        assert!(!s.contains("</script>"), "{s}");
     }
 
     #[test]

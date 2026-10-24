@@ -1,4 +1,6 @@
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var container = null;
   var bar = null;
   var input = null;
@@ -135,7 +137,8 @@
 
   function frames() {
     if (!container || !container.querySelectorAll) return [];
-    return Array.prototype.slice.call(container.querySelectorAll('iframe.html-frame'));
+    // サーバが作った `.html` のプレビューの枠だけ。本文に書いた同じクラスの iframe は本文の一部。
+    return window.MdCommon && MdCommon.appHtmlFrames ? MdCommon.appHtmlFrames(container) : [];
   }
 
   // iframe 内リンクの遷移やホットリロードで文書が差し替わるとハイライトは消える。

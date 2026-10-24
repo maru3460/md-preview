@@ -140,6 +140,7 @@ fn visit_origins(dir: &Path, depth: usize, f: &mut impl FnMut(&[u8])) {
         if kind.is_dir() {
             visit_origins(&path, depth + 1, f);
         } else if kind.is_file() && path.file_name().map(|n| n == "origin").unwrap_or(false) {
+            // fsread を通さない: 自分のデータディレクトリの origin
             if let Ok(bytes) = std::fs::read(&path) {
                 f(&bytes);
             }
@@ -239,6 +240,11 @@ pub fn run(rest: &[String]) {
         }
     };
     print!("{}", plan_text(&targets, &removal, &bin));
+    // 差し替え先は検証用に人が選んだ場所で、md が置いたとは限らない（作業ディレクトリの
+    // 相対パスのこともある）ので消さない。黙って残すと片付いたと思わせるので、一言出す。
+    if let Some(dir) = std::env::var_os(crate::CONFIG_DIR_ENV).filter(|v| !v.is_empty()) {
+        println!("\n{} に指定した {} は消しません。", crate::CONFIG_DIR_ENV, PathBuf::from(dir).display());
+    }
 
     if dry_run {
         println!("\n（--dry-run なので何も消していません）");

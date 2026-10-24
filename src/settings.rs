@@ -34,6 +34,10 @@ pub const THEME: &str = "theme";
 /// 窓の初期サイズ（#42）。`1440x900` の形で、意味の解釈は [`crate::app_config`] が持つ。
 pub const WINDOW_SIZE: &str = "window-size";
 
+/// 文書を信頼するか（文書の JavaScript を動かし、外部からの読み込みを許す）。`on` / `off` で、
+/// 読むのは [`crate::app_config::policy_from`]。既定（書いていない）は OFF。
+pub const TRUST_DOCUMENTS: &str = "trust-documents";
+
 /// ファイルの 1 行。
 #[derive(Debug, PartialEq, Eq)]
 enum Line {
@@ -125,7 +129,7 @@ pub fn load() -> Settings {
 /// 値を書く。ファイルごと置き換えるので、知らないキーも書き戻される。
 pub fn set(key: &str, value: &str) -> io::Result<()> {
     let dir = crate::config_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME が設定されていない"))?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "設定の置き場所が決まらない（HOME も MD_CONFIG_DIR の行き先も読めない）"))?;
     set_at(&dir, key, value)
 }
 
@@ -149,6 +153,7 @@ fn load_at(dir: &Path) -> Settings {
 /// 旧ファイルの名前だけを持った、ディスクに触れていない設定。
 fn legacy_theme_only(dir: &Path) -> Settings {
     let mut settings = parse("");
+    // fsread を通さない: 設定ディレクトリ
     if let Ok(text) = std::fs::read_to_string(dir.join(LEGACY_THEME_FILE)) {
         let name = text.trim();
         if !name.is_empty() {
@@ -172,6 +177,7 @@ fn set_at(dir: &Path, key: &str, value: &str) -> io::Result<()> {
 /// 引数で受ける private 版が**同名の公開関数と衝突する**ものだけ（[`load`] / [`set`]）。
 /// 衝突しないものは `store::read` や `quick_access::save` と同じ無印に揃える。
 fn read_settings(dir: &Path) -> io::Result<Settings> {
+    // fsread を通さない: 設定ディレクトリ
     match std::fs::read_to_string(dir.join(FILE)) {
         Ok(text) => Ok(parse(&text)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(parse("")),
@@ -197,7 +203,8 @@ fn has_line_break(s: &str) -> bool {
     s.contains('\n') || s.contains('\r')
 }
 
-fn parse(text: &str) -> Settings {
+/// テキストを設定として読む。ディスクに触れない（テストで設定の中身を作るのにも使う）。
+pub(crate) fn parse(text: &str) -> Settings {
     let lines = text
         .lines()
         .map(|raw| {
@@ -232,6 +239,7 @@ fn save(dir: &Path, settings: &Settings) -> io::Result<()> {
 /// 実際に nord が default に化けるのを再現した）。
 fn migrate_legacy_theme(dir: &Path, settings: &mut Settings) {
     let path = dir.join(LEGACY_THEME_FILE);
+    // fsread を通さない: 設定ディレクトリ
     let Ok(text) = std::fs::read_to_string(&path) else { return };
     let name = text.trim();
 

@@ -73,13 +73,14 @@ fn render_embed(base_dir: &Path, dest: &str, attrs: &str, uid: usize) -> Option<
 
     // `..` やシンボリックリンクを畳んで実体を得る。ローカル閲覧専用で外部への
     // 送信経路が無いため、base_dir の外へ出る参照（`../src/x.rs`）も許可する。
-    let file = base_dir.join(&rel_path).canonicalize().ok()?;
-    let meta = std::fs::metadata(&file).ok()?;
-    if !meta.is_file() || meta.len() > MAX_READ_BYTES {
+    let joined = base_dir.join(&rel_path);
+    // canonicalize が自動マウントを起こす前に、名前で断る（fsread.rs と同じ線）。
+    if crate::fsread::is_automount_path(&joined) {
         return None;
     }
-    // 非 UTF-8（バイナリ）は埋め込まず普通のリンクに戻す。
-    let text = std::fs::read_to_string(&file).ok()?;
+    let file = joined.canonicalize().ok()?;
+    // 通常ファイル以外・大きすぎるもの・非 UTF-8（バイナリ）は埋め込まず普通のリンクに戻す。
+    let text = crate::fsread::read_regular_string(&file, MAX_READ_BYTES).ok()??;
 
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len();

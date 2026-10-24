@@ -1,5 +1,8 @@
 status: 200
+cache-control: no-store
+content-security-policy: script-src 'none'; default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; connect-src 'self'; object-src 'self'; base-uri 'none'; form-action 'none'
 content-type: text/html; charset=utf-8
+x-content-type-options: nosniff
 ----
 <div class="markdown-body"><div class="frontmatter" data-src-line="1" data-src-end-line="4"><div class="fm-row"><span class="fm-key">title</span><span class="fm-val">スナップショット用</span></div><div class="fm-row"><span class="fm-key">author</span><span class="fm-val">ずんだもん</span></div></div><h1 data-src-line="6">見出し1</h1>
 <p data-src-line="8" data-src-end-line="9">段落なのだ。<strong>強調</strong>と<code>インラインコード</code>と<a href="https://example.com">リンク</a>がある。
@@ -50,4 +53,7 @@ three</code></pre></div><p data-src-line="61">脚注つきの文<sup class="foot
 <div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup><p data-src-line="63">脚注の中身なのだ。</p>
 </div>
 <p data-src-line="65"><del>打ち消し線</del> と <a href="/WikiLink">WikiLink</a> 。</p>
+<p data-src-line="67" data-src-end-line="68">外部の画像は既定で「開く」リンクになる: <a class="md-ext-media" href="https://example.com/arch.png" title="https://example.com/arch.png">外部の画像: 構成図（example.com）</a>
+バッジ: <a href="https://example.com/ci"><span class="md-ext-chip" title="img.shields.io">build-passing-green</span></a></p>
+<a class="md-ext-media" href="https://example.com/a.png" title="https://example.com/a.png">外部の画像: &lt;b&gt;太字&lt;/b&gt; &amp; 記号（example.com）</a>
 </div>

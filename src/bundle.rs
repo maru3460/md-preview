@@ -153,6 +153,7 @@ fn prepare(app_dir: &Path, exe: &Path) -> std::io::Result<()> {
     }
 
     let plist = app_dir.join("Info.plist");
+    // fsread を通さない: 自分で書いたバンドルの Info.plist
     if std::fs::read_to_string(&plist).map(|s| s != INFO_PLIST).unwrap_or(true) {
         std::fs::write(&plist, INFO_PLIST)?;
     }

@@ -3,8 +3,7 @@
 // 「別のファイルを開く」入口（ツリー・[ ]・⌘P）と、サイドバーのフォーカス排他。
 // 起動時に何が開いていても同じ導線が揃っていること（issue #12 でモードを 1 本に
 // 畳んだので、cwd 外のファイルを 1 つ渡した起動でもツリーとタブが出る）もここ。
-const { test, expect } = require('@playwright/test');
-const { id, ONE_FILE_URL, open, openFolder, treeItem } = require('./helpers');
+const { test, expect, id, ONE_FILE_URL, open, openFolder, treeItem } = require('./helpers');
 
 test('⌘P でファイル検索が開く', async ({ page }) => {
   await openFolder(page);
@@ -103,4 +102,19 @@ test('ツリーにフォーカスがある状態で畳むと、本文へフォ�
   await page.keyboard.press('Tab');
   await expect(page.locator('body')).not.toHaveClass(/sidebar-closed/);
   await expect(page.locator('body')).toHaveClass(/nav-tree/);
+});
+
+test('1 つのフォルダの項目を上限で打ち切ったときは、末尾に注記が出て、行としては扱わない', async ({ page }) => {
+  // 上限（request.rs の DIR_LIST_MAX）を超えるフォルダを作らずに、打ち切った応答の形だけを差し替える。
+  await page.route((url) => url.searchParams.has('dir'), async (route) => {
+    const resp = await route.fetch();
+    const items = await resp.json();
+    items.push({ kind: 'more', limit: 10000 });
+    await route.fulfill({ response: resp, body: JSON.stringify(items) });
+  });
+  await openFolder(page);
+  const note = page.locator('#sidebar .tree-note').first();
+  await expect(note).toHaveText('項目が多いため 10,000 件までを表示しています');
+  // 注記は行ではない（j / k・右クリック・巡回の相手にならない）。
+  expect(await note.evaluate((el) => el.classList.contains('tree-item') || 'path' in el.dataset)).toBe(false);
 });

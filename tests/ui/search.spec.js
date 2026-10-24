@@ -3,8 +3,7 @@
 // 見ているのは「開く / 閉じるの往復で本文とオーバーレイの主導権が正しく移るか」。
 // ここが壊れると入力欄に打った文字が本文のキー操作になったり、閉じたのに
 // ハイライトだけ残ったりする。
-const { test, expect } = require('@playwright/test');
-const { openFolder } = require('./helpers');
+const { test, expect, openFolder } = require('./helpers');
 
 test('/ で検索バーが開き、Esc で閉じる', async ({ page }) => {
   await openFolder(page);

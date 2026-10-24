@@ -4,8 +4,7 @@
 // ここでは `examples/serve.rs` の IPC スタブが `/__setroot` へ回してから
 // `MdSetRoot` を呼ぶ。順序は窓側と同じ——サーバの root を先に差し替えてから
 // ページへ知らせる。ページから先に知らせると、新しい root で古いツリーを引く。
-const { test, expect } = require('@playwright/test');
-const { ROOT_URL, open, treeItem, id } = require('./helpers');
+const { test, expect, ROOT_URL, open, treeItem, id } = require('./helpers');
 
 // root が動くと**サーバの応答も変わる**ので、このファイルは専用のサーバ
 // （playwright.config.js の ROOT_PORT）を使う。そのうえで毎回戻す——戻さないと

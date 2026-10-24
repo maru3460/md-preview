@@ -15,6 +15,8 @@
 // ファイルへ飛ぶ」導線を新しいキーやボタンとして足さず、既にある ⌘P に寄せている
 // （⌘D で差分 ON にしたまま ⌘P で飛べば、そのファイルの差分がそのまま出る）。
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   var overlay = null;
   var input = null;
   var warnEl = null;

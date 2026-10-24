@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>セキュリティの検証用（html）</title>
+<link rel="stylesheet" href="./probe-assets/local.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rampart+One&display=swap">
+<style>
+  body { font-family: -apple-system, sans-serif; line-height: 1.6; max-width: 820px; margin: 24px auto; padding: 0 16px; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 2em; }
+  .r { font-family: ui-monospace, monospace; padding: 0 4px; border-radius: 3px; background: rgba(127,127,127,.15); }
+  .probe-font { font-family: 'Rampart One', ui-monospace, monospace; font-size: 1.6em; }
+  li { margin: 4px 0; }
+  .note { color: #666; font-size: .9em; }
+  /* JS で組み立てる部分。JS が止まると、この枠の中は空のまま残る。 */
+  #js-built { min-height: 1.6em; border: 1px dashed #999; padding: 4px 8px; }
+  #js-built:empty::before { content: "（空。JS で組み立てる部分が描かれていない）"; color: #999; }
+</style>
+</head>
+<body>
+<h1>セキュリティの検証用（html）</h1>
+<p>md 側は <a href="./probe.md">probe.md</a>。読み方（どの設定で何を期待するか）は md 側の冒頭にある。</p>
+<p class="note">各項目は、何もしなければ <span class="r">⚪ 止まった</span> のまま。文書の JS が動いたときだけ <span class="r">🔴 動いた</span> に書き換わる。
+既定（「文書を信頼する」が OFF）では全部 ⚪。ON にすると 1・2 と、3 の script・fetch が 🔴 になる。</p>
+
+<h2>1. 文書の JavaScript</h2>
+<ul>
+  <li>インラインの <code>&lt;script&gt;</code>: <span class="r" id="r-inline">⚪ 止まった</span></li>
+  <li>画像の <code>onerror</code>: <img src="./probe-assets/missing.png" alt="" style="display:none" onerror="document.getElementById('r-onerror').textContent='🔴 動いた'"><span class="r" id="r-onerror">⚪ 止まった</span></li>
+  <li>ボタンの <code>onclick</code>（押すと判定）: <button onclick="document.getElementById('r-onclick').textContent='🔴 動いた'">押す</button> <span class="r" id="r-onclick">⚪ 止まった</span></li>
+  <li><code>javascript:</code> のリンク（押すと判定）: <a href="javascript:void(document.getElementById('r-jslink').textContent='🔴 動いた')">押す</a> <span class="r" id="r-jslink">⚪ 止まった</span></li>
+  <li><code>eval</code>: <span class="r" id="r-eval">⚪ 止まった</span><span class="note">（インラインの script が動くときだけ判定できる）</span></li>
+  <li><code>data:</code> の script: <span class="r" id="r-data">⚪ 止まった</span></li>
+  <li>JS で組み立てる部分（Playwright のレポートのような、JS が無いと白紙になる文書の代わり）:
+    <div id="js-built"></div></li>
+  <li><code>&lt;noscript&gt;</code> の中身: <noscript><span class="r">noscript の中身が出ている</span></noscript>
+    <span class="note">（JS を CSP で止めても、ブラウザは JS が有効だと見なすので出ない。どの設定でも出ない）</span></li>
+</ul>
+
+<h2>2. 親の窓に手が届くか</h2>
+<p class="note">同じ住所の iframe なので、文書の JS が動くと親の窓（アプリ自身）の内線が見える。呼びはしない。見えたかどうかだけを出す。</p>
+<ul>
+  <li><code>top.ipc</code> が見える: <span class="r" id="r-top-ipc">⚪ 止まった</span></li>
+  <li>親の document を読める: <span class="r" id="r-top-doc">⚪ 止まった</span></li>
+</ul>
+
+<h2>3. 外部の読み込み</h2>
+<ul>
+  <li>外部の画像（OFF なら「開く」リンクに置き換わる。ON ならバッジが出る）: <img src="https://img.shields.io/badge/外部の画像-読めた-blue" alt="外部の画像"></li>
+  <li>外部の CSS と Web フォント（読めていれば袋文字の Rampart One。読めなければ等幅のまま。md と違い、ON なら効く）: <span class="probe-font">外部フォント ABC</span></li>
+  <li>外部の script（cdnjs の dayjs）: <span class="r" id="r-ext-script">⚪ 止まった</span><span class="note">（インラインの script が動くときだけ判定できる。ON なら 🔴）</span></li>
+  <li>外への fetch（<code>example.com</code> へ no-cors で送る）: <span class="r" id="r-fetch">⚪ 止まった</span><span class="note">（同上）</span></li>
+  <li>外部の iframe（OFF なら「開く」リンクに置き換わる。ON なら枠の中に example.com が出る。どちらでも、開いた瞬間に既定のブラウザが開かないこと。枠の中のリンクを押しても何も開かないこと）:
+    <iframe src="https://example.com" width="480" height="160"></iframe></li>
+  <li>外部へのリンク（どの設定でも、押すと既定のブラウザで開く）: <a href="https://example.com">example.com</a> / <a href="https://example.com" target="_blank">target=_blank</a></li>
+</ul>
+
+<h2>4. 変わらないもの（どの設定でも同じに見えるべきもの）</h2>
+<ul>
+  <li>手元の CSS: <span class="local-css-mark">印</span></li>
+  <li>手元の画像: <img src="./probe-assets/local.png" alt="手元の PNG"> <img src="./probe-assets/local.svg" alt="手元の SVG"></li>
+  <li>インライン SVG: <svg width="120" height="24"><rect width="120" height="24" rx="4" fill="#ef6c00"/><text x="60" y="17" font-size="12" fill="#fff" text-anchor="middle" font-family="sans-serif">インライン SVG</text></svg></li>
+  <li>CSS だけのタブ（JS が止まっても切り替えられる）:
+    <style>
+      .tabs input { display: none; }
+      .tabs label { padding: 2px 10px; border: 1px solid #ccc; cursor: pointer; }
+      .tabs input:checked + label { background: #1565c0; color: #fff; }
+      .tabs .pane { display: none; padding: 6px; border: 1px solid #ccc; margin-top: 4px; }
+      #tab-a:checked ~ .pane-a, #tab-b:checked ~ .pane-b { display: block; }
+    </style>
+    <div class="tabs">
+      <input type="radio" name="t" id="tab-a" checked><label for="tab-a">タブ A</label>
+      <input type="radio" name="t" id="tab-b"><label for="tab-b">タブ B</label>
+      <div class="pane pane-a">A の中身</div><div class="pane pane-b">B の中身</div>
+    </div></li>
+  <li>手で確かめるもの: ⌘F でこのページの「検索の的」が見つかる / <kbd>c</kbd> でコメントが付けられる / 選択してコピーできる / 右クリックでアプリのメニューが出る</li>
+</ul>
+<p>検索の的: ずんだもち</p>
+
+<script>
+  // インラインの script。止まっていれば、ここから下は何も書き換わらない。
+  function mark(id) { var e = document.getElementById(id); if (e) e.textContent = '🔴 動いた'; }
+  mark('r-inline');
+  try { eval("mark('r-eval')"); } catch (e) {}
+  try { if (window.top !== window && window.top.ipc) mark('r-top-ipc'); } catch (e) {}
+  try { if (window.top !== window && window.top.document.body) mark('r-top-doc'); } catch (e) {}
+  document.getElementById('js-built').textContent = 'JS で組み立てた中身（これが見えていれば JS が動いている）';
+  try {
+    fetch('https://example.com/', { mode: 'no-cors' })
+      .then(function() { document.getElementById('r-fetch').textContent = '🔴 送れた'; })
+      .catch(function() { document.getElementById('r-fetch').textContent = '⚪ 送れなかった（JS は動いている）'; });
+  } catch (e) {}
+  window.addEventListener('load', function() {
+    document.getElementById('r-ext-script').textContent =
+      window.dayjs ? '🔴 読み込まれて動いた' : '⚪ 読み込まれなかった（JS は動いている）';
+  });
+</script>
+<script src="data:text/javascript,mark('r-data')"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.13/dayjs.min.js"></script>
+</body>
+</html>

@@ -3,8 +3,7 @@
 // 設定はファイルではないタブとして本文ペインに描く。設定を持っているのは Rust 側
 // なので、`MdSettings.push` を直接叩いて「渡された」状態を作り、操作の結果は
 // **IPC に何が出たか**で確かめる。
-const { test, expect } = require('@playwright/test');
-const { openFolder, open, ONE_FILE_URL } = require('./helpers');
+const { test, expect, openFolder, open, ONE_FILE_URL } = require('./helpers');
 
 const SW = {
   minimal: ['#ffffff', '#37352f', '#2e7cd6', '#2f9e44', '#e03131'],
@@ -35,6 +34,7 @@ async function push(page, over) {
     themes: THEMES,
     windowSize: null,
     defaultWindowSize: { w: 1280, h: 700 },
+    trusted: { saved: false, effective: false },
   }, over || {}));
 }
 
@@ -289,4 +289,86 @@ test('いまの大きさに設定する・既定に戻すは、それぞれ Rust
   expect(await ipc(page)).toEqual([
     'settings:get', `settings:window-size:${vp.width}x${vp.height}`, 'settings:window-size:reset',
   ]);
+});
+
+// ── JavaScript と外部の読み込み ──────────────────────────────
+
+const item = (page, key) => page.locator(`.st-item[data-switch="${key}"]`);
+const sw = (page, key) => item(page, key).locator('.st-switch');
+
+test('スイッチは保存してある値で出て、⌘Q の後から効くと書いてある', async ({ page }) => {
+  await openSettings(page, { trusted: { saved: true, effective: true } });
+  await navTo(page, 'content');
+  await expect(page.locator('.st-title')).toHaveText('JavaScript と外部の読み込み');
+  await expect(sw(page, 'trust-documents')).toHaveAttribute('aria-checked', 'true');
+  await expect(item(page, 'trust-documents').locator('.st-label')).toHaveText('文書を信頼する');
+  // スイッチは 1 つだけ（2 つだった頃の綴りは残っていない）。
+  await expect(page.locator('.st-item[data-switch]')).toHaveCount(1);
+  // 「⌘Q の後から」は見出しの直下に 1 回だけ。スイッチには書かない。
+  await expect(page.locator('.st-pane .st-when')).toHaveCount(1);
+  await expect(page.locator('.st-title + .st-when')).toHaveText('⌘Q で終了した後から効きます。');
+  // ナビは 1 行に収まる短い名前で、見出しには全部を書く。
+  const nav = page.locator('.st-nav button[data-pane="content"]');
+  await expect(nav).toHaveText('JavaScript・外部');
+  expect(await nav.evaluate((b) => b.getClientRects().length === 1 && b.offsetHeight < 40)).toBe(true);
+  // 説明は症状から引けて、ON にしたときの危険を書いている。
+  await expect(item(page, 'trust-documents')).toContainText('HTML が白紙になる');
+  await expect(item(page, 'trust-documents')).toContainText('バッジが「開く」リンクになる');
+  await expect(item(page, 'trust-documents')).toContainText('以後に開くすべての md と HTML');
+  await expect(item(page, 'trust-documents')).toContainText('手元のファイルを読んで外へ送れる');
+  await expect(item(page, 'trust-documents')).toContainText('開いたことや本文の一部が伝わる');
+  // drawio の拡張図形は ON のときだけ、と書いている。
+  await expect(item(page, 'trust-documents')).toContainText('ON にしたときだけ描かれます');
+  // 保存した値といま効いている値が同じなら、食い違いの文は出ない。
+  await expect(page.locator('.st-pending')).toHaveCount(0);
+});
+
+test('スイッチを押すと写しが切り替わり、on / off の保存を頼む', async ({ page }) => {
+  await openSettings(page);
+  await navTo(page, 'content');
+  await sw(page, 'trust-documents').click();
+  await expect(sw(page, 'trust-documents')).toHaveAttribute('aria-checked', 'true');
+  // 名前（label）を押しても切り替わる。
+  await item(page, 'trust-documents').locator('label').click();
+  await expect(sw(page, 'trust-documents')).toHaveAttribute('aria-checked', 'false');
+  expect(await ipc(page)).toEqual([
+    'settings:get',
+    'settings:trust-documents:on',
+    'settings:trust-documents:off',
+  ]);
+});
+
+test('ON を保存しても効くのは後からだと、スイッチの真下に出す', async ({ page }) => {
+  await openSettings(page);
+  await navTo(page, 'content');
+  await sw(page, 'trust-documents').click();
+  const note = item(page, 'trust-documents').locator('.st-pending');
+  await expect(note).toHaveText('保存しました。いまの md は OFF のままです。⌘Q で終了して開き直すと ON になります。');
+  await expect(note).not.toHaveClass(/is-warn/);
+  // スイッチの行の直後に置く（説明より上）。
+  expect(await item(page, 'trust-documents').evaluate((el) =>
+    el.querySelector('.st-switch-row').nextElementSibling.className)).toContain('st-pending');
+});
+
+test('OFF にしてもまだ ON のまま動いているときは、止めるには ⌘Q と出す', async ({ page }) => {
+  await openSettings(page, { trusted: { saved: true, effective: true } });
+  await navTo(page, 'content');
+  await sw(page, 'trust-documents').click();
+  const note = item(page, 'trust-documents').locator('.st-pending');
+  await expect(note).toHaveText('いまの md では、まだ ON のままです。止めるには ⌘Q で終了してください。');
+  await expect(note).toHaveClass(/is-warn/);
+  // ただの知らせとは、印と太い左の線で見分けられる。
+  expect(await note.evaluate((el) => ({
+    mark: getComputedStyle(el, '::before').content,
+    left: getComputedStyle(el).borderLeftWidth,
+  }))).toEqual({ mark: '"⚠ "', left: '4px' });
+  // スイッチの下の最後の言葉は食い違いの文（「⌘Q の後から」の決まり文句が後ろに来ない）。
+  await expect(item(page, 'trust-documents').locator('.st-when')).toHaveCount(0);
+
+  // Rust から届いた写しでも同じ（`md` を開き直さずに設定ファイルを手で書き換えたとき）。
+  await push(page, { trusted: { saved: false, effective: true } });
+  await expect(item(page, 'trust-documents').locator('.st-pending')).toHaveText(/まだ ON のままです/);
+  // 元へ戻せば消える。
+  await push(page, { trusted: { saved: true, effective: true } });
+  await expect(page.locator('.st-pending')).toHaveCount(0);
 });

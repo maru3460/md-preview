@@ -170,7 +170,7 @@ fn sample_md_standalone_links_render_as_embeds() {
     let path = sample_md();
     let md = std::fs::read_to_string(&path).expect("sample.md が読めない");
     let root = path.parent().expect("親ディレクトリが無い");
-    let rendered = render_file(&path, root, ViewMode::Normal).expect("描画できない");
+    let rendered = render_file(&path, root, ViewMode::Normal, md_preview::csp::Policy::default()).expect("描画できない");
 
     let links = local_links(&md);
     let expected = links.iter().filter(|l| l.should_embed()).count();

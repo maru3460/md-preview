@@ -31,3 +31,8 @@ site/.astro/
 
 # ルートの package-lock.json は無視しているが、サイトは CI が npm ci で入れるので追跡する
 !site/package-lock.json
+# tests/manual/security/probe.md の手順で手元に作る特殊なファイル
+/tests/manual/security/probe-zero.png
+/tests/manual/security/probe-zero.md
+/tests/manual/security/probe-fifo.md
+/tests/manual/security/probe-big.md

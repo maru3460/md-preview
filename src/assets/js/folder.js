@@ -1,4 +1,6 @@
 (function() {
+  // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
+  if (window.top !== window) return;
   // 現在プレビュー中のファイルの識別子（絶対パス）。何も開いていなければ null。
   var currentFilePath = null;
   // 本文フェッチの世代。loadPreview と clearPreview が進め、応答が届いた側は
@@ -103,6 +105,16 @@
 
   function renderItems(items, parentEl, depth) {
     items.forEach(function(item) {
+      // 1 つのフォルダに出す項目の上限で打ち切った印（request.rs の DIR_LIST_MAX）。行ではなく
+      // 注記なので `.tree-item` を着せない（j / k のカーソル・右クリック・巡回に乗らない）。
+      if (item.kind === 'more') {
+        var note = document.createElement('div');
+        note.className = 'tree-note';
+        note.style.paddingLeft = (8 + depth * 16) + 'px';
+        note.textContent = '項目が多いため ' + Number(item.limit).toLocaleString() + ' 件までを表示しています';
+        parentEl.appendChild(note);
+        return;
+      }
       var row = document.createElement('div');
       row.className = 'tree-item';
       row.style.paddingLeft = (8 + depth * 16) + 'px';
@@ -174,11 +186,11 @@
   }
 
   // パスと種別に一致するツリー行を、描画済みの中から探す。
-  // **`#sidebar` の中だけ**を見る。Quick Access の行も `.tree-item` を着ているので、
+  // **ツリー本体（`#sidebar`）の中だけ**を見る。Quick Access の行も `.tree-item` を着ているので、
   // 絞らないと `revealFile` が「まだ展開していない祖先」の代わりに枠の行を掴み、
   // `_expand` を持たないそれを見て「祖先が無い」と諦める。
   function findRow(path, kind) {
-    var rows = document.querySelectorAll('#sidebar .tree-item');
+    var rows = rowsIn(treeEl(), '.tree-item');
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].dataset.path === path &&
           (!kind || rows[i].dataset.kind === kind)) {
@@ -193,9 +205,7 @@
     // 非同期な reveal の完走中に別ファイルへ切り替わっていたら、現在の
     // ハイライトを壊さないよう何もしない。
     if (id !== currentFilePath) return;
-    document.querySelectorAll('.tree-item.active').forEach(function(el) {
-      el.classList.remove('active');
-    });
+    clearActiveRows();
     var row = findRow(id, 'file');
     if (row) {
       row.classList.add('active');
@@ -257,18 +267,41 @@
     return exts.indexOf(m[1].toLowerCase()) >= 0;
   }
 
-  // iframe(.html-frame) 内の相対リンククリックを親のプレビュー遷移に回す。true を返すと
-  // iframe 内遷移を止める。外部/アンカーや、md/html 以外（画像等）は iframe/wry に任せる。
-  function frameLinkClick(href) {
-    if (/^(https?:|mailto:|#)/i.test(href)) return false;
-    var hashIdx = href.indexOf('#');
-    var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
-    if (!isRenderablePath(pathPart)) return false;
-    // iframe の中身はサーバが書き換えていない（そのまま配信した html）ので、
-    // ここだけは相対パスを自前で解決する。
-    var resolved = currentFilePath ? MdCommon.resolvePath(currentFilePath, pathPart)
-      : MdCommon.urlToId(pathPart);
-    loadPreview(resolved);
+  // 窓の中のファイルを指すリンク（MdCommon.clickedLink の own）を、タブで開く。
+  // md・html 以外（画像・PDF・ソース）も、ツリーから開いたときと同じ表示になる。
+  // `/` で終わるパスはファイルではないので開かない。`/` そのもの（md の画面と、`?file=` など
+  // クエリで引く口）と、フォルダへのリンク（`./docs/`）。
+  // Why not フォルダをタブで開こうとする: 中身の無いエラーのタブが開くだけ。拡張子の無い
+  // ファイル（`LICENSE` など）は `/` で終わらないので、今までどおりタブで開く。
+  function openOwnLink(u) {
+    if (/\/$/.test(u.pathname)) return;
+    loadPreview(MdCommon.urlToId(u.pathname));
+    var anchor = u.hash.length > 1 ? u.hash.slice(1) : '';
+    if (anchor) {
+      setTimeout(function() {
+        var id = anchor;
+        try { id = decodeURIComponent(anchor); } catch (_) {}
+        var target = document.getElementById(id);
+        if (target) target.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }
+
+  var docUrlOf = Object.getOwnPropertyDescriptor(Document.prototype, 'URL').get;
+
+  // iframe(.html-frame) 内のリンクのうち、窓の中のファイルを指すものを親のプレビュー遷移に
+  // 回す（target に関係なく）。true を返すと iframe 内遷移を止める。外部は common.js の
+  // bindFrame が先に内線へ回している。同じ文書の中の錨と、クエリの付いたもの（検索ページの
+  // `search.html?q=` など。タブで開くとクエリが落ちる）は iframe の中に任せる。
+  function frameLinkClick(link, doc) {
+    var u = link.url;
+    if (!u || !link.own) return false;
+    var here;
+    // 文書の名前（`<img name=URL>`）で上書きされないよう、prototype の getter で読む。
+    try { here = new URL(docUrlOf.call(doc)); } catch (_) { return false; }
+    if (u.pathname === here.pathname && u.search === here.search) return false;
+    if (u.search) return false;
+    openOwnLink(u);
     return true;
   }
 
@@ -339,9 +372,7 @@
       pane.innerHTML = '';
       pane.appendChild(article);
     }
-    document.querySelectorAll('.tree-item.active').forEach(function(el) {
-      el.classList.remove('active');
-    });
+    clearActiveRows();
     if (window.MdMenu) window.MdMenu.setCurrentFile(null);
     if (window.MdSearch) window.MdSearch.reset();
     // raw / diff は現在のファイルに対する表示なので、対象が無くなったら畳む。
@@ -371,9 +402,7 @@
     // 進行中の本文フェッチを無効にする。設定タブへ移った直後に前のファイルの
     // 応答が届いて、設定画面を本文で上書きしないように。
     reqSeq++;
-    document.querySelectorAll('.tree-item.active').forEach(function(el) {
-      el.classList.remove('active');
-    });
+    clearActiveRows();
     if (window.MdMenu) window.MdMenu.setCurrentFile(null);
     if (window.MdSearch) window.MdSearch.reset();
     if (window.MdViewModes) window.MdViewModes.restore(null);
@@ -460,7 +489,8 @@
         // 下の `MdReload` のガードがこのファイルの再読込を**永久に**弾く（エディタの
         // atomic save の直後に開くと 404 を踏むので、その後 1 度も直らなくなる）。
         if (html == null) { bodyPath = id; showLoadError(pane, id); return; }
-        pane.innerHTML = html;
+        // 文書の `<style>` や `<meta>` を document に繋ぐ前に塞ぐ（docguard.js）。
+        MdDocGuard.fill(pane, html);
         bodyPath = id;
         // html は iframe の中がスクロール主体なので、ここでは預けるだけになる
         // （実際に戻すのは中身の load 後、common.js の bindFrame）。錨が効く md では
@@ -578,7 +608,7 @@
   // **Quick Access の行も含む**。j / k はツリーの末尾から枠へそのまま降りていく。
   function visibleRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('.tree-item'),
+      rowsIn(sidebarColEl(), '.tree-item'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -586,7 +616,7 @@
   // 枠の端ではない。
   function visibleTreeRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('#sidebar .tree-item'),
+      rowsIn(treeEl(), '.tree-item'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -595,7 +625,7 @@
   // Quick Access の行は木の一部ではない。
   function visibleFileRows() {
     return Array.prototype.filter.call(
-      document.querySelectorAll('#sidebar .tree-item.md-file'),
+      rowsIn(treeEl(), '.tree-item.md-file'),
       function(r) { return r.offsetParent !== null; }
     );
   }
@@ -621,7 +651,7 @@
   }
 
   function focusTree() {
-    var sb = document.getElementById('sidebar');
+    var sb = treeEl();
     // 畳んでいる間は見えない行にカーソルを送らない（呼ぶ側が先に開くこと）。
     if (!sb || !sidebarOpen) return;
     sb.focus({ preventScroll: true });
@@ -630,7 +660,7 @@
     if (!cursorRow || cursorRow.offsetParent === null) {
       // 木の中の帯だけを見る。root の外のファイルを留めていると、帯が付くのは
       // Quick Access の行だけになり、Tab がカーソルを枠の底へ置いてしまう。
-      var active = document.querySelector('#sidebar .tree-item.active');
+      var active = rowsIn(treeEl(), '.tree-item.active')[0] || null;
       var rows = visibleRows();
       setCursor((active && active.offsetParent !== null) ? active : (rows[0] || null));
     } else {
@@ -743,7 +773,7 @@
   function gotoAdjacentFile(delta) {
     var files = visibleFileRows();
     if (!files.length) return;
-    var cur = document.querySelector('#sidebar .tree-item.active');
+    var cur = rowsIn(treeEl(), '.tree-item.active')[0] || null;
     var i = (cur && cur.offsetParent !== null) ? files.indexOf(cur) : -1;
     var ni;
     if (i === -1) {
@@ -848,7 +878,7 @@
   // 借りないのはフォルダの `›` だけ（開閉の合図なので、開かない行に着けると嘘になる）。
   var quick = (window.MD_QUICK_ACCESS || []).slice();
 
-  function quickListEl() { return document.getElementById('quick-access-list'); }
+  function quickListEl() { return regionsNow().quickList; }
 
   function quickIndex(path) {
     for (var i = 0; i < quick.length; i++) {
@@ -996,7 +1026,25 @@
     toggle: quickToggle
   };
 
-  function treeEl() { return document.getElementById('sidebar'); }
+  // ツリー本体・サイドバーの列は、MdCommon が本文の入る前に取った参照（MdCommon.regions）で引く。
+  // 本文は同じ document にあるので、`#sidebar` や `.tree-item` を素で探すと、本文に
+  // `<div id="sidebar">` や `<div class="tree-item" data-path="…">` を書かれただけで、j / k の
+  // カーソルがそこへ乗り、Enter で任意のパスを開き、`x` で Quick Access に足せてしまう。
+  function regionsNow() {
+    return (window.MdCommon && MdCommon.regions) ? MdCommon.regions() : {};
+  }
+  function treeEl() { return regionsNow().tree || null; }
+  function sidebarColEl() { return regionsNow().sidebarCol || null; }
+  // root の中の selector に当たる要素。root が無ければ空。
+  function rowsIn(root, selector) {
+    return root ? root.querySelectorAll(selector) : [];
+  }
+  // ツリーと Quick Access の帯（.active）を外す。
+  function clearActiveRows() {
+    Array.prototype.forEach.call(rowsIn(sidebarColEl(), '.tree-item.active'), function(el) {
+      el.classList.remove('active');
+    });
+  }
 
   // 最初のツリーも root の識別子で聞く。`?dir=` に載るのは常に識別子、という契約を
   // 1 本にするため（空文字を「root の意味」にすると経路が 2 つになる）。
@@ -1055,7 +1103,7 @@
   // いま開いているフォルダの識別子。文書順＝浅い順で並ぶ。
   function openDirPaths() {
     return Array.prototype.map.call(
-      document.querySelectorAll('.tree-item.dir-open'),
+      rowsIn(treeEl(), '.tree-item.dir-open'),
       function(r) { return r.dataset.path; }
     );
   }
@@ -1364,33 +1412,20 @@
   });
 
   // ⌘A は common.js が、⌘W は tabs.js が keymap 経由で処理する。
+  //
+  // 本文のリンクのうち、窓の中のファイルを指すものは target に関係なくタブで開く
+  // （`<area>` と SVG のリンクも）。窓のメインフレームは md の画面から動かない
+  // （webview_delegate が取り消す）ので、ここで拾わないと押しても何も起きない。
+  // 本文の href はサーバが既に「開いているファイルの場所」基準で URL へ畳んでいる
+  // （相対解決をやり直すと二重解決になる）ので、識別子へ戻すだけ。
+  // 外部（http(s)・mailto: など、スキームかホストが違うもの）は拾わず、移動の判定に任せる。
+  // Why not 拡張子で見る: `vscode://file/x.md` のような外部スキームまでタブで開こうとしていた。
   document.addEventListener('click', function(e) {
-    var a = e.target.closest('a[href]');
-    if (!a) return;
-    var href = a.getAttribute('href');
-    if (!href) return;
-    if (MdCommon.scrollToAnchor(href, e)) {
-      // ページ内アンカーは処理済み。
-    } else if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('mailto:')) {
-      var hashIdx = href.indexOf('#');
-      var pathPart = hashIdx !== -1 ? href.slice(0, hashIdx) : href;
-      var anchorPart = hashIdx !== -1 ? href.slice(hashIdx + 1) : '';
-      // md / html はプレビュー枠内で遷移させる。html を top-level 遷移させると、text/html
-      // 配信になった今はウィンドウ全体が生ページに化けてサイドバー・トグルが消えてしまう。
-      if (isRenderablePath(pathPart)) {
-        e.preventDefault();
-        // 本文の href はサーバが既に「開いているファイルの場所」基準で URL へ畳んで
-        // いる（相対解決をここでやり直すと二重解決になる）。識別子へ戻すだけ。
-        var resolved = MdCommon.urlToId(pathPart);
-        loadPreview(resolved);
-        if (anchorPart) {
-          setTimeout(function() {
-            var id = decodeURIComponent(anchorPart);
-            var target = document.getElementById(id);
-            if (target) target.scrollIntoView({ behavior: 'smooth' });
-          }, 100);
-        }
-      }
-    }
+    var link = MdCommon.clickedLink(e, document);
+    if (!link) return;
+    if (MdCommon.scrollToAnchor(link.raw, e)) return; // ページ内アンカーは処理済み。
+    if (!link.url || !link.own) return;
+    e.preventDefault();
+    openOwnLink(link.url);
   });
 })();
