@@ -317,8 +317,7 @@ test('スイッチは保存してある値で出て、⌘Q の後から効くと
   await expect(item(page, 'trust-documents')).toContainText('以後に開くすべての md と HTML');
   await expect(item(page, 'trust-documents')).toContainText('手元のファイルを読んで外へ送れる');
   await expect(item(page, 'trust-documents')).toContainText('開いたことや本文の一部が伝わる');
-  // アプリが配る部品は OFF でも動く、drawio の拡張図形は ON のときだけ、と書き分けている。
-  await expect(item(page, 'trust-documents')).toContainText('コピーボタンと図の拡大');
+  // drawio の拡張図形は ON のときだけ、と書いている。
   await expect(item(page, 'trust-documents')).toContainText('ON にしたときだけ描かれます');
   // 保存した値といま効いている値が同じなら、食い違いの文は出ない。
   await expect(page.locator('.st-pending')).toHaveCount(0);

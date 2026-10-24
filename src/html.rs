@@ -152,7 +152,6 @@ const PAGE_SCRIPTS: &[(&str, &str)] = &[
     ("toc.js", include_str!("assets/js/toc.js")),
     ("contextmenu.js", include_str!("assets/js/contextmenu.js")),
     ("autocopy.js", include_str!("assets/js/autocopy.js")),
-    ("parts.js", include_str!("assets/js/parts.js")),
     ("extmedia.js", include_str!("assets/js/extmedia.js")),
     ("viewmode.js", include_str!("assets/js/viewmode.js")),
     ("help.js", include_str!("assets/js/help.js")),

@@ -142,26 +142,6 @@ graph TD
 
 ---
 
-## コピーボタンと図の拡大
-
-文書の JavaScript は既定で止まるが、よく使う 2 つは md が用意している。目印の属性を書くだけで動く：
-
-<button data-md-copy="copy-install">Copy</button> <code id="copy-install">cargo install --path .</code>
-
-押すとボタンが Copied に変わる。Mermaid の節の図と、本文の幅に収めるために縮められた画像（下は幅 2000px の画像）は、押せば本文の枠いっぱいに広がる：
-
-<img alt="幅 2000px の画像" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='2000' height='120' viewBox='0 0 2000 120'><rect width='2000' height='120' fill='%23e8f0e9'/><text x='1000' y='72' font-size='40' fill='%232f6f4f' text-anchor='middle' font-family='sans-serif'>幅 2000px の画像。本文の幅に縮められているので、押せば広がる</text></svg>">
-
-それ以外の図や画像を広げたいときは `<figure data-md-zoom>` で包む（前後に空行）：
-
-<figure data-md-zoom>
-
-<svg width="160" height="48" viewBox="0 0 160 48" xmlns="http://www.w3.org/2000/svg"><rect width="160" height="48" rx="8" fill="#2f6f4f"/><text x="80" y="30" font-size="16" fill="#fff" text-anchor="middle" font-family="sans-serif">押すと広がる</text></svg>
-
-</figure>
-
----
-
 ## コードブロック
 
 ファイル名なしの通常コードブロック（コピーボタンが右上に出る）：

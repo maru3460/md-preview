@@ -33,10 +33,6 @@
 
   // 既存 id があればそれを返し、無ければスラグから一意な id を生成して付与する。
   // 同名見出しは -2 / -3 ... で一意化し、空スラグは 'h' にフォールバックする。
-  // 付けた id には AUTO_ID_ATTR の印を残す。書き手の id を探す側（parts.js の
-  // data-md-copy）が、見出しの文字から勝手にできた id（「Copy settings」→ copy-settings）を
-  // 拾わないため。
-  var AUTO_ID_ATTR = 'data-md-auto-id';
   function ensureHeadingId(h) {
     if (h.id) return h.id;
     var base = slugify(h.textContent);
@@ -47,7 +43,6 @@
       id = base + '-' + (n++);
     }
     h.id = id;
-    h.setAttribute(AUTO_ID_ATTR, '');
     return id;
   }
 
@@ -59,8 +54,7 @@
   }
 
   // 本文の中に居るが、本文の文字ではないもの（アプリが足した UI）。コピーの写しから外す。
-  // 選択即コピー（mirrorMarkdown）・コードブロックの Copy・文書の部品のコピー（parts.js）で
-  // 共有する。ファイル名の行（.code-filename）は、mirrorMarkdown がフェンスの情報文字列を
+  // 選択即コピー（mirrorMarkdown）とコードブロックの Copy で共有する。ファイル名の行（.code-filename）は、mirrorMarkdown がフェンスの情報文字列を
   // 読んでから自分で外すので、ここには入れない。
   var NOT_BODY_TEXT = '.copy-btn, .md-cmt-badge, .md-cmt-embed, .md-cmt-badge-holder, .source-gutter';
 
@@ -384,8 +378,6 @@
 
   function hydrate(scope, opts) {
     bodySwaps++;
-    // 拡大中の図は、差し替えで置き札ごと消える。重ねものに前のファイルの図を残さない。
-    if (window.MdParts) MdParts.reset();
     var o = opts || {};
     var root = scope || document;
     // 本文を入れる経路は MdDocGuard.fill で入れて塞いである。fill を通らずに入った分の
@@ -805,7 +797,7 @@
   // 見るのは同じ origin のフレームだけ（外部の iframe の中は読めないし、そこから外へは
   // 開かない。webview_delegate も送り元が外部のフレームなら開かない）。入れ子の中で動いた
   // 先の文書や、後から足された iframe は、load を捕捉の段で受けて張り直す（load は泡立たないが、
-  // 祖先の捕捉には届く）。キーの転送や部品は張らない（入れ子の中では今までどおり効かない）。
+  // 祖先の捕捉には届く）。キーの転送は張らない（入れ子の中では今までどおり効かない）。
   var boundNestedDocs = new WeakSet();
   function bindNestedFrames(doc) {
     var listen = function(target, type, fn, capture) {
@@ -848,11 +840,7 @@
       EventTarget.prototype.addEventListener.call(doc, type, fn, capture);
     };
     // 外部の読み込みを止めているとき、外部の画像などを「開く」リンクに置き換える（extmedia.js）。
-    // 部品より先に。図の拡大は、置き換えた後の中身を見て拡大できるかを決める。
     try { if (window.MdExtMedia) MdExtMedia.bindDoc(doc); } catch (e) {}
-    // 文書の部品（コピーボタン・図の拡大）。クリックは iframe の中で受ける。下の配線が
-    // 文書の名前のすり替えで投げても、部品は動くよう先に張る。
-    if (window.MdParts) MdParts.bindDoc(doc, frame);
 
     // タブに残した読み位置へ戻す。ここまで待たないと中身の高さが決まらず、
     // clamp されて 0 に落ちる。実際に戻すのは restoreFrameScroll（数フレーム後）で、
@@ -1022,7 +1010,7 @@
   // サイドバーの列・タブ帯・本文・仕切り。md の本文はアプリの UI と同じ document にあるので、
   // `#preview-pane` や `.tree-item` を素で探すと、本文に同じ id・クラスの要素を書かれただけで
   // そちらを拾う。参照は本文が入る前（DOMContentLoaded）に 1 回だけ取り、以後は id で
-  // 引き直さない。右クリックの対象探し（contextmenu.js）・文書の部品（parts.js）・ツリーの
+  // 引き直さない。右クリックの対象探し（contextmenu.js）・ツリーの
   // キー操作（folder.js）・`.html` のプレビューの iframe の見分け（appHtmlFrames）が使う。
   // tree はツリー本体（#sidebar）、quickList は Quick Access の一覧。どちらも sidebarCol の中。
   // 1 枚ページ（folder-mode でない）にはどれも無いので、取らずに null のままにする
@@ -1515,7 +1503,7 @@
   }
 
   // 書き込み口はここ 1 つに寄せる（コードブロックの Copy・右クリックの「コピー」・
-  // コメントの全部コピー・選択即コピー・文書の部品のコピーが全部ここを通る）。
+  // コメントの全部コピー・選択即コピーが全部ここを通る）。
   //
   // navigator.clipboard を先に試し、駄目なら Rust（NSPasteboard）へ回す。
   // 以前は隠し textarea + execCommand で代替していたが、あれは textarea を select()
@@ -1651,8 +1639,7 @@
   // 添字で対応が取れる（数が合わないときは呼ぶ側が使わない）。
   //
   // 見ないもの: 透明・文字色・clip-path・小さな overflow の箱で一部だけ隠したもの。どれも
-  // 見た目の判定で、取り違えると読めている文字をコピーから落とす。文書の部品（parts.js）の
-  // コピーは隠した文字を除こうとせず、写した中身を見せる形にしている。
+  // 見た目の判定で、取り違えると読めている文字をコピーから落とす。
   // `firstOnly` なら、最初の見えない要素で止めてその 1 つだけを返す（有無を知りたいだけの
   // ときに、範囲の要素を全部歩かない）。歩く要素の数には上限を置き、超えたら「見えない文字
   // あり」側（`[true]`）へ倒す（写さない方へ倒れるだけで、何も漏れない）。
@@ -1980,7 +1967,6 @@
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
     copyText: copyText,
-    AUTO_ID_ATTR: AUTO_ID_ATTR,
     NOT_BODY_TEXT: NOT_BODY_TEXT,
     selectionText: selectionText,
     selectionMarkdown: selectionMarkdown,

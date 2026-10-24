@@ -3,7 +3,7 @@ import DocLayout from '../../layouts/DocLayout.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
-<DocLayout slug="read" title="読む" description="⌘P のファイル検索、⌘F のページ内検索、アウトライン、選択即コピー、自動リロード。既定で止まる JavaScript とネットの読み込み、コピーボタンと図の拡大。">
+<DocLayout slug="read" title="読む" description="⌘P のファイル検索、⌘F のページ内検索、アウトライン、選択即コピー、自動リロード。既定で止まる JavaScript とネットの読み込み。">
   <p>
     GitHub で見たときと同じ形で出します。表・タスクリスト・アラート・front matter・
     Mermaid・draw.io・シンタックスハイライトに対応しています。
@@ -87,32 +87,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
     md の本文に書いた <code>&lt;script&gt;</code> 要素は、設定を ON にしても動きません。
     本文の <code>&lt;style&gt;</code> は本文の中だけに効き、サイドバーやタブには届きません（<code>@import</code> と <code>@font-face</code> は外します）。
   </p>
-
-  <h2 id="parts">コピーボタンと図の拡大</h2>
-  <p>
-    よく使う 2 つは、文書の JavaScript が止まっていても動くよう md-preview が用意しています。
-    文書には目印の属性を書くだけです。
-  </p>
-  <div class="codebox">
-    <div class="codebox-head"><span>Markdown</span></div>
-    <pre>{`<button data-md-copy="copy-cmd">Copy</button> <code id="copy-cmd">npm run build</code>
-
-<figure data-md-zoom>
-
-![構成図](arch.svg)
-
-</figure>`}</pre>
-  </div>
-  <div class="flist">
-    <div class="fitem">
-      <div class="fname">コピー</div>
-      <div class="fdesc"><code>data-md-copy="copy-ID"</code> を付けたボタンを押すと、<code>id="copy-ID"</code> の要素の文字をコピーします。id は <code>copy-</code> で始めます。押すとボタンの文字が Copied に変わります。<code>.html</code> では値を省いた <code>data-md-copy</code> で、すぐ前の <code>&lt;pre&gt;</code> をコピーできます。</div>
-    </div>
-    <div class="fitem">
-      <div class="fname">拡大</div>
-      <div class="fdesc">md では、Mermaid の図と、本文の幅に収めるために縮められた画像は、そのまま押せば本文の枠いっぱいに広がります。それ以外を広げたいときは <code>data-md-zoom</code> を <code>&lt;figure&gt;</code>・<code>&lt;svg&gt;</code>・<code>&lt;img&gt;</code> に付けます。md で画像を包むときは、<code>&lt;figure&gt;</code> の前後に空行を入れます。<code>.html</code> では目印のあるものだけです。</div>
-    </div>
-  </div>
 
   <h2>配色を変える</h2>
   <p>

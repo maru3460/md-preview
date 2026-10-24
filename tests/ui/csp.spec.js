@@ -1,5 +1,5 @@
 // 文書の JavaScript を止める CSP（csp.rs）。既定（「文書を信頼する」が OFF）のサーバで、md の本文と `.html` の
-// 中の script・イベント属性・`javascript:` が動かないこと、アプリ自身の部品は動くこと。
+// 中の script・イベント属性・`javascript:` が動かないこと、アプリ自身の JS は動くこと。
 //
 // わざと止める文書を開くので、ここだけは違反が起きる。数えない違反を `cspAllowed` で渡し、
 // 違反が実際に起きた（＝CSP が止めた）ことも `cspViolations` で確かめる。

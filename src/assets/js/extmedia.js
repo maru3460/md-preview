@@ -21,7 +21,7 @@
 // より前に飛ぶことがあり、取りこぼす。読み込み後の DOM の src / srcset を見る。
 //
 // 文書の要素で名前がすり替わらないよう、document と要素のメソッドは prototype から呼ぶ
-// （parts.js の冒頭と同じ理由。DOM clobbering）。文字は textContent で入れ、リンクは本物の
+// （DOM clobbering）。文字は textContent で入れ、リンクは本物の
 // `<a href>` にする（押したときの移動は、本文のほかのリンクと同じ判定を通る）。
 (function() {
   // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
@@ -66,7 +66,7 @@
   var setText = Object.getOwnPropertyDescriptor(N, 'textContent').set;
   var each = function(list, fn) { Array.prototype.forEach.call(list, fn); };
 
-  // 置き換え済みの document。印を文書に置かない理由は parts.js の boundDocs と同じ。
+  // 置き換え済みの document。文書が書ける場所に印を置くと、同じ名前の要素で配線済みに見せかけられる。
   var doneDocs = new WeakSet();
 
   function isWeb(p) { return p === 'http:' || p === 'https:'; }

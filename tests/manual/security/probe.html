@@ -77,26 +77,6 @@
 </ul>
 <p>検索の的: ずんだもち</p>
 
-<h2>5. 部品</h2>
-<p class="note">文書の JS を止めたまま（既定）でも動く、アプリが配る部品。</p>
-<ul>
-  <li>コピーボタン（id で指す）: <button data-md-copy="copy-probe">Copy</button> <code id="copy-probe">コピーされる文字</code>
-    <span class="note">（押すとボタンが Copied に変わり、1 秒ほどで戻ること。貼り付けると「コピーされる文字」が入ること。ほかに何も出ないこと）</span></li>
-  <li>コピーボタン（値なし。すぐ前の pre を写す）:
-    <pre>pre の中身</pre><button data-md-copy>Copy</button></li>
-  <li>CSS で隠した文字は写らない: <button data-md-copy="copy-probe-hidden">Copy</button>
-    <span id="copy-probe-hidden">見える<span style="display:none">隠した</span>文字</span>
-    <span class="note">（貼り付けた先に「見える文字」だけが出ること）</span></li>
-  <li>図の拡大: <img data-md-zoom src="./probe-assets/local.svg" alt="拡大できる SVG">
-    <ul>
-      <li>押すと iframe いっぱいに広がり、右上に「Esc で閉じる · クリックで 1:1」が出ること</li>
-      <li>図を押すと 1:1 になり、手がかりが「クリックで全体」に変わること。もう一度押すと戻ること</li>
-      <li>Esc か背景のクリックで閉じること</li>
-    </ul></li>
-  <li>実寸で出ているラスター画像（<code>local.png</code>）: <img data-md-zoom src="./probe-assets/local.png" alt="広げても大きくならない PNG">
-    <span class="note">（広げても大きくならないので、拡大のカーソルが出ず、押しても開かないこと）</span></li>
-</ul>
-
 <script>
   // インラインの script。止まっていれば、ここから下は何も書き換わらない。
   function mark(id) { var e = document.getElementById(id); if (e) e.textContent = '🔴 動いた'; }
