@@ -1000,9 +1000,11 @@ pub fn open_files_script(ids: &[String]) -> String {
 /// Why not 空なら空文字を返す（`open_files_script` と同じ形にする）: あちらは
 /// 「開け」という命令なので 0 件なら何もしなくてよいが、こちらは**状態の写し**である。
 /// 空を渡せないと、最後の 1 件が消えたときにページが古い一覧を出したままになる。
+///
+/// 並びはベルに見せる順（未読が先、#79）にしてから渡す。ページは渡された順に描くだけ。
 pub fn notifications_script(list: &[crate::notifications::Entry]) -> String {
-    let items = list
-        .iter()
+    let items = crate::notifications::display_order(list)
+        .into_iter()
         .map(|e| {
             format!(
                 "{{path:{},at:{},read:{},origin:{}}}",
@@ -1321,12 +1323,29 @@ mod tests {
             path: "/a/\"odd\"\\name.md".to_string(),
             at: 1_700_000_000,
             read: true,
+            read_at: 1_700_000_100,
             origin: Default::default(),
         }];
         let script = notifications_script(&list);
         assert!(script.contains("at:1700000000"), "{script}");
         assert!(script.contains("read:true"), "{script}");
         assert!(!script.contains("\"odd\""), "生の引用符が漏れている: {script}");
+    }
+
+    /// 台帳の並び（届いた順）ではなく、未読が先の並びでページへ渡ること（#79）。
+    #[test]
+    fn the_page_gets_unread_rows_before_read_ones() {
+        use crate::notifications::Entry;
+        let e = |path: &str, read| Entry {
+            path: path.into(),
+            at: 1,
+            read,
+            read_at: 0,
+            origin: Default::default(),
+        };
+        let script = notifications_script(&[e("/read.md", true), e("/unread.md", false)]);
+        let (u, r) = (script.find("/unread.md").unwrap(), script.find("/read.md").unwrap());
+        assert!(u < r, "{script}");
     }
 
     #[test]
