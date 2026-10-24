@@ -287,8 +287,11 @@
     return row;
   }
 
-  // カーソルの行を開く。**開いても一覧は閉じない**——続けて次を開けるようにする
-  // （閉じるのは Esc とベルの押し直し）。行も消さず、既読になって残る。
+  // カーソルの行を開いて、一覧を閉じる。行は消さず、既読になって残る。
+  //
+  // Why not 開いたまま残す（続けて次を開けるように）: 一覧は本文の上に重なるので、
+  // 開いたファイルを読むたびに自分で閉じることになる（#78）。続けて開くときは
+  // `b` で開き直して選ぶ。
   function activate() {
     var item = list[cursor];
     if (!item) return;
@@ -296,6 +299,7 @@
     if (window.MdTabs && MdTabs.markFromBell) MdTabs.markFromBell(item.path);
     if (opts && opts.openFile) opts.openFile(item.path);
     send('read:' + item.path);
+    close();
   }
 
   function send(verb) {

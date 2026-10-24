@@ -86,8 +86,8 @@ test('j/k でカーソルが動き、Enter でタブが開いて既読の要求�
   await page.keyboard.press('Enter');
   await expect(tab(page, 'a.md')).toHaveClass(/active/);
   expect(await ipc(page)).toEqual(['notify:read:' + id(page, 'a.md')]);
-  // 開いても一覧は閉じない。
-  await expect(panel(page)).toBeVisible();
+  // 開いたら一覧は閉じる（本文に重ならない）。
+  await expect(panel(page)).toHaveCount(0);
 });
 
 test('行をクリックしても同じ経路を通る', async ({ page }) => {
@@ -99,6 +99,7 @@ test('行をクリックしても同じ経路を通る', async ({ page }) => {
   expect(await display(page, await page.locator('.md-tab.active').getAttribute('data-path')))
     .toBe('sub/a.md');
   expect(await ipc(page)).toEqual(['notify:read:' + id(page, 'sub/a.md')]);
+  await expect(panel(page)).toHaveCount(0);
 });
 
 test('「すべて既読」は未読があるときだけ出る', async ({ page }) => {

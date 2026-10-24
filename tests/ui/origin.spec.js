@@ -126,7 +126,6 @@ test('実ファイルの帯は、ベルから開いたタブにだけ出て、�
   // 同じファイルのタブが開いたままでも、ベルから開き直せば印が付く。
   await page.keyboard.press('b');
   await rows(page).first().click();
-  await page.keyboard.press('Escape');
   await expect(band(page)).toHaveText('ベル経由の補足');
 
   // 他のタブへ行って戻っても、raw の往復や保存での読み直しの後でも残る。
@@ -158,7 +157,6 @@ test('まとめて閉じたタブも、ベルから開いた印が外れる', as
     await pushReal(page, 'a.md', '補足');
     await page.keyboard.press('b');
     await rows(page).first().click();
-    await page.keyboard.press('Escape');
     await expect(band(page)).toHaveText('補足');
     await page.locator('#sidebar .tree-item', { hasText: 'b.md' }).click();
     await page.evaluate(([f, k]) => (k ? window.MdTabs[f](k) : window.MdTabs[f]()), [fn, keep && id(page, keep)]);
@@ -172,7 +170,6 @@ test('帯の出ているタブから設定タブへ移るか、全部閉じる�
   await pushReal(page, 'a.md', '補足');
   await page.keyboard.press('b');
   await rows(page).first().click();
-  await page.keyboard.press('Escape');
   await expect(band(page)).toHaveText('補足');
 
   await page.keyboard.press('Meta+,');
@@ -221,7 +218,6 @@ test('送り直しで note が変われば開いているタブの帯も変わ�
   await pushReal(page, 'a.md', '1 版');
   await page.keyboard.press('b');
   await rows(page).first().click();
-  await page.keyboard.press('Escape');
   await expect(band(page)).toHaveText('1 版');
 
   await pushReal(page, 'a.md', '2 版');
@@ -236,7 +232,6 @@ test('html を帯付きで開くと、iframe は帯のぶんだけ縮んで窓�
   await pushReal(page, 'page.html', 'html の補足');
   await page.keyboard.press('b');
   await rows(page).first().click();
-  await page.keyboard.press('Escape');
   await expect(band(page)).toBeVisible();
   await expect(page.frameLocator('iframe.html-frame').locator('h1')).toBeVisible();
   const [bottom, vh] = await page.evaluate(() => {
