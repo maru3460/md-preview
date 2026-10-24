@@ -146,9 +146,9 @@ graph TD
 
 文書の JavaScript は既定で止まるが、よく使う 2 つは md が用意している。目印の属性を書くだけで動く：
 
-<button data-md-copy="copy-install">コピー</button> <code id="copy-install">cargo install --path .</code>
+<button data-md-copy="copy-install">Copy</button> <code id="copy-install">cargo install --path .</code>
 
-押すと、写した中身がその場に出る。Mermaid の節の図と、本文の幅に収めるために縮められた画像（下は幅 2000px の画像）は、押せば本文の枠いっぱいに広がる：
+押すとボタンが Copied に変わる。Mermaid の節の図と、本文の幅に収めるために縮められた画像（下は幅 2000px の画像）は、押せば本文の枠いっぱいに広がる：
 
 <img alt="幅 2000px の画像" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='2000' height='120' viewBox='0 0 2000 120'><rect width='2000' height='120' fill='%23e8f0e9'/><text x='1000' y='72' font-size='40' fill='%232f6f4f' text-anchor='middle' font-family='sans-serif'>幅 2000px の画像。本文の幅に縮められているので、押せば広がる</text></svg>">
 

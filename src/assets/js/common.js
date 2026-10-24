@@ -91,9 +91,7 @@
         // ため、コード本文はこれで元ソースのまま取れる。
         var clone = code.cloneNode(true);
         clone.querySelectorAll(NOT_BODY_TEXT).forEach(function(n) { n.remove(); });
-        copyText(clone.textContent, function(copied) {
-          // 文書の部品のコピーと同じ合図も出す。ボタンの文言だけでは、何が写ったかが見えない。
-          if (buttonCopied) buttonCopied(copied);
+        copyText(clone.textContent, function() {
           btn.textContent = 'Copied';
           btn.classList.add('copied');
           setTimeout(function() {
@@ -875,8 +873,8 @@
     // 選択即コピー。iframe 内の mouseup も親には届かないので、ここで同じ口へ繋ぐ
     // （右クリックメニューやキー転送と同じ「親へ委譲」の形）。ここは親のスクリプト
     // なので、この先で叩く window.ipc / navigator はトップフレームのものになる。
-    // frame も渡す。iframe 内の座標はその文書のビューポート基準なので、合図を親の
-    // 画面に出すには iframe の位置ぶん足す必要がある（右クリック転送と同じ換算）。
+    // frame も渡す。iframe 内の座標はその文書のビューポート基準なので、チェックの印を
+    // 親の画面に出すには iframe の位置ぶん足す必要がある（右クリック転送と同じ換算）。
     // 文書の名前のすり替えで投げても、この先（キーの転送など）を止めない。
     try { if (window.MdAutoCopy) MdAutoCopy.bindDoc(doc, frame); } catch (e) {}
 
@@ -1509,24 +1507,11 @@
   // 貼った先で並びが崩れる。並びを入れ替えられるのは埋め込み・上書き・分離の制御
   // （U+202A〜202E・U+2066〜2069）の方なので、そちらは落とす。
   var INVISIBLE_CHARS = /(\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F})|[\u0000-\u0008\u000B\u000E-\u001F\u007F-\u009F\u200B\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\u{E0000}-\u{E007F}]/gu;
-  // 改行は LF に揃える。CR だけの改行は、合図（white-space の表示）では改行に見えないのに
-  // 貼った先では改行になることがあり、見せたものと写したものが食い違う。
+  // 改行は LF に揃える。CR だけの改行は、画面では改行に見えないのに貼った先では改行に
+  // なることがあり、見せたものと写したものが食い違う。
   function cleanCopyText(text) {
     return String(text || '').replace(/\r\n?/g, '\n')
       .replace(INVISIBLE_CHARS, function(m, flag) { return flag || ''; });
-  }
-
-  // コードブロックの Copy が写した中身を見せる合図（parts.js の閉じた shadow root）。
-  // 受け口は最初の 1 回だけ取れる。parts.js は <head> の中で本文より先に取るので、
-  // 文書が後から偽の合図を出す口にはならない。
-  // ただしこれは文書の JS が止まっている（既定）ことが前提の守り。文書の JS を動かす設定に
-  // したなら、その文書は信じると決めたもので、MdCommon も合図も文書の JS から触れる。
-  // そこまでは請け負わない。
-  var buttonCopied = null;
-  function claimCopySignal(fn) {
-    if (buttonCopied || typeof fn !== 'function') return false;
-    buttonCopied = fn;
-    return true;
   }
 
   // 書き込み口はここ 1 つに寄せる（コードブロックの Copy・右クリックの「コピー」・
@@ -1542,7 +1527,7 @@
   // IPC は投げっぱなしなので、その経路の done() は成功の確認ではなく送信の確認。
   //
   // 見えない制御の文字はここで落とす。書き込み口が 1 つなので、どの経路のコピーも漏れない。
-  // done には実際に入れた文字列を渡す（合図に出すのは落とした後のもの）。落とした結果が
+  // done には実際に入れた文字列を渡す。落とした結果が
   // 空なら fail('empty')。
   function copyText(text, done, fail) {
     text = cleanCopyText(text);
@@ -1995,7 +1980,6 @@
     isInteractiveFocus: isInteractiveFocus,
     isFieldEl: isFieldEl,
     copyText: copyText,
-    claimCopySignal: claimCopySignal,
     AUTO_ID_ATTR: AUTO_ID_ATTR,
     NOT_BODY_TEXT: NOT_BODY_TEXT,
     selectionText: selectionText,

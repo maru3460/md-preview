@@ -1,7 +1,7 @@
 // アプリが配る部品（parts.js）: コピーボタンと図の拡大。
 //
 // 文書の JS を止めても、目印の属性を書いた文書ではこの 2 つが動くこと。文書の中身
-// （CSS・名前のすり替え・偽の目印）に、部品の動きと合図を乗っ取られないこと。
+// （CSS・名前のすり替え・偽の目印）に、部品の動きを乗っ取られないこと。
 // 拡大は本文の枠の中に留まり、アプリの重ねものより下に出ること。
 //
 // クリップボードの中身は autocopy.spec.js と同じく、navigator.clipboard を失敗させて
@@ -31,7 +31,7 @@ async function expectNoCopies(page) {
 
 const probe = (page, name) => page.evaluate((n) => MdParts.__test[n](), name);
 const isZoomed = (page) => probe(page, 'isZoomed');
-const signalText = (page) => probe(page, 'signalText');
+const toastText = (page) => page.locator('.md-toast.show').textContent();
 
 /// a.md を開き、本文の末尾に html を差し込む（フィクスチャを足すとツリーの並びを見ている
 /// spec に響くので、その場で作る）。
@@ -82,23 +82,30 @@ async function pngDataUrl(page) {
 
 // ── コピー ─────────────────────────────────────────────────────
 
-test('md: data-md-copy は id の要素の文字を写し、写した中身を合図に出す', async ({ page }) => {
-  await openMdWith(page, '<p><button data-md-copy="copy-x">写す</button> <code id="copy-x">npm run build</code></p>');
-  await page.locator('#preview-pane button[data-md-copy]').click();
+test('md: data-md-copy は id の要素の文字を写し、ボタンは Copied に変わって戻る', async ({ page }) => {
+  await openMdWith(page, '<p><button data-md-copy="copy-x"><b>Copy</b></button> <code id="copy-x">npm run build</code></p>');
+  const btn = page.locator('#preview-pane button[data-md-copy]');
+  await btn.click();
   await expect.poll(() => copies(page)).toEqual(['npm run build']);
-  expect(await probe(page, 'signalShown')).toBe(true);
-  expect(await signalText(page)).toContain('npm run build');
+  await expect(btn).toHaveText('Copied');
+  await expect(btn).toHaveAttribute('data-md-copied', '');
+  // 文書が書いた中身（太字の Copy）がそのまま戻る。トーストは出さない。
+  await expect(btn).toHaveText('Copy', { timeout: 3000 });
+  expect(await btn.locator('b').count()).toBe(1);
+  await expect(page.locator('.md-toast.show')).toHaveCount(0);
 });
 
-test('ページが右から左の向きでも、合図は左から右で並び、写した行は行ごとに向きを決める', async ({ page }) => {
-  await openMdWith(page, '<p><button data-md-copy="copy-r">写す</button> <code id="copy-r">abc שלום</code></p>');
-  await page.evaluate(() => {
-    document.documentElement.setAttribute('dir', 'rtl');
-    document.body.style.direction = 'rtl';
-  });
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  expect(await probe(page, 'signalBidi')).toEqual({ box: 'ltr isolate', body: 'plaintext' });
+test('続けて押しても Copied のままで、最後に押してから 1.2 秒で戻る', async ({ page }) => {
+  await openMdWith(page, '<p><button data-md-copy="copy-x2">Copy</button> <code id="copy-x2">twice</code></p>');
+  const btn = page.locator('#preview-pane button[data-md-copy]');
+  await btn.click();
+  await expect(btn).toHaveText('Copied');
+  await page.waitForTimeout(800);
+  await btn.click();
+  await page.waitForTimeout(800);
+  await expect(btn).toHaveText('Copied');
+  await expect(btn).toHaveText('Copy', { timeout: 3000 });
+  await expect.poll(() => copies(page)).toEqual(['twice', 'twice']);
 });
 
 test('html: id の形と、値なしの形（すぐ前の pre）の両方が写す', async ({ page }) => {
@@ -156,43 +163,36 @@ test('写しに画像などの埋め込みを持ち込まない', async ({ page 
   await expect.poll(() => copies(page)).toEqual(['前後']);
 });
 
-test('見つからない id は、文書のボタンを書き換えず、id 入りの合図を出す', async ({ page }) => {
+test('見つからない id は、文書のボタンを書き換えず、id 入りのトーストを出す', async ({ page }) => {
   await openMdWith(page, '<p><button data-md-copy="copy-none">写す</button></p>');
   const btn = page.locator('#preview-pane button[data-md-copy]');
   await btn.click();
   await expect(btn).toHaveText('写す');
-  expect(await signalText(page)).toContain('見つかりません');
-  expect(await signalText(page)).toContain('copy-none');
+  await expect.poll(() => toastText(page)).toContain('見つかりません');
+  expect(await toastText(page)).toContain('copy-none');
   await expectNoCopies(page);
 });
 
-test('copy- で始まらない値は、copy- で始めるよう値入りの合図を出して写さない', async ({ page }) => {
+test('copy- で始まらない値は、copy- で始めるよう値入りのトーストを出して写さない', async ({ page }) => {
   await openMdWith(page, '<p id="plain">ふつうの段落</p><p><button data-md-copy="plain">写す</button></p>');
   await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => signalText(page)).toContain('copy- で始めて');
-  expect(await signalText(page)).toContain('plain');
+  await expect.poll(() => toastText(page)).toContain('copy- で始めて');
+  expect(await toastText(page)).toContain('plain');
   await expectNoCopies(page);
 });
 
-test('合図は複数行の中身を真ん中の行まで全部見せ、上限を超えたら真ん中を省く', async ({ page }) => {
-  await openMdWith(page,
-    '<pre id="copy-l">1 行目\n真ん中の行\n最後の行</pre><p><button id="short" data-md-copy="copy-l">写す</button></p>' +
-    '<pre id="copy-big">' + 'あ'.repeat(1000) + 'まんなか' + 'い'.repeat(1000) + '</pre>' +
-    '<p><button id="big" data-md-copy="copy-big">写す</button></p>');
-  await page.locator('#short').click();
-  await expect.poll(() => signalText(page)).toContain('真ん中の行');
-  const t = await signalText(page);
-  expect(t).toContain('3 行');
-  expect(t).toContain('1 行目\n真ん中の行\n最後の行');
-
-  await page.locator('#big').click();
-  await expect.poll(() => signalText(page)).toContain('省略');
-  const big = await signalText(page);
-  expect(big).toContain('あ'.repeat(10));
-  expect(big).toContain('い'.repeat(10));
-  expect(big).not.toContain('まんなか');
-  // 写したもの自体は省かない。
-  await expect.poll(async () => (await copies(page)).pop()).toBe('あ'.repeat(1000) + 'まんなか' + 'い'.repeat(1000));
+test('コードブロックの Copy は Copied に変わるだけで、ほかに何も出さない', async ({ page }) => {
+  await stubClipboard(page);
+  await openFolder(page);
+  await treeItem(page, 'zz-code.md').click();
+  const btn = page.locator('#preview-pane .copy-btn').first();
+  await expect(btn).toBeAttached();
+  await btn.click({ force: true });
+  // コードブロックの Copy は、フェンスの中身を末尾の改行ごと写す（これまでどおり）。
+  await expect.poll(() => copies(page)).toEqual(['cargo install --path .\n']);
+  await expect(btn).toHaveText('Copied');
+  await expect(page.locator('.md-toast.show')).toHaveCount(0);
+  await expect(btn).toHaveText('Copy', { timeout: 3000 });
 });
 
 test('目印の無いもの・本文の外の目印には何も起きない', async ({ page }) => {
@@ -207,112 +207,7 @@ test('目印の無いもの・本文の外の目印には何も起きない', as
   for (const sel of ['#nomark', '#nofig', '#outside']) await page.locator(sel).click();
   await expectNoCopies(page);
   expect(await isZoomed(page)).toBe(false);
-  expect(await signalText(page)).toBe('');
-});
-
-test('合図は文書の CSS で消せない', async ({ page }) => {
-  await openMdWith(page,
-    // 合図の置き場所（html 直下・body 直下・トップレイヤー）を狙えるものを全部隠しにいく。
-    '<style>html > *:not(body), body > div:not(.folder-layout), [popover], :popover-open, [role=status] {' +
-    ' display:none!important; opacity:0!important; visibility:hidden!important; }</style>' +
-    '<p><button data-md-copy="copy-s">写す</button> <code id="copy-s">見える？</code></p>');
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-});
-
-test('合図は長い中身を行の境目で省き、残す行は途中で切らない', async ({ page }) => {
-  const rows = Array.from({ length: 100 }, (_, i) => '行 ' + (i + 1));
-  const wide = Array.from({ length: 30 }, (_, i) => String(i).padStart(2, '0') + 'x'.repeat(98));
-  await openMdWith(page,
-    '<pre id="copy-rows">' + rows.join('\n') + '</pre><p><button id="r" data-md-copy="copy-rows">写す</button></p>' +
-    '<pre id="copy-wide">' + wide.join('\n') + '</pre><p><button id="w" data-md-copy="copy-wide">写す</button></p>');
-
-  await page.locator('#r').click();
-  await expect.poll(() => signalText(page)).toContain('行を省略');
-  const t = await signalText(page);
-  expect(t).toContain('100 行');
-  expect(t).toContain('行 1\n行 2\n');
-  expect(t).toContain('行 15\n…（70 行を省略）…\n行 86\n');
-  expect(t).toContain('行 100');
-  expect(t).not.toContain('行 50');
-
-  // 1 行が長いときは、文字数の上限に収まる行数だけ残す。残した行は 1 行まるごと。
-  await page.locator('#w').click();
-  await expect.poll(() => signalText(page)).toContain('00' + 'x'.repeat(98));
-  const body = (await signalText(page)).replace(/^コピーしました（[^）]*）/, '');
-  const shown = body.split('\n');
-  const marker = shown.findIndex((l) => /^…（\d+ 行を省略）…$/.test(l));
-  expect(marker).toBeGreaterThan(0);
-  shown.forEach((l, i) => { if (i !== marker) expect(wide).toContain(l); });
-  expect(shown[shown.length - 1]).toBe(wide[29]);
-});
-
-test('合図は乗せている間は消えず、外すと消え、押すと閉じる。Esc でも閉じる', async ({ page }) => {
-  await openMdWith(page, '<p><button data-md-copy="copy-v">写す</button> <code id="copy-v">読みたい中身</code></p>');
-  const btn = page.locator('#preview-pane button[data-md-copy]');
-  await btn.click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  const r = await probe(page, 'signalRect');
-  await page.mouse.move(r.x + r.w / 2, r.y + r.h / 2);
-  // 何もしなければ消える時間（3200ms と少し）を過ぎても、乗せている間は残る。
-  await page.waitForTimeout(4000);
-  expect(await probe(page, 'signalShown')).toBe(true);
-  await page.mouse.move(r.x + r.w / 2, r.y + r.h + 200);
-  await expect.poll(() => probe(page, 'signalShown'), { timeout: 4000 }).toBe(false);
-
-  await btn.click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  const r2 = await probe(page, 'signalRect');
-  await page.mouse.click(r2.x + r2.w / 2, r2.y + r2.h / 2);
-  expect(await probe(page, 'signalShown')).toBe(false);
-
-  await btn.click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  await page.keyboard.press('Escape');
-  expect(await probe(page, 'signalShown')).toBe(false);
-});
-
-test('合図は本文の枠の真ん中に出る', async ({ page }) => {
-  await openMdWith(page, '<p><button data-md-copy="copy-c2">写す</button> <code id="copy-c2">真ん中</code></p>');
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  const r = await probe(page, 'signalRect');
-  const pane = await page.locator('#preview-pane').boundingBox();
-  expect(Math.abs(r.x + r.w / 2 - (pane.x + pane.width / 2))).toBeLessThan(2);
-});
-
-test('コードブロックの Copy も、写した中身を合図に出す', async ({ page }) => {
-  await stubClipboard(page);
-  await openFolder(page);
-  await treeItem(page, 'zz-code.md').click();
-  await expect(page.locator('#preview-pane .copy-btn').first()).toBeAttached();
-  await page.locator('#preview-pane .copy-btn').first().click({ force: true });
-  // コードブロックの Copy は、フェンスの中身を末尾の改行ごと写す（これまでどおり）。
-  await expect.poll(() => copies(page)).toEqual(['cargo install --path .\n']);
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  expect(await signalText(page)).toContain('cargo install --path .');
-  // 受け口は 1 回しか取れないので、文書の JS から偽の合図を出す口にはならない。
-  expect(await page.evaluate(() => MdCommon.claimCopySignal(() => {}))).toBe(false);
-});
-
-test('コードブロックの Copy の合図は短く、文書のボタンの合図より先に消える', async ({ page }) => {
-  await stubClipboard(page);
-  await openFolder(page);
-  await treeItem(page, 'zz-code.md').click();
-  await expect(page.locator('#preview-pane .copy-btn').first()).toBeAttached();
-  await page.locator('#preview-pane .copy-btn').first().click({ force: true });
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  // 1500ms の固定。文書のボタンの合図（3200ms ＋ 1 字 4ms）なら、まだ出ている時間。
-  await expect.poll(() => probe(page, 'signalShown'), { timeout: 2500 }).toBe(false);
-
-  await page.evaluate(() => {
-    document.querySelector('#preview-pane .markdown-body').insertAdjacentHTML('beforeend',
-      '<p><button data-md-copy="copy-long">写す</button> <code id="copy-long">長く出る</code></p>');
-  });
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  await page.waitForTimeout(2500);
-  expect(await probe(page, 'signalShown')).toBe(true);
+  await expect(page.locator('.md-toast.show')).toHaveCount(0);
 });
 
 test('コードブロックの Copy も、見えない制御の文字を落とす', async ({ page }) => {
@@ -697,7 +592,7 @@ test('md の本文に position:fixed の透明な要素を置いても、サイ�
   await expect(page.locator('.md-tab.active')).toHaveAttribute('data-path', /b\.md$/);
 });
 
-// ── 合図の中身と置き場所 ───────────────────────────────────────
+// ── 写す文字の整え方 ───────────────────────────────────────────
 
 test('写す文字の CR は LF に揃え、向きの印（LRM・RLM・ALM）は残し、埋め込みと分離の制御は落とす', async ({ page }) => {
   await openMdWith(page, '<p>x</p>');
@@ -721,77 +616,12 @@ test('見えない制御の文字だけをなぞっても、何も写さず失�
   await expect(page.locator('.md-toast.show')).toHaveCount(0);
 });
 
-test('末尾の改行 1 つは行数にも文字数にも数えない', async ({ page }) => {
-  await stubClipboard(page);
-  await openFolder(page);
-  await treeItem(page, 'zz-code.md').click();
-  await expect(page.locator('#preview-pane .copy-btn').first()).toBeAttached();
-  await page.evaluate(() => { document.querySelector('#preview-pane pre > code').textContent = 'x\ny\nz\n'; });
-  await page.locator('#preview-pane .copy-btn').first().click({ force: true });
-  await expect.poll(() => copies(page)).toEqual(['x\ny\nz\n']);
-  await expect.poll(() => signalText(page)).toContain('コピーしました（3 行・5 文字）');
-});
-
-test('合図は行を折り返さず、長い行は横にスクロールして見る', async ({ page }) => {
-  await openMdWith(page,
-    '<pre id="copy-long">' + 'word '.repeat(300) + '\n2 行目</pre><p><button data-md-copy="copy-long">写す</button></p>');
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  const r = await probe(page, 'signalRect');
-  // 2 行と見出しぶんの高さに収まる（折り返していれば何十行にもなる）。
-  expect(r.h).toBeLessThan(120);
-});
-
-test('真ん中を省いた合図は、押すと全部を出し、閉じるで閉じる', async ({ page }) => {
-  const rows = Array.from({ length: 100 }, (_, i) => '行 ' + (i + 1));
-  await openMdWith(page,
-    '<pre id="copy-rows">' + rows.join('\n') + '</pre><p><button id="r" data-md-copy="copy-rows">写す</button></p>');
-  await page.locator('#r').click();
-  await expect.poll(() => signalText(page)).toContain('行を省略');
-  expect(await page.evaluate(() => MdParts.__test.signalAct('more').label)).toBe('全部見る');
-  // 中身のあたりを押すと、全部が出る（閉じない）。
-  const r = await probe(page, 'signalRect');
-  await page.mouse.click(r.x + r.w / 2, r.y + r.h / 2);
-  expect(await probe(page, 'signalShown')).toBe(true);
-  expect(await probe(page, 'signalFull')).toBe(true);
-  const t = await signalText(page);
-  expect(t).toContain('行 50\n');
-  expect(t).not.toContain('省略');
-  // 全部を出した後に中身を押しても閉じない（選ぶ・スクロールするため）。
-  const r2 = await probe(page, 'signalRect');
-  await page.mouse.click(r2.x + r2.w / 2, r2.y + r2.h / 2);
-  expect(await probe(page, 'signalShown')).toBe(true);
-  // 高さには上限があり、窓の下へはみ出さない。
-  const vh = page.viewportSize().height;
-  expect(r2.y + r2.h).toBeLessThanOrEqual(vh);
-  // 時間が経っても、乗せている間は消えない。
-  await page.waitForTimeout(3600);
-  expect(await probe(page, 'signalShown')).toBe(true);
-  const close = await page.evaluate(() => MdParts.__test.signalAct('close'));
-  await page.mouse.click(close.x + close.w / 2, close.y + close.h / 2);
-  expect(await probe(page, 'signalShown')).toBe(false);
-});
-
-test('合図は本文の枠の上端の少し下（タブ帯の下）に出る', async ({ page }) => {
-  await openMdWith(page, '<p><button data-md-copy="copy-t">写す</button> <code id="copy-t">位置</code></p>');
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
-  const r = await probe(page, 'signalRect');
-  const pane = await page.locator('#preview-pane').boundingBox();
-  const tabbar = await page.locator('#tabbar').boundingBox();
-  expect(r.y).toBeGreaterThanOrEqual(tabbar.y + tabbar.height);
-  expect(Math.abs(r.y - (pane.y + 8))).toBeLessThan(2);
-});
-
-test('本文の描き直し（hydrate）は拡大を畳むが、出したばかりの合図は消さない', async ({ page }) => {
-  await openMdWith(page, FIG + '<p><button data-md-copy="copy-hy">写す</button> <code id="copy-hy">残る</code></p>');
-  await page.locator('#preview-pane button[data-md-copy]').click();
-  await expect.poll(() => probe(page, 'signalShown')).toBe(true);
+test('本文の描き直し（hydrate）は拡大を畳む', async ({ page }) => {
+  await openMdWith(page, FIG);
   await page.locator('#fig').click();
   expect(await isZoomed(page)).toBe(true);
   await page.evaluate(() => MdCommon.hydrate(document.querySelector('#preview-pane .markdown-body')));
   expect(await isZoomed(page)).toBe(false);
-  expect(await probe(page, 'signalShown')).toBe(true);
 });
 
 test('見出しに自動で付いた id は data-md-copy に拾われず、書き手の同じ id が勝つ', async ({ page }) => {
@@ -818,7 +648,7 @@ test('見出しに自動で付いた id は data-md-copy に拾われず、書�
   });
   expect(await page.evaluate(() => !!document.getElementById('copy-heading'))).toBe(true);
   await page.locator('#bh').click();
-  await expect.poll(() => signalText(page)).toContain('見つかりません');
+  await expect.poll(() => toastText(page)).toContain('見つかりません');
   expect(await copies(page)).toEqual(['書き手の中身']);
 });
 

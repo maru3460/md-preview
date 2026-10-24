@@ -19,25 +19,6 @@
 (function() {
   // トップのフレームでなければ何もしない（理由は html.rs の PAGE_SCRIPTS）。
   if (window.top !== window) return;
-  // 文書のボタンの合図を出しておく時間。写した中身を読ませるので、トースト（1500ms）より長い。
-  // 選択即コピーの合図（チェック 1 つ、620ms）より長いのは、あちらは自分で選んだ文字を
-  // 見ながらなので文字が要らず、こちらは中身が見えないまま写すため。
-  // 中身が長いほど読むのに時間がかかるので、出した文字数に応じて延ばす（上限あり。
-  // じっくり読みたいときは、合図に乗せている間は消えない）。
-  var SIGNAL_MS = 3200;
-  var SIGNAL_MS_PER_CHAR = 4;
-  var SIGNAL_MAX_MS = 9000;
-  // コードブロックの Copy の合図は短い固定の時間。コードブロックはアプリが描いたもので、写す
-  // 中身は見えているコードそのもの。合図が防ぐ「見えないものを写させる」手口が効くのは、
-  // 文書が自分で書いたボタンの方。乗せている間は消えないのは同じ。
-  var SIGNAL_CODE_MS = 1500;
-  // 合図から外れたあと、消えるまでの時間。読み終えて離したところなので短くてよい。
-  var SIGNAL_LEAVE_MS = 1500;
-  // 合図に出す中身の上限（文字数と行数）。超えたら頭と尻の行を残して真ん中の行を省く。
-  // 1 行だけが長いときは、行では切れないので文字で省く。
-  var SIGNAL_CHARS = 1600;
-  var SIGNAL_LINES = 40;
-  var SIGNAL_EDGE_LINES = 15;
   // 拾う id の頭。md の本文はアプリの UI と同じ document にあり、見出しの自動 id や脚注の
   // `id="1"` とぶつかるので、決まった頭のものだけを探す。
   var COPY_ID_PREFIX = 'copy-';
@@ -104,306 +85,6 @@
     bindRoot(pane, document, null);
   }
 
-  // ── 合図 ─────────────────────────────────────────────────────
-  // 文書の CSS が届かない場所に出す。閉じた shadow root の中なので本文の CSS が届かず、
-  // :host の all:initial!important は外からの display:none!important にも勝つ（shadow 側の
-  // !important が先に立つ）。popover はトップレイヤーに出るので、z-index を最大にした
-  // 重ねものにも隠されない。
-  // これは文書の JS が止まっている（既定）ことが前提の守り。文書の JS を動かす設定では、
-  // 文書の JS がこのファイルより先に動くことはないが、MdCommon の口や DOM を後から
-  // 好きにいじれるので、合図が本物だとは請け負わない（その設定にした文書は信じたもの）。
-  var signal = null, signalTimer = null, signalHover = false;
-  // 窓の上端から合図までの距離（本文の枠が無い 1 枚ページのとき）と、枠の上端からの距離。
-  var SIGNAL_TOP = 12, SIGNAL_PANE_GAP = 8;
-  // 「全部見る」で出す上限の文字数。写したものが巨大でも、合図の描画で窓を固めない。
-  var SIGNAL_FULL_CHARS = 200000;
-
-  function ensureSignal() {
-    if (signal) return signal;
-    var host = createEl.call(document, 'div');
-    var root = host.attachShadow({ mode: 'closed' });
-    var style = createEl.call(document, 'style');
-    style.textContent =
-      ':host{all:initial!important;}' +
-      // 上の真ん中に、中身の幅で出す。下はトーストと右下の Raw / 差分の釦の置き場所。
-      // 高さの上限は窓の下端まで（--avail。placeSignal が入れる）。中身は .body の中で
-      // 縦にも横にもスクロールする。
-      '.box{all:initial;position:fixed;top:' + SIGNAL_TOP + 'px;left:50%;transform:translateX(-50%);margin:0;' +
-      'box-sizing:border-box;width:max-content;max-width:min(640px,calc(100vw - 32px));' +
-      'max-height:min(60vh,420px,var(--avail,100vh));padding:10px 14px;border-radius:8px;border:0;' +
-      'flex-direction:column;' +
-      // all:initial は direction と unicode-bidi を戻さないので、ここで決める。外の文書の
-      // `dir=rtl` や direction を受け継ぐと、合図の並びも写した行の見え方も裏返る。
-      'direction:ltr;unicode-bidi:isolate;' +
-      'background:#1f2328;color:#f0f3f6;font:13px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;' +
-      'box-shadow:0 6px 24px rgba(0,0,0,.35);}' +
-      '.box.full{max-width:min(960px,calc(100vw - 32px));max-height:min(80vh,var(--avail,100vh));}' +
-      // 開閉は自前のクラスで持つ。:popover-open に頼ると、popover の無いエンジンで
-      // 規則ごと捨てられて出しっぱなしになる。
-      '.box:not(.open){display:none;}.box.open{display:flex;}' +
-      '.head{font-weight:600;display:flex;gap:12px;align-items:baseline;flex:none;}' +
-      '.title{flex:1;}' +
-      // 操作の文言は ::after の content で出す。textContent に入らないので、選択にも
-      // 合図の中身の読み取りにも混ざらない。
-      '.act{font-weight:400;color:#8ab4f8;cursor:pointer;user-select:none;-webkit-user-select:none;' +
-      'white-space:nowrap;}' +
-      '.act:hover{text-decoration:underline;}' +
-      '.act::after{content:attr(data-label);}' +
-      '.act[hidden]{display:none;}' +
-      // 行は折り返さない（white-space:pre）。折り返すと、画面の 1 行が写した 1 行なのか、
-      // 長い行の続きなのかが見分けられない。はみ出した分は横にスクロールして見る。
-      '.body{display:block;white-space:pre;overflow:auto;min-height:0;flex:0 1 auto;' +
-      'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d1d9;margin-top:4px;' +
-      'tab-size:4;overscroll-behavior:contain;' +
-      // 写した行は、行ごとに中の最初の強い文字で向きを決める（貼り付けた先のテキスト
-      // エディタと同じ）。合図の ltr に揃えると、アラビア文字やヘブライ文字で始まる行の
-      // 語順が貼った先と違って見える。
-      'unicode-bidi:plaintext;}' +
-      '.box.full .body{user-select:text;-webkit-user-select:text;cursor:text;}' +
-      '.body[hidden]{display:none;}' +
-      '.gap{color:#8b949e;font-style:italic;}';
-    var box = createEl.call(document, 'div');
-    box.className = 'box';
-    box.setAttribute('role', 'status');
-    box.setAttribute('aria-live', 'polite');
-    if ('popover' in box) box.setAttribute('popover', 'manual');
-    var head = createEl.call(document, 'div');
-    head.className = 'head';
-    var title = createEl.call(document, 'span');
-    title.className = 'title';
-    var more = createEl.call(document, 'span');
-    more.className = 'act';
-    more.setAttribute('data-act', 'more');
-    more.setAttribute('data-label', '全部見る');
-    more.setAttribute('role', 'button');
-    var close = createEl.call(document, 'span');
-    close.className = 'act';
-    close.setAttribute('data-act', 'close');
-    close.setAttribute('data-label', '閉じる');
-    close.setAttribute('role', 'button');
-    close.setAttribute('aria-label', '閉じる');
-    head.appendChild(title);
-    head.appendChild(more);
-    head.appendChild(close);
-    var body = createEl.call(document, 'div');
-    body.className = 'body';
-    box.appendChild(head);
-    box.appendChild(body);
-    root.appendChild(style);
-    root.appendChild(box);
-    appendTo.call(rootOf.call(document), host);
-    // 乗せている間は消さない（長い中身を読み切る前に消えないように）。
-    box.addEventListener('mouseenter', function() {
-      signalHover = true;
-      if (signalTimer) { clearTimeout(signalTimer); signalTimer = null; }
-    });
-    box.addEventListener('mouseleave', function() {
-      signalHover = false;
-      if (isSignalOpen()) scheduleHide(SIGNAL_LEAVE_MS);
-    });
-    // 押したとき: 「閉じる」は閉じる。真ん中を省いている間は、どこを押しても全部を出す
-    // （省いた所に何があるかを確かめる手段がほかに無い）。全部を出したあとは押しても
-    // 閉じない（中身を選んだりスクロールしたりするため）。省いていない合図は、押せば閉じる。
-    box.addEventListener('click', function(e) {
-      var t = e.target;
-      var act = t && t.closest ? t.closest('[data-act]') : null;
-      if (act && act.getAttribute('data-act') === 'close') { hideSignal(); return; }
-      if (!signal.copied) { hideSignal(); return; }
-      if (signal.elided && !signal.full) { expandSignal(); return; }
-      if (act && act.getAttribute('data-act') === 'more') { collapseSignal(); return; }
-      if (!signal.elided) hideSignal();
-    });
-    signal = { host: host, box: box, title: title, more: more, body: body,
-               copied: null, elided: false, full: false };
-    return signal;
-  }
-
-  function isSignalOpen() { return !!signal && signal.box.classList.contains('open'); }
-
-  function scheduleHide(ms) {
-    if (signalTimer) clearTimeout(signalTimer);
-    signalTimer = signalHover ? null : setTimeout(hideSignal, ms);
-  }
-
-  // 本文の枠（#preview-pane）を基準に置く。横は枠の真ん中（窓の真ん中だと、サイドバーの
-  // ぶん本文から左へずれて見える）、縦は枠の上端から少し下（タブ帯にかぶせない）。
-  // 横に置くと窓からはみ出すなら、窓の端から 16px までに収める。枠の無い 1 枚ページは窓が基準。
-  function placeSignal(box) {
-    var de = rootOf.call(document);
-    var vw = de.clientWidth || window.innerWidth;
-    var vh = de.clientHeight || window.innerHeight;
-    var x = vw / 2, top = SIGNAL_TOP;
-    if (pane && connected.call(pane)) {
-      var r = rectOf.call(pane);
-      if (r.width > 0) {
-        x = r.left + r.width / 2;
-        top = Math.max(0, r.top) + SIGNAL_PANE_GAP;
-      }
-    }
-    box.style.setProperty('top', top + 'px');
-    box.style.setProperty('--avail', Math.max(80, vh - top - 16) + 'px');
-    var half = rectOf.call(box).width / 2;
-    x = Math.max(half + 16, Math.min(vw - half - 16, x));
-    box.style.setProperty('left', x + 'px');
-  }
-
-  // 中身（segments は [{ text, gap? }]）を描き直す。文字は textContent で入れる。
-  function fillSignalBody(segments) {
-    var s = signal;
-    s.body.textContent = '';
-    segments.forEach(function(seg) {
-      if (seg.gap) {
-        var g = createEl.call(document, 'span');
-        g.className = 'gap';
-        g.textContent = seg.text;
-        s.body.appendChild(g);
-      } else {
-        s.body.appendChild(createText.call(document, seg.text));
-      }
-    });
-    s.body.scrollTop = 0;
-    s.body.scrollLeft = 0;
-  }
-
-  function openSignal(ms) {
-    var s = signal;
-    s.box.classList.add('open');
-    // 出し直して、後から開いた重ねものより前へ出す。
-    if (s.box.showPopover) {
-      try { s.box.hidePopover(); } catch (e) {}
-      try { s.box.showPopover(); } catch (e) {}
-    }
-    // 同じ場所に出ていたトーストは下げる（重なると、どちらの文言か読めない）。
-    var t = docQuerySel.call(document, '.md-toast.show');
-    if (t) t.classList.remove('show');
-    placeSignal(s.box);
-    scheduleHide(ms || SIGNAL_MS);
-  }
-
-  // 一言だけの合図（見つからない・失敗など）。中身の欄は出さない。
-  function showSignal(message) {
-    var s = ensureSignal();
-    s.copied = null;
-    s.elided = false;
-    s.full = false;
-    s.box.classList.remove('full');
-    s.more.hidden = true;
-    s.title.textContent = message;
-    fillSignalBody([]);
-    s.body.hidden = true;
-    openSignal();
-  }
-
-  function hideSignal() {
-    if (!signal) return;
-    if (signalTimer) { clearTimeout(signalTimer); signalTimer = null; }
-    signalHover = false;
-    signal.box.classList.remove('open');
-    if (signal.box.hidePopover) {
-      try { signal.box.hidePopover(); } catch (e) {}
-    }
-  }
-
-  // 写した中身をそのまま見せる。画面で見えていた文字と違うものが写っていたら、ここで
-  // 気づける。見えない文字の作り方は数が多すぎるので、取り出す側では除かない。
-  // Why not 先頭と末尾の行だけ: 間の行に何が入っていても見えない。省いた真ん中は、
-  // 押せば全部出る。
-  function signalCopied(text, ms) {
-    var s = ensureSignal();
-    // コードブロックは末尾の改行ごと写すので、1 つだけ外して数える（3 行のコードを 4 行と
-    // 言わない）。写したもの自体はそのまま。
-    var body = text.replace(/\n$/, '');
-    var chars = Array.from(body).length;
-    var lines = body.split('\n').length;
-    var segs = elide(body);
-    s.copied = body;
-    s.elided = segs.length > 1;
-    s.full = false;
-    s.box.classList.remove('full');
-    s.title.textContent = 'コピーしました（' + (lines > 1 ? lines + ' 行・' : '') + chars + ' 文字）';
-    s.more.hidden = !s.elided;
-    s.more.setAttribute('data-label', '全部見る');
-    s.body.hidden = false;
-    fillSignalBody(segs);
-    var shown = segs.reduce(function(a, g) { return a + Array.from(g.text).length; }, 0);
-    openSignal(ms || Math.min(SIGNAL_MAX_MS, SIGNAL_MS + shown * SIGNAL_MS_PER_CHAR));
-  }
-
-  function expandSignal() {
-    var s = signal;
-    var cs = Array.from(s.copied);
-    fillSignalBody(cs.length <= SIGNAL_FULL_CHARS ? [{ text: s.copied }] : [
-      { text: cs.slice(0, SIGNAL_FULL_CHARS).join('') },
-      { gap: true, text: '\n…（残り ' + (cs.length - SIGNAL_FULL_CHARS) + ' 文字は表示しません）…' }
-    ]);
-    s.full = true;
-    s.box.classList.add('full');
-    s.more.setAttribute('data-label', '省いて見る');
-    placeSignal(s.box);
-    // 読み始めたところなので、乗せていなくても時間切れでは消さない（Esc・閉じる・外して
-    // しばらくで消える）。
-    if (signalTimer) { clearTimeout(signalTimer); signalTimer = null; }
-  }
-
-  function collapseSignal() {
-    var s = signal;
-    fillSignalBody(elide(s.copied));
-    s.full = false;
-    s.box.classList.remove('full');
-    s.more.setAttribute('data-label', '全部見る');
-    placeSignal(s.box);
-  }
-
-  // 合図に出す形（[{ text, gap? }]。省かなければ 1 つ）。省くなら行の境目で省き、残す行は
-  // 途中で切らない（行の途中で切ると、どこまでが 1 行かが読めない）。頭と尻の行がそれぞれ
-  // 文字数の半分に収まらないとき（1 行だけが長い）だけ、文字で省く。
-  function elide(text) {
-    var cs = Array.from(text);
-    var rows = text.split('\n');
-    if (cs.length <= SIGNAL_CHARS && rows.length <= SIGNAL_LINES) return [{ text: text }];
-    var half = SIGNAL_CHARS / 2;
-    var head = edgeRows(rows, half);
-    var tail = edgeRows(rows.slice().reverse(), half).reverse();
-    if (head.length && tail.length && head.length + tail.length < rows.length) {
-      return [
-        { text: head.join('\n') + '\n' },
-        { gap: true, text: '…（' + (rows.length - head.length - tail.length) + ' 行を省略）…' },
-        { text: '\n' + tail.join('\n') }
-      ];
-    }
-    return [
-      { text: cs.slice(0, half).join('') + '\n' },
-      { gap: true, text: '…（' + (cs.length - SIGNAL_CHARS) + ' 文字を省略）…' },
-      { text: '\n' + cs.slice(cs.length - half).join('') }
-    ];
-  }
-
-  // 端から、SIGNAL_EDGE_LINES 行まで・合わせて budget 文字までの行。
-  function edgeRows(rows, budget) {
-    var out = [], used = 0;
-    for (var i = 0; i < rows.length && out.length < SIGNAL_EDGE_LINES; i++) {
-      used += Array.from(rows[i]).length + 1;
-      if (used > budget) break;
-      out.push(rows[i]);
-    }
-    return out;
-  }
-
-  // Esc で閉じる。重ねもの（registerOverlay）には入れない。入れると開いている間は素キーが
-  // 止まったことになり、iframe から j / k が渡らなくなる。common.js の Esc（capture）が
-  // 重ねものを閉じたときは伝播を止めるので、ここへは来ない（重ねものが先に閉じる）。
-  // 文書自身の Esc の処理も邪魔しないよう、preventDefault はしない。
-  function onSignalKey(e) {
-    if (e.key !== 'Escape' || !isSignalOpen()) return;
-    if (window.MdCommon && MdCommon.isOverlayOpen && MdCommon.isOverlayOpen()) return;
-    hideSignal();
-  }
-  listen.call(document, 'keydown', onSignalKey);
-  // コードブロックの Copy も同じ合図を、短い時間で出す（受け口は最初の 1 回だけ取れる）。
-  if (window.MdCommon && MdCommon.claimCopySignal) {
-    MdCommon.claimCopySignal(function(text) { signalCopied(text, SIGNAL_CODE_MS); });
-  }
-
   // ── コピー ───────────────────────────────────────────────────
   // ボタンが写す相手。見つからなければ null。
   function copySource(btn, root, frame) {
@@ -464,28 +145,59 @@
     }
   }
 
+  // 写せなかったときの知らせ。アプリのトースト（common.js）に出す。止めたことを知らせる印は
+  // 本文には出さない方針なので、この文言が書き手が直すための唯一の手がかりになる。
+  function tell(msg) {
+    if (window.MdCommon && MdCommon.toast) MdCommon.toast(msg);
+  }
+
+  // 写せたら、ボタンの中身を「Copied」に差し替えて 1.2 秒で戻す（コードブロックの Copy と
+  // 同じ振る舞い）。中身は文書が書いたもの（絵や別の文言かもしれない）なので、文字列ではなく
+  // 子ノードごと退避して戻す。続けて押されたら戻す時刻だけ延ばす。
+  // Why not 写した中身をその場に出す（前の合図）: 見えない文字はコピーの時点で落としていて、
+  // 合図で確かめられるものがほとんど無いわりに、押すたびに出て邪魔だった（2026-10-24）。
+  var COPIED_MS = 1200;
+  var flipped = new WeakMap();
+  function flipLabel(btn) {
+    var doc = ownerOf.call(btn);
+    var saved = flipped.get(btn);
+    if (saved) {
+      clearTimeout(saved.timer);
+    } else {
+      saved = { nodes: Array.prototype.slice.call(btn.childNodes) };
+      saved.nodes.forEach(function(n) { removeChild.call(btn, n); });
+      appendTo.call(btn, createText.call(doc, 'Copied'));
+      setAttr.call(btn, 'data-md-copied', '');
+      flipped.set(btn, saved);
+    }
+    saved.timer = setTimeout(function() {
+      flipped.delete(btn);
+      while (btn.firstChild) removeChild.call(btn, btn.firstChild);
+      saved.nodes.forEach(function(n) { appendTo.call(btn, n); });
+      removeAttr.call(btn, 'data-md-copied');
+    }, COPIED_MS);
+  }
+
   function onCopy(btn, root, frame) {
     var id = getAttr.call(btn, 'data-md-copy') || '';
-    // 文書のボタンの中身は書き換えない。止めたことを知らせる印を出さない方針なので、
-    // 合図の文言が書き手が直すための唯一の手がかりになる。
     if (id && id.indexOf(COPY_ID_PREFIX) !== 0) {
-      showSignal('data-md-copy の値は copy- で始めてください（' + id + '）');
+      tell('data-md-copy の値は copy- で始めてください（' + id + '）');
       return;
     }
     var src = copySource(btn, root, frame);
     if (!src) {
-      showSignal('コピー先が見つかりません（' + (id || '直前の <pre>') + '）');
+      tell('コピー先が見つかりません（' + (id || '直前の <pre>') + '）');
       return;
     }
     var empty = function() {
-      showSignal('コピーする文字がありません（' + (id || '直前の <pre>') + '）');
+      tell('コピーする文字がありません（' + (id || '直前の <pre>') + '）');
     };
-    // 見えない制御の文字は copyText が落とす。合図には落とした後の文字が来る。
+    // 見えない制御の文字は copyText が落とす。
     var text = textOf(src).replace(/^\n+|\n+$/g, '');
     if (!text) { empty(); return; }
-    MdCommon.copyText(text, signalCopied, function(why) {
+    MdCommon.copyText(text, function() { flipLabel(btn); }, function(why) {
       if (why === 'empty') empty();
-      else showSignal('コピーに失敗しました');
+      else tell('コピーに失敗しました');
     });
   }
 
@@ -1022,9 +734,6 @@
     boundDocs.add(doc);
     injectSheet(doc, false);
     bindRoot(doc, doc, frame);
-    // 合図は親に出るが、html を読んでいる間はフォーカスが iframe の中にあり、Esc は
-    // 親のオーバーレイが開いているときしか親へ渡らない（common.js の bindFrame）。
-    listen.call(doc, 'keydown', onSignalKey);
     // iframe の中で遷移・再読み込みしたら、その文書の拡大は畳む。
     var win = viewOf.call(doc);
     if (win) listen.call(win, 'pagehide', function() { if (zoomed && zoomed.doc === doc) closeZoom(); });
@@ -1032,9 +741,6 @@
 
   // 本文が差し替わるとき（ファイル切替）に、拡大を畳む。図ごと置き札が消えるので、
   // 残すと前のファイルの図が重ねものに居残る。
-  // 合図は閉じない。コードブロックの Copy の直後に本文が描き直される（ホットリロード・
-  // ファイル切替）と、出したばかりの合図が読む前に消える。合図は本文の外にあり、写した
-  // 中身は前のファイルのものでも嘘にはならない。
   function reset() { closeZoom(); }
 
   if (document.readyState === 'loading') {
@@ -1046,37 +752,10 @@
   window.MdParts = {
     bindDoc: bindDoc,
     reset: reset,
-    // テスト用の覗き口。合図の要素そのものは渡さない（渡すと文書の JS から書き換えられる）。
-    // 返す文字は写した中身で、文書がもともと持っているものなので、見せても漏れない。
+    // テスト用の覗き口。
     __test: {
       isZoomed: function() { return !!zoomed; },
-      signalText: function() { return signal ? signal.box.textContent : ''; },
-      signalRect: function() {
-        if (!signal) return null;
-        var r = signal.box.getBoundingClientRect();
-        return { x: r.left, y: r.top, w: r.width, h: r.height };
-      },
-      // 合図の操作（'more' か 'close'）の位置と文言。出ていなければ null。
-      signalAct: function(name) {
-        if (!signal) return null;
-        var a = signal.box.querySelector('[data-act="' + name + '"]');
-        if (!a || a.hidden) return null;
-        var r = a.getBoundingClientRect();
-        return { x: r.left, y: r.top, w: r.width, h: r.height, label: a.getAttribute('data-label') };
-      },
-      signalFull: function() { return !!signal && signal.full; },
-      // 合図の枠と本文の書字方向（direction / unicode-bidi の計算値）。
-      signalBidi: function() {
-        if (!signal) return null;
-        var b = getComputedStyle(signal.box), t = getComputedStyle(signal.body);
-        return { box: b.direction + ' ' + b.unicodeBidi, body: t.unicodeBidi };
-      },
-      hintText: function() { return zoomed ? getAttr.call(zoomed.hint, 'data-hint') : ''; },
-      signalShown: function() {
-        if (!signal || !signal.box.classList.contains('open')) return false;
-        var r = signal.box.getBoundingClientRect();
-        return getComputedStyle(signal.host).display !== 'none' && r.width > 0 && r.height > 0;
-      }
+      hintText: function() { return zoomed ? getAttr.call(zoomed.hint, 'data-hint') : ''; }
     }
   };
 })();

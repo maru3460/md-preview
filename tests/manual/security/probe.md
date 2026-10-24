@@ -118,18 +118,17 @@ rm probe-zero.png probe-zero.md probe-fifo.md probe-big.md
 
 文書の JS を止めたまま（既定）でも動く、アプリが配る部品。
 
-- コピーボタン: <button data-md-copy="copy-probe">コピー</button> <code id="copy-probe">コピーされる文字</code>
-  - 押すと、上の真ん中（本文の枠の真ん中）に「コピーしました」と、写した中身がそのまま出ること。貼り付けた中身と同じであること
-  - 合図にマウスを乗せている間は消えないこと。押すか Esc で閉じること
-- CSS で隠した文字は写らない: <button data-md-copy="copy-probe-hidden">コピー</button> <span id="copy-probe-hidden">見える<span class="probe-hidden">隠した</span>文字</span>
-  - 合図にも貼り付けた先にも「見える文字」だけが出ること
+- コピーボタン: <button data-md-copy="copy-probe">Copy</button> <code id="copy-probe">コピーされる文字</code>
+  - 押すとボタンが Copied に変わり、1 秒ほどで Copy に戻ること。貼り付けると「コピーされる文字」が入ること。ほかに何も出ないこと
+- CSS で隠した文字は写らない: <button data-md-copy="copy-probe-hidden">Copy</button> <span id="copy-probe-hidden">見える<span class="probe-hidden">隠した</span>文字</span>
+  - 貼り付けた先に「見える文字」だけが出ること
 
 <style>
 .probe-hidden { display: none; }
 </style>
 
-- 長い中身: <button data-md-copy="copy-probe-long">コピー</button>（41 行）
-  - 合図は頭と尻の 15 行ずつを出し、間は「…（11 行を省略）…」になること。行の途中で切れないこと
+- 長い中身: <button data-md-copy="copy-probe-long">Copy</button>（41 行）
+  - 41 行が全部貼り付けられること
 
 <pre id="copy-probe-long">1 行目
 2 行目
@@ -173,7 +172,7 @@ rm probe-zero.png probe-zero.md probe-fifo.md probe-big.md
 40 行目
 41 行目</pre>
 
-- コードブロックの Copy（下のブロックの右上）も、同じ合図に写した中身が出ること
+- コードブロックの Copy（下のブロックの右上）も、Copied に変わるだけでほかに何も出ないこと
 
 ```sh
 echo "コードブロックの Copy"
