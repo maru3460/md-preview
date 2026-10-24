@@ -42,10 +42,11 @@ pub struct Entry {
 
 /// ベルに見せる並び（#79）。未読を届いた順、その下に既読を既読にした順、どちらも新しい順。
 ///
-/// 台帳そのものは届いた順のまま持ち、並べ替えはページへ渡す直前にだけ行う。台帳を
-/// この順で持つと、同じ時刻の行（1 回の `--notify` で届いた複数ファイル、「すべて既読」で
-/// 同時に既読になった行）の順が保存のたびに崩れうる。届いた順を土台にした安定ソートなら、
-/// 同じ時刻の行は届いた順のまま残る。
+/// 台帳そのものは届いた順のまま持ち、並べ替えはページへ渡す直前にだけ行う。
+/// Why not 台帳をこの順で持つ: 届いたものを先頭へ差す（[`push_front`]）だけでは
+/// 済まなくなり、積む・既読にするのたびに並べ直しが要る。届いた順を土台にした
+/// 安定ソートなら、同じ時刻の行（1 回の `--notify` で届いた複数ファイル、
+/// 「すべて既読」で同時に既読になった行）も届いた順のまま並ぶ。
 pub fn display_order(list: &[Entry]) -> Vec<&Entry> {
     let mut out: Vec<&Entry> = list.iter().collect();
     out.sort_by_key(|e| (e.read, std::cmp::Reverse(if e.read { read_key(e) } else { 0 })));
@@ -429,17 +430,27 @@ mod tests {
     }
 
     #[test]
-    fn rows_read_at_the_same_moment_keep_their_arrival_order() {
+    fn marking_everything_read_moves_the_unread_rows_to_the_top_of_the_read_ones_in_arrival_order() {
         // 「すべて既読」は全部に同じ時刻を付ける。押す前の並びのまま既読の先頭へ移る。
-        let list = vec![read_at("/x.md", 9, 20), read_at("/y.md", 8, 20), read_at("/z.md", 7, 10)];
-        assert_eq!(paths(display_order(&list)), vec!["/x.md", "/y.md", "/z.md"]);
+        let mut list = vec![
+            entry("/x.md", 9, false),
+            read_at("/old.md", 8, 15),
+            entry("/y.md", 7, false),
+        ];
+        set_read(&mut list, None, 20);
+        assert_eq!(paths(display_order(&list)), vec!["/x.md", "/y.md", "/old.md"]);
     }
 
     #[test]
     fn a_row_read_before_the_read_time_existed_is_placed_by_its_arrival_time() {
         let list = vec![entry("/old-read.md", 30, true), read_at("/a.md", 10, 20)];
         assert_eq!(paths(display_order(&list)), vec!["/old-read.md", "/a.md"]);
-        assert_eq!(parse(records(&[&["/old-read.md", "30", "read", "", "", ""]])), vec![entry("/old-read.md", 30, true)]);
+    }
+
+    #[test]
+    fn a_row_written_before_the_read_time_existed_is_read_with_no_read_time() {
+        let got = parse(records(&[&["/a.md", "30", "read", "", "", ""]]));
+        assert_eq!(got, vec![entry("/a.md", 30, true)]);
     }
 
     #[test]

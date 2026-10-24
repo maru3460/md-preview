@@ -73,7 +73,7 @@ test('j/k でカーソルが動き、Enter でタブが開いて既読の要求�
   await pushSample(page);
   await page.keyboard.press('b');
 
-  // 開いた直後は先頭。そのまま Enter で最新を開ける。
+  // 開いた直後は先頭。そのまま Enter で先頭の通知を開ける。
   await expect(rows(page).nth(0)).toHaveClass(/is-cursor/);
   await page.keyboard.press('j');
   await expect(rows(page).nth(1)).toHaveClass(/is-cursor/);
