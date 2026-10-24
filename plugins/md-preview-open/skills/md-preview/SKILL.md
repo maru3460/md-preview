@@ -40,6 +40,15 @@ EOF
 md --notify --title '<何の文書か>' --description '<どの作業の何か>' path/to/document.md
 ```
 
+## 文書の JavaScript とネットの読み込み
+
+md は設定「文書を信頼する」が OFF だと、文書の JavaScript とネットからの読み込みを止める。
+文書を書く前に設定を確かめ、OFF なら [references/restrictions.md](references/restrictions.md) を読む。
+
+```bash
+grep -s '^trust-documents' ~/.config/md-preview/settings   # `trust-documents=on` が出なければ OFF
+```
+
 ## 注意事項
 
 - 一時的な指示ではなく永続的に、開かずに通知だけしてほしいと依頼された場合、
@@ -54,3 +63,5 @@ md に渡す文書を書く前に読む。
 ユーザーに md の操作を聞かれたときに読む
 - [references/theme.md](references/theme.md)
 テーマや見た目を変えるよう頼まれたときに読む
+- [references/restrictions.md](references/restrictions.md)
+設定「文書を信頼する」が OFF の窓に出す文書を書くときに読む
