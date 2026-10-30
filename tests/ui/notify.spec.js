@@ -51,7 +51,7 @@ test('b で開き、1 件がファイル名と「親フォルダ · 相対時刻
   await expect(panel(page)).toBeVisible();
   await expect(rows(page)).toHaveCount(3);
 
-  // 渡された順（新しい順）がそのまま並び。
+  // 渡された順がそのまま並び（並べるのは Rust 側、#79）。
   await expect(rows(page).nth(0).locator('.md-bell-name')).toHaveText('a.md');
   // root 直下のファイルに親フォルダ名は添えない。
   await expect(rows(page).nth(0).locator('.md-bell-sub')).toHaveText('2 分前');

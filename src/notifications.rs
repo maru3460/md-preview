@@ -5,10 +5,12 @@
 //! 窓は `AppEvent::Ready` より前は中身を持たない。JS に持たせると、その間に来たものが
 //! `evaluate_script` ごと消える。Rust が持っていれば、後から何度でも流し込める。
 //!
-//! 並びは**新しい順**。1 レコードは
-//! `<識別子>\t<届いた時刻>\t<read|unread>\t<title>\t<description>\t<note>` の
-//! 6 フィールドで、後ろの 3 つは送り手の名乗り（#68）。名乗りが無ければ空で、#68 より
-//! 前に書いた 3 フィールドの行もそのまま読める。書式と原子書き込みは [`crate::store`] が持つ。
+//! 台帳の並びは**届いた順（新しい順）**。ベルに見せる並びは別で、[`display_order`] が
+//! 決める（#79）。1 レコードは
+//! `<識別子>\t<届いた時刻>\t<read|unread>\t<title>\t<description>\t<note>\t<既読にした時刻>` の
+//! 7 フィールドで、4〜6 番目は送り手の名乗り（#68）。名乗りが無ければ空で、それより
+//! 前に書いた 3 フィールド・6 フィールドの行もそのまま読める。書式と原子書き込みは
+//! [`crate::store`] が持つ。
 
 use crate::origin::Origin;
 
@@ -17,7 +19,7 @@ use std::path::Path;
 /// 台帳のファイル名。`~/.config/md-preview/` 直下。
 const FILE: &str = "notifications";
 
-/// 持つ件数の上限。溢れたら古いものから落ちる（#32）。
+/// 持つ件数の上限。溢れたら既読の古いものから落ちる（#32、#79。[`cap`]）。
 const MAX: usize = 100;
 
 /// 1 行ぶん。
@@ -31,8 +33,30 @@ pub struct Entry {
     pub at: u64,
     /// 既読か。書き換えるのは #32。
     pub read: bool,
+    /// 既読にした時刻（UNIX 秒、#79）。未読と、この列が無かった頃に既読にした行は 0。
+    /// 既読の通知をもう一度開いても新しくしない（並びは「既読にした順」）。
+    pub read_at: u64,
     /// 送り手の名乗り（#68）。同じパスがまた届いたら、新しい方で置き換わる。
     pub origin: Origin,
+}
+
+/// ベルに見せる並び（#79）。未読を届いた順、その下に既読を既読にした順、どちらも新しい順。
+///
+/// 台帳そのものは届いた順のまま持ち、並べ替えはページへ渡す直前にだけ行う。
+/// Why not 台帳をこの順で持つ: 届いたものを先頭へ差す（[`push_front`]）だけでは
+/// 済まなくなり、積む・既読にするのたびに並べ直しが要る。届いた順を土台にした
+/// 安定ソートなら、同じ時刻の行（1 回の `--notify` で届いた複数ファイル、
+/// 「すべて既読」で同時に既読になった行）も届いた順のまま並ぶ。
+pub fn display_order(list: &[Entry]) -> Vec<&Entry> {
+    let mut out: Vec<&Entry> = list.iter().collect();
+    out.sort_by_key(|e| (e.read, std::cmp::Reverse(if e.read { read_key(e) } else { 0 })));
+    out
+}
+
+/// 既読の行を並べる時刻。既読にした時刻を持たない行（#79 より前に既読にしたもの）は
+/// 届いた時刻で代える。既読の中では #79 より前と同じ並びになる。
+fn read_key(e: &Entry) -> u64 {
+    if e.read_at > 0 { e.read_at } else { e.at }
 }
 
 /// 保存されている並びを読む。読めなければ空。
@@ -74,9 +98,10 @@ pub fn add_read(ids: &[String], origin: &Origin) -> Vec<Entry> {
 fn add_as(ids: &[String], origin: &Origin, read: bool) -> Vec<Entry> {
     let Some(dir) = crate::config_dir() else { return Vec::new() };
     let mut list = parse(crate::store::read(&dir, FILE));
-    if push_front(&mut list, ids, now(), origin) {
+    let at = now();
+    if push_front(&mut list, ids, at, origin) {
         if read {
-            set_read_all(&mut list, ids);
+            set_read_all(&mut list, ids, at);
         }
         save(&dir, &list);
     }
@@ -93,29 +118,32 @@ fn add_as(ids: &[String], origin: &Origin, read: bool) -> Vec<Entry> {
 pub fn mark_read(id: Option<&str>) -> Vec<Entry> {
     let Some(dir) = crate::config_dir() else { return Vec::new() };
     let mut list = parse(crate::store::read(&dir, FILE));
-    if set_read(&mut list, id) {
+    if set_read(&mut list, id, now()) {
         save(&dir, &list);
     }
     list
 }
 
-/// 既読の印を立てる。何も変わらなければ false（書き込みごと省く）。
-fn set_read(list: &mut [Entry], id: Option<&str>) -> bool {
+/// 既読の印を立てて、既読にした時刻を `at` にする。何も変わらなければ false
+/// （書き込みごと省く）。既読の行は時刻も触らない（#79。もう一度開いても並びを動かさない）。
+fn set_read(list: &mut [Entry], id: Option<&str>, at: u64) -> bool {
     let mut changed = false;
     for e in list.iter_mut() {
         if e.read || id.is_some_and(|want| e.path != want) {
             continue;
         }
         e.read = true;
+        e.read_at = at;
         changed = true;
     }
     changed
 }
 
 /// 届いたばかりの `ids` の行を既読にする（[`add_read`]）。
-fn set_read_all(list: &mut [Entry], ids: &[String]) {
+fn set_read_all(list: &mut [Entry], ids: &[String], at: u64) {
     for e in list.iter_mut().filter(|e| ids.contains(&e.path)) {
         e.read = true;
+        e.read_at = at;
     }
 }
 
@@ -133,11 +161,31 @@ fn push_front(list: &mut Vec<Entry>, ids: &[String], at: u64, origin: &Origin) -
             continue;
         }
         list.retain(|e| &e.path != id);
-        list.insert(0, Entry { path: id.clone(), at, read: false, origin: origin.clone() });
+        list.insert(0, Entry { path: id.clone(), at, read: false, read_at: 0, origin: origin.clone() });
         added = true;
     }
-    list.truncate(MAX);
+    cap(list);
     added
+}
+
+/// 上限まで削る。落とすのは既読を既読にした古い順で、既読が尽きてから未読を届いた
+/// 古い順に落とす（#79）。
+///
+/// Why not 届いた古い順に落とす（#79 より前）: 未読はまだ誰も見ていない通知で、
+/// 既読より先に消えると「届いたのに知らないまま」になる。ベルの並びを未読優先に
+/// したのと同じ理由で、残すのも未読を優先する。
+fn cap(list: &mut Vec<Entry>) {
+    while list.len() > MAX {
+        let drop = list
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.read)
+            // 同じ時刻なら後ろ（届いた古い方）を落とす。
+            .min_by_key(|(i, e)| (read_key(e), std::cmp::Reverse(*i)))
+            .map(|(i, _)| i)
+            .unwrap_or(list.len() - 1);
+        list.remove(drop);
+    }
 }
 
 /// 壊れた行（絶対パスでないもの）はここで落とす——この先は全部
@@ -153,6 +201,7 @@ fn parse(records: Vec<Vec<String>>) -> Vec<Entry> {
             path: path.clone(),
             at: record.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
             read: record.get(2).map(|k| k == "read").unwrap_or(false),
+            read_at: record.get(6).and_then(|s| s.parse().ok()).unwrap_or(0),
             origin: Origin {
                 title: record.get(3).and_then(|s| crate::origin::clean(s)),
                 description: record.get(4).and_then(|s| crate::origin::clean(s)),
@@ -161,7 +210,7 @@ fn parse(records: Vec<Vec<String>>) -> Vec<Entry> {
         });
     }
     // 手で書き足されたファイルも上限に従わせる。読んだ側が長さを見ないで済む。
-    out.truncate(MAX);
+    cap(&mut out);
     out
 }
 
@@ -187,6 +236,7 @@ fn record(e: &Entry) -> Vec<String> {
         e.origin.title.clone().unwrap_or_default(),
         e.origin.description.clone().unwrap_or_default(),
         e.origin.note.clone().unwrap_or_default(),
+        e.read_at.to_string(),
     ]
 }
 
@@ -196,7 +246,15 @@ mod tests {
     use std::path::PathBuf;
 
     fn entry(path: &str, at: u64, read: bool) -> Entry {
-        Entry { path: path.to_string(), at, read, origin: Origin::default() }
+        Entry { path: path.to_string(), at, read, read_at: 0, origin: Origin::default() }
+    }
+
+    fn read_at(path: &str, at: u64, read_at: u64) -> Entry {
+        Entry { read_at, ..entry(path, at, true) }
+    }
+
+    fn paths(list: Vec<&Entry>) -> Vec<&str> {
+        list.into_iter().map(|e| e.path.as_str()).collect()
     }
 
     fn named(title: &str) -> Origin {
@@ -222,7 +280,7 @@ mod tests {
     #[test]
     fn a_read_entry_is_still_read_after_a_save_and_a_load() {
         let dir = temp("roundtrip");
-        let want = vec![entry("/a/new.md", 1_700_000_000, false), entry("/a/old.md", 1, true)];
+        let want = vec![entry("/a/new.md", 1_700_000_000, false), read_at("/a/old.md", 1, 5)];
         save(&dir, &want);
         assert_eq!(parse(crate::store::read(&dir, FILE)), want);
         let _ = std::fs::remove_dir_all(&dir);
@@ -262,8 +320,8 @@ mod tests {
     fn what_was_opened_without_a_window_is_kept_as_read_with_its_name() {
         let mut list = vec![entry("/old.md", 1, false)];
         push_front(&mut list, &ids(&["/a.md"]), 9, &named("plan"));
-        set_read_all(&mut list, &ids(&["/a.md"]));
-        let mut want = entry("/a.md", 9, true);
+        set_read_all(&mut list, &ids(&["/a.md"]), 9);
+        let mut want = read_at("/a.md", 9, 9);
         want.origin = named("plan");
         assert_eq!(list, vec![want, entry("/old.md", 1, false)]);
     }
@@ -318,30 +376,32 @@ mod tests {
     #[test]
     fn marking_one_path_read_leaves_the_others_alone() {
         let mut list = vec![entry("/a.md", 9, false), entry("/b.md", 8, false)];
-        assert!(set_read(&mut list, Some("/a.md")));
-        assert_eq!(list, vec![entry("/a.md", 9, true), entry("/b.md", 8, false)]);
+        assert!(set_read(&mut list, Some("/a.md"), 20));
+        assert_eq!(list, vec![read_at("/a.md", 9, 20), entry("/b.md", 8, false)]);
     }
 
     #[test]
     fn marking_everything_read_touches_every_unread_entry() {
         let mut list = vec![entry("/a.md", 9, false), entry("/b.md", 8, true), entry("/c.md", 7, false)];
-        assert!(set_read(&mut list, None));
-        assert!(list.iter().all(|e| e.read));
+        assert!(set_read(&mut list, None, 20));
+        assert_eq!(list, vec![read_at("/a.md", 9, 20), entry("/b.md", 8, true), read_at("/c.md", 7, 20)]);
     }
 
     /// 何も変わらないときに false を返せないと、押すたびにディスクへ書く。
     #[test]
     fn marking_what_is_already_read_changes_nothing() {
-        let mut list = vec![entry("/a.md", 9, true)];
-        assert!(!set_read(&mut list, Some("/a.md")));
-        assert!(!set_read(&mut list, None));
+        let mut list = vec![read_at("/a.md", 9, 10)];
+        assert!(!set_read(&mut list, Some("/a.md"), 20));
+        assert!(!set_read(&mut list, None, 20));
+        // 既読にした時刻も据え置き。もう一度開いても既読の中で上がらない（#79）。
+        assert_eq!(list, vec![read_at("/a.md", 9, 10)]);
     }
 
     #[test]
     /// 居ないパスを指しても何も変えない（実体の有無は見ない。理由は `mark_read` の doc）。
     fn marking_a_path_that_is_not_in_the_list_changes_nothing() {
         let mut list = vec![entry("/a.md", 9, false)];
-        assert!(!set_read(&mut list, Some("/gone.md")));
+        assert!(!set_read(&mut list, Some("/gone.md"), 20));
         assert_eq!(list, vec![entry("/a.md", 9, false)]);
     }
 
@@ -352,5 +412,67 @@ mod tests {
             .map(|i| vec![format!("/{i}.md"), "1".into(), "read".into()])
             .collect();
         assert_eq!(parse(rows).len(), MAX);
+    }
+
+    #[test]
+    fn the_bell_shows_unread_by_arrival_then_read_by_when_it_was_read() {
+        // 台帳は届いた順。/b は先に届いたが後で読んだので、既読の中では /a より上。
+        let list = vec![
+            entry("/new-unread.md", 50, false),
+            read_at("/a.md", 40, 41),
+            entry("/old-unread.md", 30, false),
+            read_at("/b.md", 20, 45),
+        ];
+        assert_eq!(
+            paths(display_order(&list)),
+            vec!["/new-unread.md", "/old-unread.md", "/b.md", "/a.md"]
+        );
+    }
+
+    #[test]
+    fn marking_everything_read_moves_the_unread_rows_to_the_top_of_the_read_ones_in_arrival_order() {
+        // 「すべて既読」は全部に同じ時刻を付ける。押す前の並びのまま既読の先頭へ移る。
+        let mut list = vec![
+            entry("/x.md", 9, false),
+            read_at("/old.md", 8, 15),
+            entry("/y.md", 7, false),
+        ];
+        set_read(&mut list, None, 20);
+        assert_eq!(paths(display_order(&list)), vec!["/x.md", "/y.md", "/old.md"]);
+    }
+
+    #[test]
+    fn a_row_read_before_the_read_time_existed_is_placed_by_its_arrival_time() {
+        let list = vec![entry("/old-read.md", 30, true), read_at("/a.md", 10, 20)];
+        assert_eq!(paths(display_order(&list)), vec!["/old-read.md", "/a.md"]);
+    }
+
+    #[test]
+    fn a_row_written_before_the_read_time_existed_is_read_with_no_read_time() {
+        let got = parse(records(&[&["/a.md", "30", "read", "", "", ""]]));
+        assert_eq!(got, vec![entry("/a.md", 30, true)]);
+    }
+
+    #[test]
+    fn at_the_cap_the_row_read_longest_ago_falls_off_before_any_unread_row() {
+        // 末尾（届いたのが一番古い）は未読。落ちるのは既読にしたのが一番古い /read-0。
+        let mut list: Vec<Entry> = (0..MAX - 3).map(|i| entry(&format!("/{i}.md"), 100, false)).collect();
+        list.insert(0, read_at("/read-1.md", 100, 60));
+        list.insert(0, read_at("/read-0.md", 100, 50));
+        list.push(entry("/oldest-unread.md", 1, false));
+        push_front(&mut list, &ids(&["/new.md"]), 200, &Origin::default());
+        assert_eq!(list.len(), MAX);
+        assert!(!list.iter().any(|e| e.path == "/read-0.md"));
+        assert!(list.iter().any(|e| e.path == "/read-1.md"));
+        assert!(list.iter().any(|e| e.path == "/oldest-unread.md"));
+    }
+
+    #[test]
+    fn when_every_row_is_unread_the_oldest_arrival_falls_off_at_the_cap() {
+        let mut list: Vec<Entry> = (0..MAX).map(|i| entry(&format!("/{i}.md"), 1, false)).collect();
+        push_front(&mut list, &ids(&["/new.md"]), 9, &Origin::default());
+        assert_eq!(list.len(), MAX);
+        assert_eq!(list[0], entry("/new.md", 9, false));
+        assert!(!list.iter().any(|e| e.path == format!("/{}.md", MAX - 1)));
     }
 }
