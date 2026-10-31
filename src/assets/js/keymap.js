@@ -61,6 +61,8 @@
   function metaOnly(e) { return e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey; }
   // ⌘⇧+文字（タブ操作）。metaOnly が Shift を弾くので、両者は自動的に排他になる。
   function metaShift(e) { return e.metaKey && !e.ctrlKey && e.shiftKey && !e.altKey; }
+  // ⌃（Shift は問わない）。入力欄でも奪う: ⌃Tab は入力欄で文字を入れる意味を持たない。
+  function ctrlAnyShift(e) { return e.ctrlKey && !e.metaKey && !e.altKey; }
 
   // ── キーの一致判定 ──────────────────────────────────────────
   // e.key を厳密に見る（'g' と 'G' を区別する必要があるため）。
@@ -141,16 +143,18 @@
     // ── ファイル移動（folder.js） ──
     { cat: 'files', keys: '] / [', desc: '次 / 前のファイルへ（表示中のファイルを巡回）',
       run: 'file-cycle', match: keys('[', ']'), when: bare },
-    // Tab と ⇧Tab は同じキーを shift の有無で分ける。when が互いに排他なので
-    // 表の順序には依存しない。
+    // ⇧Tab も同じ切替に寄せる。2 か所の往復なので逆向きも同じ動きになる。
+    // 拾わずにおくと WebKit 既定の「前のフォーカス可能要素へ」が走り、
+    // ボタンやリンクに見えないフォーカスが移るだけになる。
     { cat: 'files', keys: 'Tab', desc: '本文 ⇄ ファイルツリー のフォーカス切替',
-      run: 'focus-toggle', match: keys('Tab'),
-      when: function(e) { return bare(e) && !e.shiftKey; } },
+      run: 'focus-toggle', match: keys('Tab'), when: bare },
 
     // ── タブ（tabs.js） ──
-    { cat: 'files', keys: '⇧Tab', desc: '次のタブへ（端まで行ったら先頭へ折り返す）',
+    // Chrome / Safari と同じキー。他の行は ⌘ と Ctrl のどちらでも受けるが、
+    // ⌘Tab は OS のアプリ切り替えに取られてここまで届かないので Ctrl だけで受ける。
+    { cat: 'files', keys: '⌃Tab / ⌃⇧Tab', desc: '次 / 前のタブへ（端まで行ったら反対側へ折り返す）',
       run: 'tab-cycle', match: keys('Tab'),
-      when: function(e) { return bare(e) && e.shiftKey; } },
+      when: function(e) { return ctrlAnyShift(e) && !overlayOpen(); } },
     // 入力欄とオーバーレイ表示中は譲る。⌘P のパレットを開いたまま裏のファイルだけが
     // 切り替わると、別ファイルの上にオーバーレイが残って何が起きたか分からなくなる。
     { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）',
