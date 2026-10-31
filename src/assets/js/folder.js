@@ -309,7 +309,9 @@
   // textContent で組むのでファイル名に < 等が入っても安全。
   function showNotice(pane, text) {
     var article = document.createElement('div');
-    article.className = 'markdown-body';
+    // notice-page は TOC が「md の本文ではない」と見分ける印（toc.js の isMdView）。
+    // 包みのクラスは文書から書けないので、中身の .md-notice で見分けるより確か。
+    article.className = 'markdown-body notice-page';
     var p = document.createElement('p');
     p.className = 'md-notice';
     p.textContent = text;
@@ -679,11 +681,6 @@
     // 閉じた瞬間にツリーへフォーカスが残ると、見えない行にカーソルが居座って
     // j/k がツリー操作のままになる。本文へ返して nav-tree も畳む。
     if (!open && window.MdCommon && MdCommon.isSidebarFocused()) focusPreview();
-    // 本文ペインの幅が変わるので、TOC の自動退避/復帰を評価し直す。
-    // width の transition が終わってからでないと availWidth() が古い幅を見る。
-    setTimeout(function() {
-      if (window.MdToc) window.MdToc.reevaluate();
-    }, 200);
   }
 
   function toggleSidebar() { setSidebarOpen(!sidebarOpen); }
@@ -1306,16 +1303,15 @@
       document.body.classList.remove('sidebar-resizing');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      // ツリーを広げて preview-pane が閾値を割ったら TOC を退避、
-      // 戻したら復帰させる（window resize を経由しない幅変化のため）。
-      if (window.MdToc) window.MdToc.reevaluate();
     });
 
     if (window.MdSearch) {
       window.MdSearch.init(document.getElementById('preview-pane'));
     }
     if (window.MdToc) {
-      window.MdToc.init(document.getElementById('preview-pane'));
+      window.MdToc.init(document.getElementById('preview-pane'), {
+        hasFile: function() { return !!currentFilePath; },
+      });
     }
     if (window.MdTabs) {
       // タブ切替の実体は通常のファイル切替と同じ経路（loadPreview）。
