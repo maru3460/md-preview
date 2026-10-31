@@ -309,6 +309,11 @@ test('タブが溢れてもアイコン帯は右端に残る', async ({ page }) 
   for (const f of ['a.md', 'b.md', 'notes.txt', 'zz-code.md', 'zz-frontmatter.md', 'long.md']) {
     await openFile(page, f);
   }
+  // md を開くと TOC が出て、タブ帯がその幅（300px あまり）ぶん縮む。520px の窓では
+  // タブ帯の幅が負になり、見たいもの（タブ帯の中の溢れ方）と別の理由で外枠が溢れる。
+  // 以前は TOC が狭い窓で自動で引っ込んでいたので、ここで閉じて同じ条件に揃える。
+  await page.keyboard.press('Meta+t');
+  await expect(page.locator('.md-toc-panel')).toHaveClass(/hidden/);
 
   const m = await page.evaluate(() => {
     const bar = document.getElementById('tabbar');

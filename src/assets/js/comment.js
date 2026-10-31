@@ -1171,7 +1171,7 @@
       dragStartUnit = null;
       dragEndUnit = null;
       dragUnits = null;
-      // サイドバーを入る前の状態へ復元（タブ/×クリック起点なら toc.js 側の指定が優先）。
+      // サイドバーを今の表示に合わせて戻す（⌘T/×起点なら toc.js 側の指定が優先）。
       if (window.MdToc && MdToc.closeComments) MdToc.closeComments();
       // 埋め込みが抜けて本文が縮むぶんはスクロール補正しつつ貼り直す。
       anchorScroll(redraw);
