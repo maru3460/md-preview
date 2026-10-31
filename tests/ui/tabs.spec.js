@@ -191,23 +191,29 @@ test('raw 表示のままタブを移っても読み位置が復元される', a
   await expect.poll(() => pane(page)).toBe(600);
 });
 
-test('⇧Tab の巡回は端で先頭へ折り返す', async ({ page }) => {
+test('⌃Tab / ⌃⇧Tab で次 / 前のタブへ巡回し、端で反対側へ折り返す', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');
   await openFile(page, 'b.md');
   await openFile(page, 'long.md');
 
   // 右端に居るので、次は先頭へ折り返す。
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Control+Tab');
   expect(await activePath(page)).toBe('a.md');
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Control+Tab');
   expect(await activePath(page)).toBe('b.md');
-  await page.keyboard.press('Shift+Tab');
+
+  // 逆回り。左端からは末尾へ折り返す。
+  await page.keyboard.press('Control+Shift+Tab');
+  expect(await activePath(page)).toBe('a.md');
+  await page.keyboard.press('Control+Shift+Tab');
   expect(await activePath(page)).toBe('long.md');
 
-  // Tab（shift 無し）はツリーとのフォーカス切替のままで、タブは動かさない。
+  // 素の Tab / ⇧Tab はツリーとのフォーカス切替で、タブは動かさない。
   await page.keyboard.press('Tab');
   await expect(page.locator('body')).toHaveClass(/nav-tree/);
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('body')).not.toHaveClass(/nav-tree/);
   expect(await activePath(page)).toBe('long.md');
 });
 

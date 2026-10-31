@@ -288,8 +288,7 @@
     if (opts && opts.clearFile) opts.clearFile();
   }
 
-  // ⇧Tab : 次のタブへ。端まで行ったら先頭へ折り返す（1 方向だけなのは、逆回りを
-  // 足すより ⌘1..⌘9 で直に飛ぶ方が速いため）。
+  // ⌃Tab / ⌃⇧Tab : 次 / 前のタブへ。端まで行ったら反対側へ折り返す。
   function cycle(delta) {
     if (tabs.length < 2) return;
     activate((activeIdx + delta + tabs.length) % tabs.length);
@@ -374,7 +373,7 @@
   function registerKeys() {
     if (!window.MdKeymap) return;
     MdKeymap.on('tab-close', function() { closeAt(activeIdx); });
-    MdKeymap.on('tab-cycle', function() { cycle(1); });
+    MdKeymap.on('tab-cycle', function(e) { cycle(e.shiftKey ? -1 : 1); });
     MdKeymap.on('tab-goto', function(e) { goto(parseInt(e.key, 10)); });
   }
 
