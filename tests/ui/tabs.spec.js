@@ -410,3 +410,138 @@ test('起動時に渡した複数ファイルがタブとして並ぶ', async ({
   expect(await activePath(page)).toBe('sub/a.md');
   await expect(page.locator('#preview-pane .markdown-body')).toContainText('サブフォルダの見出し A');
 });
+
+// ── ドラッグで並べ替え（#66）───────────────────────────────────
+
+/// a.md / b.md / long.md / notes.txt の 4 枚を開いた状態にする。
+async function openFour(page) {
+  await openFolder(page);
+  for (const f of ['a.md', 'b.md', 'long.md', 'notes.txt']) await openFile(page, f);
+  await expect(tabNames(page)).toHaveText(['a.md', 'b.md', 'long.md', 'notes.txt']);
+}
+
+/// タブの中心座標。
+async function centerOf(page, rel) {
+  const r = await tab(page, rel).boundingBox();
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+}
+
+/// rel のタブを掴んで (x, y) まで動かす（離さない）。途中を刻むのは、閾値を越えて
+/// 掴んだ扱いになってから差し込み先が決まる流れを踏ませるため。
+async function grab(page, rel, x, y) {
+  const c = await centerOf(page, rel);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 8 });
+}
+
+test('タブを掴んで別の位置で離すと、そこへ並べ替わる', async ({ page }) => {
+  await openFour(page);
+
+  // 左端の a.md を long.md の右半分へ。押した瞬間に a.md へ切り替わり、そのまま運べる。
+  const target = await tab(page, 'long.md').boundingBox();
+  await grab(page, 'a.md', target.x + target.width * 0.75, target.y + target.height / 2);
+  await expect(tab(page, 'a.md')).toHaveClass(/dragging/);
+  // 差し込み先は long.md の右＝notes.txt の左。
+  await expect(tab(page, 'notes.txt')).toHaveClass(/drop-before/);
+  await page.mouse.up();
+
+  await expect(tabNames(page)).toHaveText(['b.md', 'long.md', 'a.md', 'notes.txt']);
+  expect(await activePath(page)).toBe('a.md');
+  await expect(page.locator('.md-tab.dragging, .md-tab.drop-before, .md-tab.drop-after')).toHaveCount(0);
+  // 番号でのジャンプも新しい並びに従う。
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('b.md');
+});
+
+test('右端の後ろへも、左端の前へも置ける', async ({ page }) => {
+  await openFour(page);
+
+  const last = await tab(page, 'notes.txt').boundingBox();
+  await grab(page, 'b.md', last.x + last.width - 4, last.y + last.height / 2);
+  await expect(tab(page, 'notes.txt')).toHaveClass(/drop-after/);
+  await page.mouse.up();
+  await expect(tabNames(page)).toHaveText(['a.md', 'long.md', 'notes.txt', 'b.md']);
+
+  const first = await tab(page, 'a.md').boundingBox();
+  await grab(page, 'notes.txt', first.x + 4, first.y + first.height / 2);
+  await page.mouse.up();
+  await expect(tabNames(page)).toHaveText(['notes.txt', 'a.md', 'long.md', 'b.md']);
+});
+
+test('少しだけ動いて離したのはクリック。並びは変わらず、切り替わるだけ', async ({ page }) => {
+  await openFour(page);
+  const c = await centerOf(page, 'b.md');
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await page.mouse.move(c.x + 2, c.y + 1);
+  await expect(tab(page, 'b.md')).not.toHaveClass(/dragging/);
+  await page.mouse.up();
+  await expect(tabNames(page)).toHaveText(['a.md', 'b.md', 'long.md', 'notes.txt']);
+  expect(await activePath(page)).toBe('b.md');
+});
+
+test('Esc で取り消すと元の並びのまま', async ({ page }) => {
+  await openFour(page);
+  const last = await tab(page, 'notes.txt').boundingBox();
+  await grab(page, 'a.md', last.x + last.width - 4, last.y + last.height / 2);
+  await expect(tab(page, 'notes.txt')).toHaveClass(/drop-after/);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.md-tab.dragging, .md-tab.drop-after')).toHaveCount(0);
+  await page.mouse.up();
+  await expect(tabNames(page)).toHaveText(['a.md', 'b.md', 'long.md', 'notes.txt']);
+});
+
+test('帯の外（本文の上）で離すと何も起きない', async ({ page }) => {
+  await openFour(page);
+  const pane = await page.locator('#preview-pane').boundingBox();
+  await grab(page, 'a.md', pane.x + pane.width / 2, pane.y + pane.height / 2);
+  // 帯から外れた時点で差し込み先の印は消える。
+  await expect(page.locator('.md-tab.drop-before, .md-tab.drop-after')).toHaveCount(0);
+  await page.mouse.up();
+  await expect(tabNames(page)).toHaveText(['a.md', 'b.md', 'long.md', 'notes.txt']);
+  expect(await activePath(page)).toBe('a.md');
+});
+
+test('溢れた帯の端へ寄せると帯が流れ、見えていなかった位置へ置ける', async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 600 });
+  await openFour(page);
+  for (const f of ['zz-code.md', 'zz-details.md', 'zz-frontmatter.md', 'zz-mermaid.md']) await openFile(page, f);
+  const strip = page.locator('#tabbar-tabs');
+  // 溢れていなければこのテストは意味を持たない。
+  expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+
+  // 左端へ戻してから、a.md を掴んで帯の右端で止める。
+  await page.keyboard.press('Meta+1');
+  await strip.evaluate((el) => { el.scrollLeft = 0; });
+  const box = await strip.boundingBox();
+  await grab(page, 'a.md', box.x + box.width - 2, box.y + box.height / 2);
+  await expect.poll(() => strip.evaluate((el) => el.scrollLeft + el.clientWidth >= el.scrollWidth - 1)).toBe(true);
+  await expect(tab(page, 'zz-mermaid.md')).toHaveClass(/drop-after/);
+  await page.mouse.up();
+  await expect(tabNames(page).last()).toHaveText('a.md');
+});
+
+// ドラッグの後の click を捨てる仕掛けが、後から来る別の click（ツリーの Enter が呼ぶ
+// cursorRow.click() など、マウスを伴わないもの）まで食わないこと。押したタブは描き直しで
+// 消えるので、ドラッグ自身の click は来ないことがある。待ち続けると次の click を食う。
+test('ドラッグの後でも、マウスを伴わない click は届く', async ({ page }) => {
+  await openFour(page);
+  const target = await tab(page, 'long.md').boundingBox();
+  await grab(page, 'a.md', target.x + target.width * 0.75, target.y + target.height / 2);
+  await page.mouse.up();
+  await expect(tabNames(page)).toHaveText(['b.md', 'long.md', 'a.md', 'notes.txt']);
+
+  const got = await page.evaluate(() => new Promise((resolve) => {
+    setTimeout(() => {
+      const b = document.createElement('button');
+      document.body.appendChild(b);
+      let n = 0;
+      b.addEventListener('click', () => { n++; });
+      b.click();
+      b.remove();
+      resolve(n);
+    }, 50);
+  }));
+  expect(got).toBe(1);
+});
