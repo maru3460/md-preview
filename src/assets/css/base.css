@@ -983,6 +983,43 @@ body.folder-mode {
     background-color: color-mix(in srgb, currentColor 18%, transparent);
 }
 
+/* ドラッグで並べ替え（#66、tabs.js の「ドラッグ」）。掴んだタブは薄くし、差し込み先に
+   縦線を出す。縦線は擬似要素で描く。box-shadow で描くと、.active の上端の線と影の
+   指定を 1 本にまとめて書き分ける必要がある。左の縦線はタブ同士の罫（1px）に重ねる。
+   .dragging は .active / :hover と同じ詳細度なので、それらより後ろに置いて勝たせている。 */
+.md-tab {
+    position: relative;
+}
+
+.md-tab.dragging {
+    opacity: 0.35;
+}
+
+.md-tab.drop-before::after,
+.md-tab.drop-after::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    width: 2px;
+    border-radius: 1px;
+    background-color: var(--md-accent, Highlight);
+    pointer-events: none;
+}
+
+.md-tab.drop-before::after {
+    left: -1px;
+}
+
+.md-tab.drop-after::after {
+    right: -1px;
+}
+
+/* 文書の iframe（.html-frame）の上を通るあいだも、動きを窓のページで受け続ける。 */
+body.md-tab-dragging iframe {
+    pointer-events: none;
+}
+
 .tree-item {
     display: flex;
     align-items: center;

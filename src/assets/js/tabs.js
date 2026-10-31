@@ -358,17 +358,195 @@
 
       // click ではなく mousedown で受ける。preventDefault してタブへフォーカスが
       // 移るのを防ぐと、切替直後から本文のスクロール素キーがそのまま効く。
+      // 左ボタンは切り替えてからそのまま掴める（VSCode と同じ。並べ替えは下の「ドラッグ」）。
       tab.addEventListener('mousedown', function(e) {
         e.preventDefault();
         if (e.button === 1) closeAt(i);        // 中クリックで閉じる
-        else if (e.button === 0) activate(i);
+        else if (e.button === 0) { activate(i); pressTab(t.path, e); }
       });
 
       el.appendChild(tab);
       if (i === activeIdx) activeEl = tab;
     });
 
-    if (activeEl) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // ドラッグ中は流さない。転送や読み直しで描き直すたびに帯が現在タブへ戻ると、
+    // 端へ寄せて流した帯と差し込み先がポインタの下から飛ぶ。
+    if (activeEl && !(drag && drag.dragging)) {
+      activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    paintDrag();
+  }
+
+  // ── ドラッグで並べ替え（#66）────────────────────────────────
+  // 押した瞬間に切り替え（上の mousedown）、DRAG_START px 動いたら掴んだ扱いにする。
+  // それ未満で離せば普通のクリック。
+  //
+  // Why not HTML5 DnD: draggable はタブの mousedown の preventDefault で始まらなくなる。
+  // あれは押したときに本文のフォーカスを外さないためのもので、外すと切替直後の素キーが
+  // 本文へ届かなくなる。
+  //
+  // Why not 押したタブ要素に setPointerCapture: 別のタブを押すと activate() が render() で
+  // 帯を作り直すので、押した要素はその場で消える。だから window で受けて、タブは要素
+  // ではなくパスで追う。
+  // ボタンを押したままの間は、窓の外へ出ても mousemove / mouseup が届く。
+  var DRAG_START = 4;     // px。これ未満の揺れはクリックのうち
+  var EDGE = 32;          // px。帯の端からこの幅に入ると帯が流れる
+  var EDGE_SPEED = 14;    // px / フレーム。端を越えたときの最大
+  var BAR_SLACK = 16;     // px。帯の上下にはみ出してもドラッグを続ける幅
+  // 掴んでいる間だけ { path, x0, y0, x, y, dragging, raf }。それ以外は null。
+  var drag = null;
+
+  function pressTab(path, e) {
+    endDrag();
+    drag = { path: path, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
+             dragging: false, raf: 0 };
+    window.addEventListener('mousemove', onDragMove, true);
+    window.addEventListener('mouseup', onDragUp, true);
+    window.addEventListener('keydown', onDragKey, true);
+    window.addEventListener('blur', endDrag);
+  }
+
+  // 帯の上（上下に BAR_SLACK のはみ出しを許す）に居るか。外で離せば取り消し。
+  // 横は見ない。帯より左右へ出ても、端の先へ流し続けたいだけなので。
+  function overBar() {
+    var el = tabsEl();
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return drag.y >= r.top - BAR_SLACK && drag.y <= r.bottom + BAR_SLACK;
+  }
+
+  // 差し込み先を tabs の添え字（0..length。元の位置は抜く前で数える）で返す。
+  // 動かない位置（自分の左右）や帯の外なら -1。
+  // #67 のピン留めで境目を越えさせないなら、ここで範囲を絞る。
+  function dropIndex() {
+    var el = tabsEl();
+    var from = indexOf(drag.path);
+    if (!el || from === -1 || !overBar()) return -1;
+    var nodes = el.querySelectorAll('.md-tab');
+    var to = nodes.length;
+    for (var i = 0; i < nodes.length; i++) {
+      var r = nodes[i].getBoundingClientRect();
+      if (drag.x < r.left + r.width / 2) { to = i; break; }
+    }
+    return (to === from || to === from + 1) ? -1 : to;
+  }
+
+  // 掴んでいるタブと差し込み先の印を付け直す。render() が帯を作り直すと消えるので、
+  // render() の最後からも呼ぶ。
+  function paintDrag() {
+    var el = tabsEl();
+    if (!el) return;
+    var nodes = el.querySelectorAll('.md-tab');
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.remove('dragging', 'drop-before', 'drop-after');
+    }
+    if (!drag || !drag.dragging) return;
+    var from = indexOf(drag.path);
+    if (nodes[from]) nodes[from].classList.add('dragging');
+    var to = dropIndex();
+    if (to === -1) return;
+    if (to < nodes.length) nodes[to].classList.add('drop-before');
+    else nodes[nodes.length - 1].classList.add('drop-after');
+  }
+
+  // 端へ寄せている間はマウスが止まっていても流し続けるので、mousemove ではなく
+  // フレームごとに回す。流れたぶん差し込み先も変わるので、印もここで付け直す。
+  function autoScroll() {
+    drag.raf = 0;
+    var el = tabsEl();
+    if (!el || !drag.dragging) return;
+    var step = 0;
+    if (overBar()) {
+      var r = el.getBoundingClientRect();
+      var into = 0;
+      if (drag.x < r.left + EDGE) into = -(r.left + EDGE - drag.x);
+      else if (drag.x > r.right - EDGE) into = drag.x - (r.right - EDGE);
+      if (into) {
+        var k = Math.min(1, Math.abs(into) / EDGE);
+        step = (into < 0 ? -1 : 1) * Math.max(2, Math.round(k * EDGE_SPEED));
+      }
+    }
+    if (!step) return;
+    var before = el.scrollLeft;
+    el.scrollLeft += step;
+    if (el.scrollLeft === before) return;   // 端まで流れきった
+    paintDrag();
+    drag.raf = requestAnimationFrame(autoScroll);
+  }
+
+  function onDragMove(e) {
+    if (!drag) return;
+    // ボタンが離れているのに mouseup を取り逃した（iframe の上で離した など）。
+    if (!(e.buttons & 1)) { endDrag(); return; }
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    if (!drag.dragging) {
+      if (Math.abs(drag.x - drag.x0) < DRAG_START && Math.abs(drag.y - drag.y0) < DRAG_START) return;
+      drag.dragging = true;
+      document.body.classList.add('md-tab-dragging');
+    }
+    e.preventDefault();
+    paintDrag();
+    if (!drag.raf) drag.raf = requestAnimationFrame(autoScroll);
+  }
+
+  function onDragUp(e) {
+    if (!drag || e.button !== 0) return;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    var dragged = drag.dragging;
+    var path = drag.path;
+    var to = dragged ? dropIndex() : -1;
+    endDrag();
+    if (dragged) swallowClick();
+    if (to !== -1) moveTab(path, to);
+  }
+
+  // Esc で取り消して元の位置へ。keymap.js の Esc（オーバーレイを閉じる等）へは渡さない。
+  function onDragKey(e) {
+    if (!drag || !drag.dragging || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    endDrag();
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    if (drag.raf) cancelAnimationFrame(drag.raf);
+    drag = null;
+    window.removeEventListener('mousemove', onDragMove, true);
+    window.removeEventListener('mouseup', onDragUp, true);
+    window.removeEventListener('keydown', onDragKey, true);
+    window.removeEventListener('blur', endDrag);
+    document.body.classList.remove('md-tab-dragging');
+    paintDrag();
+  }
+
+  // ドラッグの後に来る click を捨てる。押した要素が残っていれば、押した場所と離した場所の
+  // 共通の祖先へ click が飛び、帯の外で離すと本文側のクリック処理が拾いうる。
+  // 押した要素が描き直しで消えていると click 自体が来ないので、待ち続けない。click は
+  // mouseup と同じタスクの中で出るため、次のタスクで外せば十分。
+  //
+  // Why not 次の mousedown まで待つ: その間のキーボード由来の click（ツリーの Enter が
+  // 呼ぶ cursorRow.click() など）まで食う。
+  function swallowClick() {
+    function eat(e) { e.preventDefault(); e.stopImmediatePropagation(); off(); }
+    function off() { window.removeEventListener('click', eat, true); }
+    window.addEventListener('click', eat, true);
+    setTimeout(off, 0);
+  }
+
+  // path のタブを、抜く前の並びで数えた添え字 to の位置へ移す。
+  // 見ているタブはパスで引き直す（openMany と同じく、splice で添え字がずれる）。
+  function moveTab(path, to) {
+    var from = indexOf(path);
+    if (from === -1) return;
+    var stay = tabs[activeIdx] ? tabs[activeIdx].path : null;
+    var t = tabs.splice(from, 1)[0];
+    if (to > from) to--;
+    tabs.splice(to, 0, t);
+    activeIdx = indexOf(stay);
+    render();
   }
 
   function registerKeys() {
