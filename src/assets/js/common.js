@@ -876,6 +876,9 @@
       var isCmd = (e.metaKey || e.ctrlKey) &&
         (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'b' || k === 'w' || k === 'f');
       var inField = isFieldEl(e.target);
+      // ⌘1..⌘9（n 番目のタブ）も渡す。親の表は入力欄で譲るので、ここでも入力欄では渡さない。
+      var isTabGoto = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && !inField &&
+        /^[1-9]$/.test(e.key);
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
 
@@ -935,7 +938,7 @@
       // （`blocksKeys:false`）が、`c` を中から渡す以上、出口も渡さないと入ったきり出られない。
       // どちらでもない時は転送せず、iframe 内のページ自身の Esc 処理を邪魔しない。
       var isEsc = e.key === 'Escape' && (overlay || inMode);
-      if (!isCmd && !isNav && !isTabCycle && !isEsc && !isCmtToggle && !isCmtCursor && !isCmtList) return;
+      if (!isCmd && !isNav && !isTabCycle && !isTabGoto && !isEsc && !isCmtToggle && !isCmtCursor && !isCmtList) return;
       var ev = new KeyboardEvent('keydown', {
         key: e.key, code: e.code,
         metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,

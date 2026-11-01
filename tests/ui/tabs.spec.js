@@ -220,6 +220,41 @@ test('⌃Tab / ⌃⇧Tab で次 / 前のタブへ巡回し、端で反対側へ�
   await expect(page.locator('body')).not.toHaveClass(/nav-tree/);
 });
 
+test('検索バーを開いたままでも ⌃Tab / ⌘1..⌘9 でタブを移れる', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+
+  await page.keyboard.press('Meta+f');
+  await expect(page.locator('#md-search-bar')).not.toHaveClass(/hidden/);
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('a.md');
+
+  await page.keyboard.press('Meta+f');
+  await expect(page.locator('#md-search-bar')).not.toHaveClass(/hidden/);
+  // 検索の入力欄にフォーカスがあると ⌘1..⌘9 は譲るので、本文へ戻してから押す。
+  await page.locator('#preview-pane').click();
+  await page.keyboard.press('Meta+2');
+  expect(await activePath(page)).toBe('b.md');
+});
+
+test('html 表示の iframe にフォーカスがあっても ⌃Tab / ⌘1..⌘9 が効く', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'page.html');
+  const frame = page.frameLocator('iframe.html-frame');
+
+  await frame.locator('body').click();
+  await page.keyboard.press('Control+Shift+Tab');
+  expect(await activePath(page)).toBe('a.md');
+
+  await page.keyboard.press('Meta+2');
+  expect(await activePath(page)).toBe('page.html');
+  await frame.locator('body').click();
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('a.md');
+});
+
 test('⌘1..⌘9 で番号のタブへ飛ぶ（⌘9 は最後、無い番号は無反応）', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');

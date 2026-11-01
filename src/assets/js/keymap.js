@@ -36,6 +36,11 @@
   // when が互いに排他になるよう書く。そうしておけば表の順序に依存しない。
   function inField(e) { return !!(window.MdCommon && MdCommon.isFieldEl(e.target)); }
   function overlayOpen() { return !!(window.MdCommon && MdCommon.isOverlayOpen()); }
+  // 検索バーを数えない版。タブ操作に使う: 検索バーは本文を覆わず、タブを移ると
+  // 閉じる（folder.js の MdSearch.reset）ので、開いたままでも移ってよい。
+  function overlayOpenButSearch() {
+    return !!(window.MdCommon && MdCommon.isOverlayOpen('md-search-bar'));
+  }
   function inTree() { return !!(window.MdCommon && MdCommon.isSidebarFocused()); }
   function interactive() { return !!(window.MdCommon && MdCommon.isInteractiveFocus()); }
   function inCommentMode() { return !!(window.MdComment && MdComment.isMode && MdComment.isMode()); }
@@ -154,12 +159,13 @@
     // ⌘Tab は OS のアプリ切り替えに取られてここまで届かないので Ctrl だけで受ける。
     { cat: 'files', keys: '⌃Tab / ⌃⇧Tab', desc: '次 / 前のタブへ（端まで行ったら反対側へ折り返す）',
       run: 'tab-cycle', match: keys('Tab'),
-      when: function(e) { return ctrlAnyShift(e) && !overlayOpen(); } },
+      when: function(e) { return ctrlAnyShift(e) && !overlayOpenButSearch(); } },
     // 入力欄とオーバーレイ表示中は譲る。⌘P のパレットを開いたまま裏のファイルだけが
     // 切り替わると、別ファイルの上にオーバーレイが残って何が起きたか分からなくなる。
+    // 検索バーだけは数えない（overlayOpenButSearch の理由）。
     { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）',
       run: 'tab-goto', match: digit19,
-      when: function(e) { return cmd(e) && !overlayOpen(); } },
+      when: function(e) { return cmd(e) && !overlayOpenButSearch(); } },
 
     // ── ファイルツリー（folder.js） ──
     { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉',
