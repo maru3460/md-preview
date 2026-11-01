@@ -1984,7 +1984,7 @@
     urlToId: urlToId,
     resolvePath: resolvePath,
     cornerStack: cornerStack,
-    // ⌘W の従来の意味。タブ（tabs.js）が最後の 1 枚を閉じる時にも使う。
+    // ⌘⇧W と、タブが 1 枚も無いときの ⌘W（tabs.js の closeAt）が使う。
     closeWindow: closeWindow
   };
 })();
