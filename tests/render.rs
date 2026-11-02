@@ -163,6 +163,7 @@ fn request(query: &str) -> String {
             theme_css: THEME_CSS,
             custom_css: CUSTOM_CSS,
             policy: Policy::default(),
+            tab_order: Default::default(),
             lib_origin: APP_ORIGIN,
         },
     );
@@ -239,10 +240,12 @@ fn folder_shell_page_lists_every_initial_file() {
         theme_css: THEME_CSS,
         custom_css: CUSTOM_CSS,
         policy: Policy::default(),
+        tab_order: md_preview::app_config::TabOrder::Mru,
         lib_origin: APP_ORIGIN,
     };
     let config = md_preview::app_config::AppConfig::from_paths(&files, &page, &None);
     let globals = config.page_globals(md_preview::theme::Appearance::Light, &[]);
+    assert!(globals.contains(r#"window.MD_TAB_ORDER = "mru";"#), "{globals}");
     assert!(
         globals.contains(&format!(
             r#"window.INITIAL_FILES = ["{}","{}"];"#,

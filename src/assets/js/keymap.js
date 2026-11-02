@@ -157,7 +157,7 @@
     // ── タブ（tabs.js） ──
     // Chrome / Safari と同じキー。他の行は ⌘ と Ctrl のどちらでも受けるが、
     // ⌘Tab は OS のアプリ切り替えに取られてここまで届かないので Ctrl だけで受ける。
-    { cat: 'files', keys: '⌃Tab / ⌃⇧Tab', desc: '次 / 前のタブへ（端まで行ったら反対側へ折り返す）',
+    { cat: 'files', keys: '⌃Tab / ⌃⇧Tab', desc: '次 / 前のタブへ（端で折り返す。設定「タブ」で最近使った順にもできる）',
       run: 'tab-cycle', match: keys('Tab'),
       when: function(e) { return ctrlAnyShift(e) && !overlayOpenButSearch(); } },
     // 入力欄とオーバーレイ表示中は譲る。⌘P のパレットを開いたまま裏のファイルだけが
@@ -236,6 +236,15 @@
       fn(e);
       return;                                    // 最初に当たった 1 つだけ
     }
+  });
+
+  // keyup は ⌃ だけ配る（#54 の最近使った順: ⌃ を離した時点でタブの順を確定する）。
+  // 表の行ではないので ? のヘルプには出ない。html 表示の iframe の中で離したぶんは
+  // common.js の bindFrame が親へ転送する。
+  document.addEventListener('keyup', function(e) {
+    if (e.key !== 'Control') return;
+    var fn = handlers['ctrl-up'];
+    if (fn) fn(e);
   });
 
   window.MdKeymap = {

@@ -22,7 +22,7 @@
 
   // Rust から渡された写し。
   // { theme, defaultTheme, autoDarkBg, themes:[{name, group, swatch}], windowSize, defaultWindowSize,
-  //   trusted:{saved, effective} }
+  //   trusted:{saved, effective}, tabOrder:'order'|'mru' }
   var state = null;
   var pane = 'theme';
   var host = null;    // 描いている先（本文ペイン）
@@ -34,6 +34,8 @@
       icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/></svg>' },
     { key: 'window', title: 'ウィンドウ',
       icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M1.8 5.8h12.4"/></svg>' },
+    { key: 'tabs', title: 'タブ',
+      icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 13.2V5.4a1.6 1.6 0 0 1 1.6-1.6h3.2l1.4 2h4.6a1.6 1.6 0 0 1 1.6 1.6v5.8z"/><path d="M1.8 13.2h12.4"/></svg>' },
     // 名前は、HTML が白紙になった・画像が文字になった人が探す言葉にする（「セキュリティ」では
     // 症状から引けない）。
     // ナビは幅が狭いので 1 行に収まる短い名前（`nav`）にし、ペインの見出しには全部を書く。
@@ -51,6 +53,15 @@
         'Web フォントが効かないときは ON。ON にすると、以後に開くすべての md と HTML で JavaScript が動き、ネットからの読み込みも通ります。' +
         '文書が手元のファイルを読んで外へ送れるようになり、開いたことや本文の一部が伝わることがあります。',
       extra: ['draw.io の AWS・Cisco・BPMN などの図形は、ON にしたときだけ描かれます。'] }
+  ];
+
+  // ⌃Tab / ⌃⇧Tab が辿る順（#54）。`value` は Rust の settings.rs の綴りで、`settings:tab-order:<value>` で頼む。
+  var TAB_ORDERS = [
+    { value: 'order', label: 'タブバーの並び',
+      desc: '左右に並んだ順に次 / 前へ。端まで行ったら反対側へ折り返します。' },
+    { value: 'mru', label: '最近使った順',
+      desc: '直前に見ていたタブへ戻ります。⌃ を押したまま Tab を重ねると、その前に見ていたタブへさかのぼり、' +
+        '⌃ を離した時点で順が確定します。' }
   ];
 
   var GROUPS = [
@@ -96,6 +107,7 @@
     if (state) {
       if (pane === 'theme') renderTheme(p);
       else if (pane === 'window') renderWindow(p);
+      else if (pane === 'tabs') renderTabs(p);
       else renderContent(p);
     }
     layout.appendChild(p);
@@ -240,6 +252,38 @@
     // 立ち上がり直したときだけ。「プロセス」ではなく、押すキーで書く（JavaScript と
     // 外部の読み込みの画面と揃える）。
     item.appendChild(el('div', 'st-when', '⌘Q で終了した後から効きます。'));
+    p.appendChild(item);
+  }
+
+  // ── タブ ────────────────────────────────────────────────────
+  function renderTabs(p) {
+    p.appendChild(el('div', 'st-title', 'タブ'));
+    var item = el('div', 'st-item');
+    item.appendChild(el('span', 'st-label', '⌃Tab / ⌃⇧Tab で辿る順'));
+    var current = state.tabOrder === 'mru' ? 'mru' : 'order';
+    TAB_ORDERS.forEach(function(o) {
+      var label = el('label', 'st-choice');
+      var input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'st-tab-order';
+      input.id = 'st-tab-order-' + o.value;
+      input.value = o.value;
+      input.checked = (o.value === current);
+      input.addEventListener('change', function() {
+        if (!input.checked) return;
+        // 写しも先に書き換えておく。返事が届くまでの描き直しで元へ戻さないため。
+        if (state) state.tabOrder = o.value;
+        send('tab-order:' + o.value);
+      });
+      label.appendChild(input);
+      var text = el('div', 'st-choice-text');
+      text.appendChild(el('div', 'st-choice-label', o.label));
+      text.appendChild(el('p', 'st-desc', o.desc));
+      label.appendChild(text);
+      item.appendChild(label);
+    });
+    // 他の 2 つと違って、プロセスを立ち上げ直さなくても効く（ページ側の辿り方を変えるだけ）。
+    item.appendChild(el('div', 'st-when', '変えた時点で効きます。'));
     p.appendChild(item);
   }
 
@@ -487,6 +531,8 @@
     push: function(next) {
       state = next;
       render();
+      // ⌃Tab の順はその場で効く。設定タブが前に出ていなくても渡す（起動時は MD_TAB_ORDER）。
+      if (window.MdTabs && MdTabs.setOrder) MdTabs.setOrder(next && next.tabOrder);
     },
     applyTheme: applyTheme
   };

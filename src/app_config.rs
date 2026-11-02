@@ -95,6 +95,43 @@ pub fn policy_from(settings: &crate::settings::Settings) -> Policy {
     Policy { trusted: switch_on(settings.get(crate::settings::TRUST_DOCUMENTS)) }
 }
 
+/// ⌃Tab / ⌃⇧Tab が辿る順（#54）。保存する綴りは [`TabOrder::as_str`] と対で、ページへも
+/// 同じ綴りで渡す（`MD_TAB_ORDER` と設定画面の `tabOrder`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TabOrder {
+    /// タブバーの並び。既定。
+    #[default]
+    Order,
+    /// 最近使った順。⌃ を押している間は順を組み替えず、離したときに確定する。
+    Mru,
+}
+
+impl TabOrder {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TabOrder::Order => "order",
+            TabOrder::Mru => "mru",
+        }
+    }
+
+    /// 保存する綴りだけを受ける。読めない綴りは `None`（書く側は保存せず、読む側は既定）。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "order" => Some(TabOrder::Order),
+            "mru" => Some(TabOrder::Mru),
+            _ => None,
+        }
+    }
+}
+
+/// 保存してある設定から ⌃Tab の順を読む。綴りが読めなければ既定（並び順）。
+pub fn tab_order_from(settings: &crate::settings::Settings) -> TabOrder {
+    settings
+        .get(crate::settings::TAB_ORDER)
+        .and_then(TabOrder::parse)
+        .unwrap_or_default()
+}
+
 /// 画面を組むのに要る、入力（開くもの）とは関係なく決まる値。3 つの入口（`AppConfig` の
 /// `from_*`）と [`crate::request::RequestContext::new`] が同じものを受ける。
 ///
@@ -107,6 +144,8 @@ pub struct PageInputs<'a> {
     pub custom_css: &'a str,
     /// 起動時に設定から 1 回だけ作った CSP。
     pub policy: Policy,
+    /// 起動時に読んだ ⌃Tab の順（#54）。以後の切り替えは設定画面がページへ直接渡す。
+    pub tab_order: TabOrder,
     /// `/__lib/` を許す住所。本番は [`crate::csp::APP_ORIGIN`]、`examples/serve.rs` は
     /// 自分の origin。
     pub lib_origin: &'a str,
@@ -115,7 +154,13 @@ pub struct PageInputs<'a> {
 /// CSS は空、CSP は既定（OFF）、住所は本番のもの。テストが `RequestContext` を作るとき用。
 impl Default for PageInputs<'_> {
     fn default() -> Self {
-        PageInputs { theme_css: "", custom_css: "", policy: Policy::default(), lib_origin: crate::csp::APP_ORIGIN }
+        PageInputs {
+            theme_css: "",
+            custom_css: "",
+            policy: Policy::default(),
+            tab_order: TabOrder::default(),
+            lib_origin: crate::csp::APP_ORIGIN,
+        }
     }
 }
 
@@ -142,6 +187,8 @@ pub struct AppConfig {
     pub bell_opened: Vec<String>,
     /// 起動時に決めた CSP。ページの meta はこれで組んである（`page_globals` が設定画面へ渡す）。
     pub policy: Policy,
+    /// 起動時に読んだ ⌃Tab の順（#54。`page_globals` がタブへ渡す）。
+    pub tab_order: TabOrder,
 }
 
 impl AppConfig {
@@ -171,6 +218,8 @@ impl AppConfig {
     /// - `MD_TRUSTED`        起動時に決めた CSP（`policy`）の「文書を信頼する」。
     ///                       ON でも OFF でも必ず定義する。未定義だと、文書が同じ名前の id の
     ///                       要素を置くだけで値がすり替わる（window の名前付きプロパティ）。
+    /// - `MD_TAB_ORDER`      ⌃Tab / ⌃⇧Tab が辿る順（#54。`tab_order`）。`"order"` か `"mru"`。
+    ///                       設定画面で切り替えたぶんは `MdSettings.push` 経由でタブへ届く。
     ///
     /// `quick` を引数で受けるのは、これが AppConfig（起動の入力）ではなく
     /// **ユーザーの持ち物**だから。`~/.config` をここで読むと、`examples/serve.rs` で
@@ -186,7 +235,7 @@ impl AppConfig {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}]; window.INITIAL_FILES = [{}]; window.MD_TRUSTED = {};",
+            "window.MD_APPEARANCE = {}; window.MD_RENDERABLE_EXT = [{}]; window.MD_ROOT_DIR = {}; window.MD_STDIN_PREFIX = {}; window.MD_STDIN_DIR = {}; window.MD_QUICK_ACCESS = [{}]; window.MD_ORIGINS = [{}]; window.MD_BELL_OPENED = [{}]; window.INITIAL_FILES = [{}]; window.MD_TRUSTED = {}; window.MD_TAB_ORDER = {};",
             json_string(appearance.as_str()),
             renderable,
             json_string(&self.root_dir.to_string_lossy()),
@@ -201,6 +250,7 @@ impl AppConfig {
             self.bell_opened.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
             self.initial_ids.iter().map(|id| json_string(id)).collect::<Vec<_>>().join(","),
             self.policy.trusted,
+            json_string(self.tab_order.as_str()),
         )
     }
 
@@ -218,6 +268,7 @@ impl AppConfig {
             initial_ids: initial_files.to_vec(),
             bell_opened: Vec::new(),
             policy: page.policy,
+            tab_order: page.tab_order,
         }
     }
 
@@ -588,6 +639,18 @@ mod tests {
     }
 
     /// 書いていなければ OFF。古いキー（2 つのスイッチだった頃の綴り）は読まない。
+    /// ⌃Tab の順は綴りが合うときだけ読み、それ以外は既定の並び順（#54）。
+    #[test]
+    fn the_tab_order_is_read_from_its_key_and_falls_back_to_order() {
+        use crate::settings::parse;
+        assert_eq!(tab_order_from(&parse("")), TabOrder::Order);
+        assert_eq!(tab_order_from(&parse("tab-order=mru\n")), TabOrder::Mru);
+        assert_eq!(tab_order_from(&parse("theme=nord\ntab-order = order\n")), TabOrder::Order);
+        assert_eq!(tab_order_from(&parse("tab-order=recent\n")), TabOrder::Order);
+        assert_eq!(TabOrder::parse(TabOrder::Mru.as_str()), Some(TabOrder::Mru));
+        assert_eq!(TabOrder::parse("MRU"), None);
+    }
+
     #[test]
     fn the_policy_is_read_from_the_trust_key() {
         use crate::settings::parse;

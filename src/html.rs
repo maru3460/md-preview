@@ -1081,6 +1081,8 @@ pub struct SettingsView<'a> {
     /// 文書の JS は動いたままである。画面が保存した値だけを見て「OFF」と出すと、止まったと
     /// 思わせてしまう（安全にかかわるのはこちらの向き）。
     pub effective_policy: crate::csp::Policy,
+    /// `settings` に保存してある ⌃Tab の順（#54）。保存した時点で効くので 1 つだけ渡す。
+    pub tab_order: crate::app_config::TabOrder,
 }
 
 /// 設定タブの状態を**まるごと**ページへ渡すスクリプト。差分にしない理由は
@@ -1113,7 +1115,7 @@ pub fn settings_script(view: &SettingsView) -> String {
     );
     let switch = |saved: bool, effective: bool| format!("{{saved:{saved},effective:{effective}}}");
     format!(
-        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},trusted:{}}});",
+        "window.MdSettings && window.MdSettings.push({{theme:{},defaultTheme:{},autoDarkBg:{},themes:[{}],windowSize:{},defaultWindowSize:{},trusted:{},tabOrder:{}}});",
         json_string(view.theme),
         json_string(crate::theme::DEFAULT_NAME),
         json_string(&crate::theme::auto_dark_bg_hex()),
@@ -1121,6 +1123,7 @@ pub fn settings_script(view: &SettingsView) -> String {
         view.window_size.map(size).unwrap_or_else(|| "null".to_string()),
         size(default_size),
         switch(view.saved_policy.trusted, view.effective_policy.trusted),
+        json_string(view.tab_order.as_str()),
     )
 }
 
@@ -1253,6 +1256,7 @@ mod tests {
             window_size,
             saved_policy: off,
             effective_policy: off,
+            tab_order: crate::app_config::TabOrder::Order,
         };
         let script = settings_script(&view(None));
         assert!(script.starts_with("window.MdSettings && window.MdSettings.push({"), "{script}");
@@ -1283,8 +1287,10 @@ mod tests {
             window_size: None,
             saved_policy: Policy { trusted: true },
             effective_policy: Policy { trusted: false },
+            tab_order: crate::app_config::TabOrder::Mru,
         });
         assert!(script.contains("trusted:{saved:true,effective:false}"), "{script}");
+        assert!(script.contains(r#"tabOrder:"mru""#), "{script}");
     }
 
     /// テーマの CSS に `</style>` や `</script>` の綴りがあっても、渡す文字列から

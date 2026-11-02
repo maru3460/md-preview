@@ -220,6 +220,98 @@ test('⌃Tab / ⌃⇧Tab で次 / 前のタブへ巡回し、端で反対側へ�
   await expect(page.locator('body')).not.toHaveClass(/nav-tree/);
 });
 
+// 設定「タブ」の「最近使った順」（#54）。設定は Rust が持つので、写しが届いたことにする
+// （`MdSettings.push`）。設定タブが前に出ていなくても、push のたびにタブへ渡る。
+const setTabOrder = (page, v) => page.evaluate((v) => window.MdSettings.push({ tabOrder: v }), v);
+
+test('最近使った順では ⌃Tab が直前に見たタブへ戻り、⌃ を押している間は順が組み変わらない', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+  await openFile(page, 'long.md');
+  await setTabOrder(page, 'mru');
+
+  // 見た順は a → b → long。直前は b。
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('b.md');
+  // ⌃ を離したので確定。今度は long が直前。
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('long.md');
+
+  // ⌃ を押したまま Tab を重ねると、その前へさかのぼる（b → a）。⇧ で戻れる。
+  await page.keyboard.down('Control');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('b.md');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('a.md');
+  await page.keyboard.press('Shift+Tab');
+  expect(await activePath(page)).toBe('b.md');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('a.md');
+  await page.keyboard.up('Control');
+
+  // 確定した。a の前に見ていたのは long（b ではない）。
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('long.md');
+
+  // 並び順へ戻せば、タブバーの並びで隣へ（long は右端なので a へ折り返す）。
+  await setTabOrder(page, 'order');
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('a.md');
+});
+
+test('最近使った順の辿りは、クリックや ⌘1..⌘9 で別のタブへ移ったらそこで確定する', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+  await openFile(page, 'long.md');
+  await setTabOrder(page, 'mru');
+
+  // ⌃ を押したまま b へ辿り、離さずに ⌘1 で a へ飛ぶ。b を見たことは確定する。
+  await page.keyboard.down('Control');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('b.md');
+  await page.keyboard.up('Control');
+  await page.keyboard.down('Control');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('long.md');
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('a.md');
+  await page.keyboard.up('Control');
+  // 見た順は b → long → a になっているので、直前は long。
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('long.md');
+});
+
+test('html 表示の iframe の中で ⌃ を離しても、最近使った順の確定が親へ届く', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'page.html');
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+  await setTabOrder(page, 'mru');
+  const frame = page.frameLocator('iframe.html-frame');
+
+  // 見た順 page → a → b。⌃ を押したまま a、page へ辿る。
+  await page.keyboard.down('Control');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('a.md');
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('page.html');
+  await expect(frame.locator('body')).toBeVisible();
+  // iframe の中で ⌃ を離す（親の keyup は来ない）。転送されていれば page が確定する。
+  await frame.locator('body').evaluate((el) => {
+    el.ownerDocument.dispatchEvent(new KeyboardEvent('keyup', { key: 'Control', bubbles: true }));
+  });
+  // 確定していれば、次の Tab は新しい辿り（page → b）。確定していなければ古い辿りの続き
+  // （page → b）で同じ先に着くが、その後の確定で page を見たことが抜ける。
+  await page.keyboard.press('Tab');
+  expect(await activePath(page)).toBe('b.md');
+  await page.keyboard.up('Control');
+  // 見た順は b → page → a。確定が抜けていると b → a → page になり、a へ行く。
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('page.html');
+});
+
 test('検索バーを開いたままでも ⌃Tab / ⌘1..⌘9 でタブを移れる', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');
