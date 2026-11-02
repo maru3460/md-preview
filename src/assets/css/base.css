@@ -2805,6 +2805,12 @@ body.md-cmt-mode .source-main .copy-btn {
     background: color-mix(in srgb, var(--md-accent, Highlight) 9%, transparent);
 }
 
+/* ── タブ ── */
+.st-choice { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 10px; cursor: pointer; }
+.st-choice input { margin: 3px 0 0; flex: none; accent-color: var(--md-accent, Highlight); }
+.st-choice-label { font-weight: 600; font-size: 14px; }
+.st-choice .st-desc { margin: 2px 0 0; }
+
 /* ── JavaScript と外部の読み込み ── */
 .st-switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .st-switch-row .st-label { margin-bottom: 0; }

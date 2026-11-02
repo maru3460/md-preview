@@ -38,6 +38,11 @@ pub const WINDOW_SIZE: &str = "window-size";
 /// 読むのは [`crate::app_config::policy_from`]。既定（書いていない）は OFF。
 pub const TRUST_DOCUMENTS: &str = "trust-documents";
 
+/// ⌃Tab / ⌃⇧Tab が辿る順（#54）。`order`（タブバーの並び）か `mru`（最近使った順）で、
+/// 読むのは [`crate::app_config::tab_order_from`]。既定（書いていない）は `order`。
+/// 他の設定と違って、保存した時点で開いている md にも効く（ページ側の並びを変えるだけ）。
+pub const TAB_ORDER: &str = "tab-order";
+
 /// ファイルの 1 行。
 #[derive(Debug, PartialEq, Eq)]
 enum Line {

@@ -35,6 +35,7 @@ async function push(page, over) {
     windowSize: null,
     defaultWindowSize: { w: 1280, h: 700 },
     trusted: { saved: false, effective: false },
+    tabOrder: 'order',
   }, over || {}));
 }
 
@@ -371,4 +372,20 @@ test('OFF にしてもまだ ON のまま動いているときは、止めるに
   // 元へ戻せば消える。
   await push(page, { trusted: { saved: true, effective: true } });
   await expect(page.locator('.st-pending')).toHaveCount(0);
+});
+
+// ── タブ（#54） ──────────────────────────────────────────────
+test('タブの画面で ⌃Tab の順を選ぶと、その場で頼み、届いた写しの値が選ばれて出る', async ({ page }) => {
+  await openSettings(page);
+  await navTo(page, 'tabs');
+  await expect(page.locator('#st-tab-order-order')).toBeChecked();
+  await page.locator('#st-tab-order-mru').check();
+  expect(await ipc(page)).toEqual(['settings:get', 'settings:tab-order:mru']);
+  // 返事が届くまでの描き直しで元へ戻らない。
+  await expect(page.locator('#st-tab-order-mru')).toBeChecked();
+
+  await push(page, { tabOrder: 'mru' });
+  await expect(page.locator('#st-tab-order-mru')).toBeChecked();
+  await push(page, { tabOrder: 'order' });
+  await expect(page.locator('#st-tab-order-order')).toBeChecked();
 });

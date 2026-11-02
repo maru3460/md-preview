@@ -48,7 +48,13 @@ fn main() {
     let origin = format!("http://127.0.0.1:{}", port);
 
     // 1 つなら from_path、2 つ以上なら全部をタブに乗せる。製品の main.rs と同じ入口。
-    let page = PageInputs { theme_css: &theme_css, custom_css: &custom_css, policy, lib_origin: &origin };
+    let page = PageInputs {
+        theme_css: &theme_css,
+        custom_css: &custom_css,
+        policy,
+        tab_order: Default::default(),
+        lib_origin: &origin,
+    };
     let config = AppConfig::from_paths(&paths, &page, &current_dir);
 
     let boot = format!(

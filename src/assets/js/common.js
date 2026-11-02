@@ -948,6 +948,13 @@
       if (ev.defaultPrevented) e.preventDefault();
     });
 
+    // ⌃ の keyup も親へ渡す（#54）。最近使った順は ⌃ を離した時点で順を確定するので、
+    // iframe の中で離したことを親が知らないと、⌃Tab で辿った先がいつまでも確定しない。
+    listen('keyup', function(e) {
+      if (e.key !== 'Control') return;
+      document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Control', code: e.code, bubbles: true }));
+    });
+
     // 右クリック: iframe 内では WebKit 標準メニュー（"Open Frame in New Window" 等、
     // このアプリでは機能しない項目）が出てしまう。抑止して、親のカスタムメニューを
     // iframe の位置ぶんずらした座標で開く（キー転送と同じ「親へ委譲」方針）。

@@ -38,6 +38,42 @@
   var fromBell = {};
   (window.MD_BELL_OPENED || []).forEach(function(id) { fromBell[id] = true; });
 
+  // ── ⌃Tab が辿る順（#54） ─────────────────────────────────────
+  // 設定「タブ」で `order`（タブバーの並び）か `mru`（最近使った順）を選ぶ。起動時の値は
+  // MD_TAB_ORDER で届き、切り替えたぶんは settings.js が push のたびに setOrder で渡す。
+  //
+  // 最近使った順は、各タブの `seen`（最後に前へ出たときの通し番号）で持つ。配列を
+  // 並べ替えないので、タブを閉じても詰め直しが要らない（番号は増える一方で、穴が
+  // 空いても順序は保たれる）。
+  var order = 'order';
+  var seen = 0;
+  // ⌃ を押している間の「辿り」。押すたびに順を組み替えると 2 枚の間を往復するだけで
+  // 3 枚目へ行けないので、Chrome / VS Code と同じく ⌃ を離した時点で確定する
+  // （keymap.js が ⌃ の keyup を `ctrl-up` で配る。窓の外で離したときは blur で畳む）。
+  // list は辿り始めたときの順（新しい順）、pos はその中の位置。
+  var walk = null;
+
+  // いま前に出ているタブを「最後に見た」にする。辿っている間は組み替えない。
+  function touch() {
+    var t = tabs[activeIdx];
+    if (!t || walk) return;
+    t.seen = ++seen;
+  }
+
+  // 辿りを畳んで、辿り着いたタブを「最後に見た」にする。
+  function endWalk() {
+    if (!walk) return;
+    walk = null;
+    touch();
+  }
+
+  // 新しく見た順。番号が同じ（まだ前に出ていない）ものはタブバーの並びで。
+  function recentPaths() {
+    return tabs.map(function(t, i) { return { t: t, i: i }; })
+      .sort(function(a, b) { return (b.t.seen || 0) - (a.t.seen || 0) || a.i - b.i; })
+      .map(function(x) { return x.t.path; });
+  }
+
   // #tabbar は外枠で、タブが並ぶのは内側のタブ帯。右隣にアイコン帯が居る。
   function tabsEl() { return document.getElementById('tabbar-tabs'); }
 
@@ -99,6 +135,7 @@
   function show() {
     var t = tabs[activeIdx];
     if (!t || !opts) return;
+    touch();
     applyMode(t.mode);
     render();
     switching = true;
@@ -127,7 +164,10 @@
       i = activeIdx + 1;
       tabs.splice(i, 0, { path: path, scroll: 0, mode: inherited });
     }
+    // タブ操作以外の経路（ツリー・⌘P・リンク）で開いたら、辿りはそこで終わり。
+    endWalk();
     activeIdx = i;
+    touch();
     applyMode(tabs[i].mode);
     render();
   }
@@ -149,6 +189,7 @@
   // 同じ名前でモジュールスコープに持っているため。
   function openMany(paths, how) {
     if (!paths || !paths.length) return;
+    endWalk();
     var keepView = !!(how && how.keepView);
     // 見ているタブはパスで覚える。添え字は下の splice でずれる——既存タブに当たると
     // 挿し先が現在タブより左へ戻りうるので、「挿し先は現在タブより右」は成り立たない。
@@ -195,7 +236,10 @@
   }
 
   // ── 操作 ────────────────────────────────────────────────────
-  function activate(i) {
+  // `walking` は cycle（最近使った順の辿り）からの呼び出し。それ以外（クリック・⌘1..⌘9）は
+  // 辿りの外の移動なので、辿りを畳んでから動く。
+  function activate(i, walking) {
+    if (!walking) endWalk();
     if (i < 0 || i >= tabs.length || i === activeIdx) return;
     saveActiveState();
     activeIdx = i;
@@ -249,6 +293,7 @@
     // から開き直せる。Dock クリックや `md <dir>` で空のまま戻ることはあるが、
     // 読んでいたものを失うのは自分で閉じたときだけなので困らない。
     if (tabs.length === 1) { closeAll(); return; }
+    endWalk();
     var wasActive = (i === activeIdx);
     var gone = tabs.splice(i, 1);
     forgetClosed(gone);
@@ -266,6 +311,7 @@
   function closeOthers(path) {
     var keep = tabs[indexOf(path)];
     if (!keep) return;
+    endWalk();
     var wasActive = (tabs[activeIdx] === keep);
     var gone = tabs.filter(function(t) { return t !== keep; });
     forgetClosed(gone);
@@ -281,6 +327,7 @@
   // になる。最後の 1 枚を ⌘W で閉じたときも同じ場所へ落ちる（closeAt）。
   function closeAll() {
     if (!tabs.length) return;
+    endWalk();
     forgetClosed(tabs);
     reportClosed(tabs);
     tabs = [];
@@ -290,9 +337,33 @@
   }
 
   // ⌃Tab / ⌃⇧Tab : 次 / 前のタブへ。端まで行ったら反対側へ折り返す。
+  // 最近使った順（#54）では、⌃ を押した時点の順を辿る。辿っている間に順は変えない
+  // （変えると 2 枚の往復になる）ので、辿りの途中でタブが増減したら畳んで辿り直す。
   function cycle(delta) {
     if (tabs.length < 2) return;
-    activate((activeIdx + delta + tabs.length) % tabs.length);
+    if (order !== 'mru') {
+      activate((activeIdx + delta + tabs.length) % tabs.length, true);
+      return;
+    }
+    if (!walk) walk = { list: recentPaths(), pos: 0 };
+    var n = walk.list.length;
+    var pos = (walk.pos + delta + n) % n;
+    var i = indexOf(walk.list[pos]);
+    if (i === -1) {
+      // 辿り始めてから閉じられたタブ。順を取り直して、いまの位置から辿り直す。
+      walk = { list: recentPaths(), pos: 0 };
+      n = walk.list.length;
+      pos = (delta + n) % n;
+      i = indexOf(walk.list[pos]);
+    }
+    walk.pos = pos;
+    activate(i, true);
+  }
+
+  // 設定「タブ」からの切り替え。読めない値は並び順に倒す（Rust 側の既定と同じ）。
+  function setOrder(v) {
+    endWalk();
+    order = (v === 'mru') ? 'mru' : 'order';
   }
 
   // ⌘1..⌘9 : n 番目のタブ。⌘9 は VSCode と同じく「最後のタブ」。
@@ -376,12 +447,17 @@
     MdKeymap.on('tab-close', function() { closeAt(activeIdx); });
     MdKeymap.on('tab-cycle', function(e) { cycle(e.shiftKey ? -1 : 1); });
     MdKeymap.on('tab-goto', function(e) { goto(parseInt(e.key, 10)); });
+    // ⌃ を離したら辿りを確定する（最近使った順）。窓の外で離したときは keyup が
+    // 来ないので、blur でも畳む。
+    MdKeymap.on('ctrl-up', endWalk);
+    window.addEventListener('blur', endWalk);
   }
 
   window.MdTabs = {
     // o: { openFile(path), clearFile() } … 本文を出し直す / 本文を空にする入口。
     init: function(o) {
       opts = o;
+      setOrder(window.MD_TAB_ORDER);
       registerKeys();
       // 縦ホイールを横スクロールに回す（トラックパッド以外でもタブを辿れるように）。
       // 外枠ではなくタブ帯に付ける。アイコン帯の上で回しても流れないが、あそこは
@@ -404,6 +480,8 @@
     closeOthers: closeOthers,
     closeAll: closeAll,
     count: function() { return tabs.length; },
+    // ⌃Tab が辿る順（#54）。settings.js が写しを受け取るたびに渡す。
+    setOrder: setOrder,
     // 開いているタブの識別子。root が動いたとき（#34）に「どれが root の外に
     // なったか」をページ側で数えるために要る。
     ids: function() { return tabs.map(function(t) { return t.path; }); },

@@ -105,6 +105,8 @@ enum SettingsRequest {
     WindowSizeReset,
     /// 設定「文書を信頼する」を保存する。効くのは ⌘Q で終了した後から。
     Trust(bool),
+    /// ⌃Tab / ⌃⇧Tab が辿る順を保存する（#54）。渡し直した写しをページが読んで、その場で効く。
+    TabOrder(app_config::TabOrder),
 }
 
 impl SettingsRequest {
@@ -130,6 +132,11 @@ impl SettingsRequest {
                 "on" => SettingsRequest::Trust(true),
                 "off" => SettingsRequest::Trust(false),
                 _ => return Some(SettingsRequest::Get),
+            },
+            // 綴りの関門は `TabOrder::parse`（読む側と同じ）。読めない値は保存せず状態を送り返す。
+            "tab-order" => match app_config::TabOrder::parse(value) {
+                Some(order) => SettingsRequest::TabOrder(order),
+                None => return Some(SettingsRequest::Get),
             },
             _ => return None,
         })
@@ -633,11 +640,13 @@ fn main() {
 
     // CSP はここで 1 回だけ設定から作り、プロセスの間ずっと同じものを使う（設定の切り替えは
     // ⌘Q の後から効く）。設定画面が出す「いま効いている値」は、これを持つ RequestContext から引く。
-    let policy = app_config::policy_from(&md_preview::settings::load());
+    let saved_settings = md_preview::settings::load();
+    let policy = app_config::policy_from(&saved_settings);
     let page = md_preview::app_config::PageInputs {
         theme_css: &theme_css,
         custom_css: &custom_css,
         policy,
+        tab_order: app_config::tab_order_from(&saved_settings),
         lib_origin: md_preview::csp::APP_ORIGIN,
     };
     let mut config = if stdin_mode {
@@ -680,6 +689,7 @@ fn main() {
         initial_ids: _,
         bell_opened: _,
         policy: _,
+        tab_order: _,
     } = config;
 
     // 転送で開かれるたびに更新する（#49）ので mut。
@@ -1123,6 +1133,9 @@ fn main() {
                     // 書き込んであり、窓を読み込み直すとタブと読み位置を失うため。
                     SettingsRequest::Trust(on) => {
                         save_switch(md_preview::settings::TRUST_DOCUMENTS, on);
+                    }
+                    SettingsRequest::TabOrder(order) => {
+                        save_value(md_preview::settings::TAB_ORDER, order.as_str());
                     }
                 }
                 send_settings(&webview, &ctx);
@@ -1646,7 +1659,12 @@ fn save_window_size(value: &str) {
 
 /// 設定のスイッチ（`on` / `off`）を保存する。
 fn save_switch(key: &str, on: bool) {
-    if let Err(e) = md_preview::settings::set(key, app_config::format_switch(on)) {
+    save_value(key, app_config::format_switch(on));
+}
+
+/// 設定の値を保存する。失敗は知らせるだけで、画面には保存前の状態が送り返される。
+fn save_value(key: &str, value: &str) {
+    if let Err(e) = md_preview::settings::set(key, value) {
         eprintln!("md: 設定 {} を保存できませんでした: {}", key, e);
     }
 }
@@ -1669,6 +1687,7 @@ fn send_settings(webview: &wry::WebView, ctx: &request::RequestContext) {
         window_size,
         saved_policy: app_config::policy_from(&saved),
         effective_policy: ctx.policy,
+        tab_order: app_config::tab_order_from(&saved),
     };
     let _ = webview.evaluate_script(&md_preview::html::settings_script(&view));
 }
@@ -1932,6 +1951,21 @@ mod tests {
         assert!(matches!(SettingsRequest::parse("window-size:0x900"), Some(SettingsRequest::Get)));
         assert!(matches!(SettingsRequest::parse("window-size:20000x900"), Some(SettingsRequest::Get)));
         assert!(SettingsRequest::parse("unknown").is_none());
+    }
+
+    /// ⌃Tab の順は `order` / `mru` だけを受け、それ以外は保存せずに状態を送り返させる（#54）。
+    #[test]
+    fn tab_order_requests_take_only_known_spellings() {
+        assert!(matches!(
+            SettingsRequest::parse("tab-order:mru"),
+            Some(SettingsRequest::TabOrder(app_config::TabOrder::Mru))
+        ));
+        assert!(matches!(
+            SettingsRequest::parse("tab-order:order"),
+            Some(SettingsRequest::TabOrder(app_config::TabOrder::Order))
+        ));
+        assert!(matches!(SettingsRequest::parse("tab-order:recent"), Some(SettingsRequest::Get)));
+        assert!(matches!(SettingsRequest::parse("tab-order"), Some(SettingsRequest::Get)));
     }
 
     /// 「文書を信頼する」は `on` / `off` だけを受け、それ以外は保存せずに状態を送り返させる。
