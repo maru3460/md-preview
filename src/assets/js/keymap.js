@@ -36,6 +36,11 @@
   // when が互いに排他になるよう書く。そうしておけば表の順序に依存しない。
   function inField(e) { return !!(window.MdCommon && MdCommon.isFieldEl(e.target)); }
   function overlayOpen() { return !!(window.MdCommon && MdCommon.isOverlayOpen()); }
+  // 検索バーを数えない版。タブ操作に使う: 検索バーは本文を覆わず、タブを移ると
+  // 閉じる（folder.js の MdSearch.reset）ので、開いたままでも移ってよい。
+  function overlayOpenButSearch() {
+    return !!(window.MdCommon && MdCommon.isOverlayOpen('md-search-bar'));
+  }
   function inTree() { return !!(window.MdCommon && MdCommon.isSidebarFocused()); }
   function interactive() { return !!(window.MdCommon && MdCommon.isInteractiveFocus()); }
   function inCommentMode() { return !!(window.MdComment && MdComment.isMode && MdComment.isMode()); }
@@ -61,6 +66,8 @@
   function metaOnly(e) { return e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey; }
   // ⌘⇧+文字（タブ操作）。metaOnly が Shift を弾くので、両者は自動的に排他になる。
   function metaShift(e) { return e.metaKey && !e.ctrlKey && e.shiftKey && !e.altKey; }
+  // ⌃（Shift は問わない）。入力欄でも奪う: ⌃Tab は入力欄で文字を入れる意味を持たない。
+  function ctrlAnyShift(e) { return e.ctrlKey && !e.metaKey && !e.altKey; }
 
   // ── キーの一致判定 ──────────────────────────────────────────
   // e.key を厳密に見る（'g' と 'G' を区別する必要があるため）。
@@ -141,21 +148,24 @@
     // ── ファイル移動（folder.js） ──
     { cat: 'files', keys: '] / [', desc: '次 / 前のファイルへ（表示中のファイルを巡回）',
       run: 'file-cycle', match: keys('[', ']'), when: bare },
-    // Tab と ⇧Tab は同じキーを shift の有無で分ける。when が互いに排他なので
-    // 表の順序には依存しない。
+    // ⇧Tab も拾うが、担当（folder.js）は shift 付きなら何もしない。2 か所の往復なので
+    // 逆向きのキーは要らない。かといって素通しにすると WebKit 既定の「前のフォーカス
+    // 可能要素へ」が走り、ボタンやリンクに見えないフォーカスが移るだけになる。
     { cat: 'files', keys: 'Tab', desc: '本文 ⇄ ファイルツリー のフォーカス切替',
-      run: 'focus-toggle', match: keys('Tab'),
-      when: function(e) { return bare(e) && !e.shiftKey; } },
+      run: 'focus-toggle', match: keys('Tab'), when: bare },
 
     // ── タブ（tabs.js） ──
-    { cat: 'files', keys: '⇧Tab', desc: '次のタブへ（端まで行ったら先頭へ折り返す）',
+    // Chrome / Safari と同じキー。他の行は ⌘ と Ctrl のどちらでも受けるが、
+    // ⌘Tab は OS のアプリ切り替えに取られてここまで届かないので Ctrl だけで受ける。
+    { cat: 'files', keys: '⌃Tab / ⌃⇧Tab', desc: '次 / 前のタブへ（端まで行ったら反対側へ折り返す）',
       run: 'tab-cycle', match: keys('Tab'),
-      when: function(e) { return bare(e) && e.shiftKey; } },
+      when: function(e) { return ctrlAnyShift(e) && !overlayOpenButSearch(); } },
     // 入力欄とオーバーレイ表示中は譲る。⌘P のパレットを開いたまま裏のファイルだけが
     // 切り替わると、別ファイルの上にオーバーレイが残って何が起きたか分からなくなる。
+    // 検索バーだけは数えない（overlayOpenButSearch の理由）。
     { cat: 'files', keys: '⌘1 … ⌘9', desc: 'n 番目のタブへ（⌘9 は最後のタブ）',
       run: 'tab-goto', match: digit19,
-      when: function(e) { return cmd(e) && !overlayOpen(); } },
+      when: function(e) { return cmd(e) && !overlayOpenButSearch(); } },
 
     // ── ファイルツリー（folder.js） ──
     { cat: 'tree', keys: '⌘B', desc: 'ファイルツリー（左サイドバー）を開閉',

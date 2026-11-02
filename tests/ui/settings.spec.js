@@ -68,7 +68,7 @@ test('ファイルのタブと行き来でき、⌘W で閉じられる', async 
   await expect(page.locator('.st-layout')).toBeVisible();
 
   // ファイルのタブへ戻ると本文が出る。
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Control+Tab');
   await expect(page.locator('#preview-pane .markdown-body')).toBeVisible();
   await expect(page.locator('.st-layout')).toHaveCount(0);
 
@@ -114,7 +114,7 @@ test('設定タブではファイル向けの機能が黙る（raw / diff のボ
   await page.keyboard.press('Escape');
 
   // ファイルのタブへ戻ればボタンも戻る。
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Control+Tab');
   await expect(page.locator('.md-raw-toggle')).toBeVisible();
   await expect(page.locator('.md-diff-toggle')).toBeVisible();
 });

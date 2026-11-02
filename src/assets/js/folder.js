@@ -1199,7 +1199,9 @@
   function registerKeys() {
     if (!window.MdKeymap) return;
     // Tab / [ / ] はツリー内外どちらでも効くアプリ全体のナビ。
-    MdKeymap.on('focus-toggle', function() {
+    MdKeymap.on('focus-toggle', function(e) {
+      // ⇧Tab は握りつぶすだけ（keymap.js の focus-toggle 行の理由）。
+      if (e && e.shiftKey) return;
       if (window.MdCommon && MdCommon.isSidebarFocused()) { focusPreview(); return; }
       // 畳んである時の Tab は「開いてからツリーへ」。Tab はツリーへ行く操作なので、
       // 閉じているという理由で無反応にするより開いてしまう方が意図に合う。

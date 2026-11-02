@@ -876,6 +876,9 @@
       var isCmd = (e.metaKey || e.ctrlKey) &&
         (k === 'r' || k === 'd' || k === 't' || k === 'p' || k === 'b' || k === 'w' || k === 'f');
       var inField = isFieldEl(e.target);
+      // ⌘1..⌘9（n 番目のタブ）も渡す。親の表は入力欄で譲るので、ここでも入力欄では渡さない。
+      var isTabGoto = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && !inField &&
+        /^[1-9]$/.test(e.key);
       var bare = !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
       var overlay = isOverlayOpen();
 
@@ -925,13 +928,17 @@
       // （開いたヘルプを ? で閉じるため）ので、ここで止めると iframe からだけ閉じられなくなる。
       // 図の拡大の上にヘルプが開くのは、ヘルプの方が前面に出るので構わない。
       var isNav = bare && (k === '[' || k === ']' || e.key === 'Tab' || k === '?');
+      // ⌃Tab / ⌃⇧Tab（タブの巡回）も渡す。修飾付きなので上の bare には入らない。
+      // 入力欄の中でも渡す（親の表も入力欄で奪っている。文字入力の意味を持たない）。
+      // 条件は keymap.js の tab-cycle 行（ctrlAnyShift）と手で揃えている。
+      var isTabCycle = e.key === 'Tab' && e.ctrlKey && !e.metaKey && !e.altKey;
       // Escape は親のオーバーレイ（? で開いたヘルプ等）が開いている時と、コメントモード中
       // だけ転送する。? は iframe にフォーカスを残したまま開くので、これが無いと Esc で
       // 閉じられない。モードは画面を覆わないので `isOverlayOpen()` には数えられない
       // （`blocksKeys:false`）が、`c` を中から渡す以上、出口も渡さないと入ったきり出られない。
       // どちらでもない時は転送せず、iframe 内のページ自身の Esc 処理を邪魔しない。
       var isEsc = e.key === 'Escape' && (overlay || inMode);
-      if (!isCmd && !isNav && !isEsc && !isCmtToggle && !isCmtCursor && !isCmtList) return;
+      if (!isCmd && !isNav && !isTabCycle && !isTabGoto && !isEsc && !isCmtToggle && !isCmtCursor && !isCmtList) return;
       var ev = new KeyboardEvent('keydown', {
         key: e.key, code: e.code,
         metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,

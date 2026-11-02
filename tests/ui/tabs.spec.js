@@ -191,24 +191,68 @@ test('raw 表示のままタブを移っても読み位置が復元される', a
   await expect.poll(() => pane(page)).toBe(600);
 });
 
-test('⇧Tab の巡回は端で先頭へ折り返す', async ({ page }) => {
+test('⌃Tab / ⌃⇧Tab で次 / 前のタブへ巡回し、端で反対側へ折り返す', async ({ page }) => {
   await openFolder(page);
   await openFile(page, 'a.md');
   await openFile(page, 'b.md');
   await openFile(page, 'long.md');
 
   // 右端に居るので、次は先頭へ折り返す。
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Control+Tab');
   expect(await activePath(page)).toBe('a.md');
-  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Control+Tab');
   expect(await activePath(page)).toBe('b.md');
-  await page.keyboard.press('Shift+Tab');
+
+  // 逆回り。左端からは末尾へ折り返す。
+  await page.keyboard.press('Control+Shift+Tab');
+  expect(await activePath(page)).toBe('a.md');
+  await page.keyboard.press('Control+Shift+Tab');
   expect(await activePath(page)).toBe('long.md');
 
-  // Tab（shift 無し）はツリーとのフォーカス切替のままで、タブは動かさない。
+  // 素の Tab はツリーとのフォーカス切替のままで、タブは動かさない。
+  // ⇧Tab は握りつぶすだけで、タブもフォーカスも動かない。
   await page.keyboard.press('Tab');
   await expect(page.locator('body')).toHaveClass(/nav-tree/);
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('body')).toHaveClass(/nav-tree/);
   expect(await activePath(page)).toBe('long.md');
+  await page.keyboard.press('Tab');
+  await expect(page.locator('body')).not.toHaveClass(/nav-tree/);
+});
+
+test('検索バーを開いたままでも ⌃Tab / ⌘1..⌘9 でタブを移れる', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'b.md');
+
+  await page.keyboard.press('Meta+f');
+  await expect(page.locator('#md-search-bar')).not.toHaveClass(/hidden/);
+  await page.keyboard.press('Control+Tab');
+  expect(await activePath(page)).toBe('a.md');
+
+  await page.keyboard.press('Meta+f');
+  await expect(page.locator('#md-search-bar')).not.toHaveClass(/hidden/);
+  // 検索の入力欄にフォーカスがあると ⌘1..⌘9 は譲るので、本文へ戻してから押す。
+  await page.locator('#preview-pane').click();
+  await page.keyboard.press('Meta+2');
+  expect(await activePath(page)).toBe('b.md');
+});
+
+test('html 表示の iframe にフォーカスがあっても ⌃Tab / ⌘1..⌘9 が効く', async ({ page }) => {
+  await openFolder(page);
+  await openFile(page, 'a.md');
+  await openFile(page, 'page.html');
+  const frame = page.frameLocator('iframe.html-frame');
+
+  await frame.locator('body').click();
+  await page.keyboard.press('Control+Shift+Tab');
+  expect(await activePath(page)).toBe('a.md');
+
+  await page.keyboard.press('Meta+2');
+  expect(await activePath(page)).toBe('page.html');
+  await frame.locator('body').click();
+  await page.keyboard.press('Meta+1');
+  expect(await activePath(page)).toBe('a.md');
 });
 
 test('⌘1..⌘9 で番号のタブへ飛ぶ（⌘9 は最後、無い番号は無反応）', async ({ page }) => {
