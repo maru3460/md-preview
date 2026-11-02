@@ -481,6 +481,26 @@ test('少しだけ動いて離したのはクリック。並びは変わらず�
   expect(await activePath(page)).toBe('b.md');
 });
 
+test('掴んでいる間は、通り過ぎたタブが光らず × も出ず、カーソルは矢印のまま', async ({ page }) => {
+  await openFour(page);
+  const c = await centerOf(page, 'long.md');
+  await grab(page, 'a.md', c.x, c.y);
+  await expect(tab(page, 'a.md')).toHaveClass(/dragging/);
+  // long.md の真上に居るが hover 扱いにならない（pointer-events を切っている）。
+  expect(await tab(page, 'long.md').evaluate((el) => el.matches(':hover'))).toBe(false);
+  await expect(tab(page, 'long.md').locator('.md-tab-close')).toBeHidden();
+  expect(await tab(page, 'long.md').evaluate((el) => getComputedStyle(el).cursor)).toBe('default');
+  // 本文の上でも I ビームにならない。
+  const pane = await page.locator('#preview-pane').boundingBox();
+  await page.mouse.move(pane.x + pane.width / 2, pane.y + pane.height / 2);
+  expect(await page.locator('#preview-pane .markdown-body p').first()
+    .evaluate((el) => getComputedStyle(el).cursor)).toBe('default');
+  await page.mouse.up();
+  // 離せば元どおり hover が効く。
+  await page.mouse.move(c.x, c.y);
+  expect(await tab(page, 'long.md').evaluate((el) => el.matches(':hover'))).toBe(true);
+});
+
 test('Esc で取り消すと元の並びのまま', async ({ page }) => {
   await openFour(page);
   const last = await tab(page, 'notes.txt').boundingBox();

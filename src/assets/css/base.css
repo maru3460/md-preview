@@ -1020,6 +1020,19 @@ body.md-tab-dragging iframe {
     pointer-events: none;
 }
 
+/* 掴んでいる間は、通り過ぎたタブが明るくなったり × が出たりしない（hover を切る）。
+   mouseup は window で受けて座標だけ見るので、タブが当たり判定から外れても困らない。
+   カーソルは通る場所によらず矢印のまま。本文の I ビームやコメントモードの十字、
+   リサイザの左右矢印など、状態ごとの cursor 指定は詳細度で勝てないので !important。 */
+body.md-tab-dragging .md-tab {
+    pointer-events: none;
+}
+
+body.md-tab-dragging,
+body.md-tab-dragging * {
+    cursor: default !important;
+}
+
 .tree-item {
     display: flex;
     align-items: center;

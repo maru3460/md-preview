@@ -391,15 +391,17 @@
   // ボタンを押したままの間は、窓の外へ出ても mousemove / mouseup が届く。
   var DRAG_START = 4;     // px。これ未満の揺れはクリックのうち
   var EDGE = 32;          // px。帯の端からこの幅に入ると帯が流れる
-  var EDGE_SPEED = 14;    // px / フレーム。端を越えたときの最大
+  var EDGE_SPEED = 0.6;   // px / ms。端を越えたときの最大（600px/s）
+  var EDGE_MIN = 0.12;    // px / ms。端に入った直後でも止まって見えない下限
   var BAR_SLACK = 16;     // px。帯の上下にはみ出してもドラッグを続ける幅
-  // 掴んでいる間だけ { path, x0, y0, x, y, dragging, raf }。それ以外は null。
+  // 掴んでいる間だけ { path, x0, y0, x, y, dragging, raf, t, carry }。それ以外は null。
+  // t は autoScroll が前に流した時刻（0 なら止まっていた）、carry は流しきれなかった端数。
   var drag = null;
 
   function pressTab(path, e) {
     endDrag();
     drag = { path: path, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
-             dragging: false, raf: 0 };
+             dragging: false, raf: 0, t: 0, carry: 0 };
     window.addEventListener('mousemove', onDragMove, true);
     window.addEventListener('mouseup', onDragUp, true);
     window.addEventListener('keydown', onDragKey, true);
@@ -451,11 +453,12 @@
 
   // 端へ寄せている間はマウスが止まっていても流し続けるので、mousemove ではなく
   // フレームごとに回す。流れたぶん差し込み先も変わるので、印もここで付け直す。
-  function autoScroll() {
+  // 速さは経過時間で決める。フレームあたりの px にすると 120Hz の画面で倍速になる。
+  function autoScroll(now) {
     drag.raf = 0;
     var el = tabsEl();
     if (!el || !drag.dragging) return;
-    var step = 0;
+    var speed = 0;   // px / ms。左へ流すなら負
     if (overBar()) {
       var r = el.getBoundingClientRect();
       var into = 0;
@@ -463,15 +466,30 @@
       else if (drag.x > r.right - EDGE) into = drag.x - (r.right - EDGE);
       if (into) {
         var k = Math.min(1, Math.abs(into) / EDGE);
-        step = (into < 0 ? -1 : 1) * Math.max(2, Math.round(k * EDGE_SPEED));
+        speed = (into < 0 ? -1 : 1) * Math.max(EDGE_MIN, k * EDGE_SPEED);
       }
     }
-    if (!step) return;
-    var before = el.scrollLeft;
-    el.scrollLeft += step;
-    if (el.scrollLeft === before) return;   // 端まで流れきった
-    paintDrag();
+    if (!speed) { stopScroll(); return; }
+    // 止まっていた直後の最初のフレームは経過時間が無い。窓を隠していた間は rAF が
+    // 止まるので、戻った瞬間に溜まった時間ぶん飛ばないよう上限を切る。
+    var dt = drag.t ? Math.min(now - drag.t, 50) : 0;
+    drag.t = now;
+    // scrollLeft は整数に丸められるので、整数ぶんだけ流して端数は次のフレームへ持ち越す。
+    var want = speed * dt + drag.carry;
+    var step = Math.trunc(want);
+    drag.carry = want - step;
+    if (step) {
+      var before = el.scrollLeft;
+      el.scrollLeft += step;
+      if (el.scrollLeft === before) { stopScroll(); return; }   // 端まで流れきった
+      paintDrag();
+    }
     drag.raf = requestAnimationFrame(autoScroll);
+  }
+
+  function stopScroll() {
+    drag.t = 0;
+    drag.carry = 0;
   }
 
   function onDragMove(e) {
