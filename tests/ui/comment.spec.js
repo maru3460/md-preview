@@ -59,7 +59,7 @@ test('コメントモードでサイドバーが Comment に置き換わり、�
   const panel = page.locator('.md-toc-panel');
   const cmLabel = page.locator('.md-toc-header [data-tab="comments"]');
   const outlineLabel = page.locator('.md-toc-header [data-tab="outline"]');
-  // 入る前のサイドバー開閉状態（見出し数と幅次第）。抜けた後の復元を照合する。
+  // 入る前のサイドバー開閉状態（md なら既定で開いている）。抜けた後の復元を照合する。
   const wasOpen = !(await panel.evaluate((el) => el.classList.contains('hidden')));
   // モード外に Comment は存在しない（置き換えモデル。入口はピル/c/バッジ）。
   await expect(cmLabel).toBeHidden();
