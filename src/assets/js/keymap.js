@@ -202,9 +202,9 @@
       run: 'select-body', match: letter('a'), when: cmd },
     // JS を通らない（macOS のメニュー項目が処理する）。表示のためだけの行。
     { cat: 'app', keys: '⌃⌘F', desc: 'フルスクリーンを切り替え（緑ボタンと同じ）' },
-    // ⌘W はタブを閉じる（VSCode と同じ）。最後の 1 枚まで閉じたらウィンドウが
-    // 閉じるので、押し続けた時の終端は変わらない。
-    { cat: 'app', keys: '⌘W', desc: 'タブを閉じる（最後の 1 枚ならウィンドウを閉じる）',
+    // ⌘W はタブを閉じる（VSCode と同じ）。最後の 1 枚を閉じても窓は残り、
+    // 0 枚でもう一度押すと窓が閉じる（tabs.js の closeAt）。
+    { cat: 'app', keys: '⌘W', desc: 'タブを閉じる（タブが無ければウィンドウを閉じる）',
       run: 'tab-close', match: letter('w'), when: metaOnly },
     { cat: 'app', keys: '⌘⇧W', desc: 'ウィンドウを閉じる',
       run: 'window-close', match: letter('w'), when: metaShift },

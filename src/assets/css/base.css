@@ -2259,8 +2259,11 @@ body.md-cmt-mode .source-main .copy-btn {
 .md-cmt-popover {
     position: fixed;
     z-index: 1150;
-    width: 380px;
+    width: 640px;
     max-width: calc(100vw - 16px);
+    /* padding を幅に含める。含めないと max-width で頭打ちしても外寸が 100vw を超え、
+       狭い窓で右端が切れる（positionPopover の左右 8px の余白もこの外寸が前提）。 */
+    box-sizing: border-box;
     padding: 10px;
     border-radius: 10px;
     background: Canvas;

@@ -295,7 +295,7 @@ test('⌘W はアクティブを閉じて右隣（右端なら左隣）へ移る
   expect(await activePath(page)).toBe('b.md');
 });
 
-test('最後の 1 枚とタブ 0 枚の ⌘W はウィンドウを閉じる', async ({ page }) => {
+test('最後の 1 枚の ⌘W は窓を残して空にし、タブ 0 枚の ⌘W が窓を閉じる', async ({ page }) => {
   await openFolder(page);
   const ipc = () => page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length);
 
@@ -306,11 +306,19 @@ test('最後の 1 枚とタブ 0 枚の ⌘W はウィンドウを閉じる', as
   await page.keyboard.press('Meta+w');
   await expect.poll(ipc).toBe(1);
 
-  // 最後の 1 枚も同じ（⌘W の従来の意味を残す）。タブは閉じずに残る。
+  // 最後の 1 枚はただ外す。窓を開けっぱなしで使っていると、溜まったタブを
+  // 1 枚ずつ閉じて片付けることがよくあり、最後で突然窓が消えるのは邪魔。
+  // 残るのは「すべてのタブを閉じる」と同じ、ツリーだけの空の窓。
   await openFile(page, 'a.md');
   await page.keyboard.press('Meta+w');
+  await expect(page.locator('.md-tab')).toHaveCount(0);
+  await expect(page.locator('#preview-pane .markdown-body')).toBeEmpty();
+  await expect(page.locator('#tabbar')).toBeVisible();
+  expect(await ipc()).toBe(1);
+
+  // 空になった後のもう 1 回が窓を閉じる。⌘W を押し続けた終端は変わらない。
+  await page.keyboard.press('Meta+w');
   await expect.poll(ipc).toBe(2);
-  await expect(page.locator('.md-tab')).toHaveCount(1);
 });
 
 test('閉じたタブは Rust へ知らされる（一時ファイルの持ち主がタブだから）', async ({ page }) => {
@@ -336,14 +344,16 @@ test('閉じたタブは Rust へ知らされる（一時ファイルの持ち�
   expect(new Set(all).size).toBe(3);
 });
 
-test('最後の 1 枚は閉じずに窓を閉じるので、知らせも飛ばない', async ({ page }) => {
-  // 閉じていないタブのぶんを消すと、窓を戻したときに死んだタブが残る。
-  // ⌘W の「最後の 1 枚はウィンドウを閉じる」と対で守る約束。
+test('最後の 1 枚を閉じたときも Rust へ知らされる', async ({ page }) => {
+  // 最後の 1 枚もタブとして外れるので、持ち主の居なくなった一時ファイルは
+  // ここで消してよい。窓は閉じないので `close` は飛ばない。
   await openFolder(page);
   await openFile(page, 'a.md');
   await page.keyboard.press('Meta+w');
-  await expect.poll(() => page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length)).toBe(1);
-  expect(await page.evaluate(() => window.__mdIpc.filter((m) => m.startsWith('closed:')))).toEqual([]);
+  const closed = () => page.evaluate(() => window.__mdIpc.filter((m) => m.startsWith('closed:')));
+  await expect.poll(closed).toHaveLength(1);
+  expect((await closed())[0].endsWith('/a.md')).toBe(true);
+  expect(await page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length)).toBe(0);
 });
 
 test('タブが溢れてもアイコン帯は右端に残る', async ({ page }) => {
@@ -383,7 +393,7 @@ test('「すべてのタブを閉じる」は窓を残してタブ帯だけを�
   // 本文とツリーの選択も外れて、`md .` で起動した直後と同じ状態へ戻る。
   await expect(page.locator('#preview-pane .markdown-body')).toBeEmpty();
   await expect(page.locator('.tree-item.active')).toHaveCount(0);
-  // ⌘W（最後の 1 枚）と違って窓は閉じない。片付けたら道具ごと消える、にしない。
+  // 窓は閉じない。片付けたら道具ごと消える、にしない。
   const closes = await page.evaluate(() => window.__mdIpc.filter((m) => m === 'close').length);
   expect(closes).toBe(0);
 });
