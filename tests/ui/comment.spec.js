@@ -59,8 +59,6 @@ test('コメントモードでサイドバーが Comment に置き換わり、�
   const panel = page.locator('.md-toc-panel');
   const cmLabel = page.locator('.md-toc-header [data-tab="comments"]');
   const outlineLabel = page.locator('.md-toc-header [data-tab="outline"]');
-  // 入る前のサイドバー開閉状態（見出し数と幅次第）。抜けた後の復元を照合する。
-  const wasOpen = !(await panel.evaluate((el) => el.classList.contains('hidden')));
   // モード外に Comment は存在しない（置き換えモデル。入口はピル/c/バッジ）。
   await expect(cmLabel).toBeHidden();
 
@@ -72,16 +70,12 @@ test('コメントモードでサイドバーが Comment に置き換わり、�
   await expect(outlineLabel).toBeHidden();
   await expect(page.locator('.md-cmt-side')).toBeVisible();
 
-  // Esc で抜けると、入る前の状態（開いていれば Outline / 閉じていれば閉じる）に復元。
+  // Esc で抜けると、閉じていない md なので Outline に戻る。
   await page.keyboard.press('Escape');
   await expect(body).not.toHaveClass(/md-cmt-mode/);
   await expect(cmLabel).toBeHidden();
-  if (wasOpen) {
-    await expect(panel).not.toHaveClass(/hidden/);
-    await expect(outlineLabel).toBeVisible();
-  } else {
-    await expect(panel).toHaveClass(/hidden/);
-  }
+  await expect(panel).not.toHaveClass(/hidden/);
+  await expect(outlineLabel).toBeVisible();
 
   // Comment 表示中の ⌘T は「Outline へ切替」＝モード終了（明示操作は復元より優先）。
   await page.keyboard.press('c');
