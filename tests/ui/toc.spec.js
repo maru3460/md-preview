@@ -123,6 +123,22 @@ test('md 以外の画面で ⌘T でコメントモードを抜けても、閉�
   await expect(panel(page)).toHaveClass(/hidden/);
 });
 
+test('md 以外の画面で × でコメントモードを抜けても、開いていた TOC は md へ戻ると出る', async ({ page }) => {
+  await openFolder(page);
+  await openMd(page, 'a.md', '見出し A');
+  await treeItem(page, 'notes.txt').click();
+  await expect(page.locator('.source-view')).toBeVisible();
+
+  await page.keyboard.press('c');
+  await expect(page.locator('body')).toHaveClass(/md-cmt-mode/);
+  await page.locator('.md-toc-close').click();
+  await expect(page.locator('body')).not.toHaveClass(/md-cmt-mode/);
+  await expect(panel(page)).toHaveClass(/hidden/);
+
+  await openMd(page, 'a.md', '見出し A');
+  await expect(panel(page)).not.toHaveClass(/hidden/);
+});
+
 /// パネルの出し入れのたびに、そのときスライドを止めていたか（no-anim）を記録する。
 async function recordAnim(page) {
   await page.evaluate(() => {

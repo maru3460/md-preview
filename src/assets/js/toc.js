@@ -257,8 +257,10 @@
       var exit = pendingExit;
       pendingExit = null;
       setTab('outline');
-      // md 以外の画面では ⌘T は開閉を変えない（toggle と同じ）。モードを抜けるだけにする。
-      if (exit === 'outline') { if (isMdView()) openPanel(); else sync(false); return; }
+      // md 以外の画面では ⌘T も × も開閉を変えない（toggle と同じ）。モードを抜けるだけにする。
+      // × でアウトラインを閉じたことにすると、画面は変わらないまま md へ戻ったときだけ TOC が出なくなる。
+      if (exit && !isMdView()) { sync(false); return; }
+      if (exit === 'outline') { openPanel(); return; }
       if (exit === 'close') { closePanel(); return; }
       sync(false);
     }
